@@ -1,51 +1,28 @@
+import json
 
-import sqlite3
-from rapidfuzz import process
+DB_FILE = "stories_db.json"
 
-DB="riya.db"
+def load_db():
+    try:
+        with open(DB_FILE) as f:
+            return json.load(f)
+    except:
+        return {}
 
-def init_db():
-    con=sqlite3.connect(DB)
-    cur=con.cursor()
-    cur.execute('''
-    CREATE TABLE IF NOT EXISTS stories(
-        id INTEGER PRIMARY KEY,
-        name TEXT,
-        type TEXT,
-        link TEXT
-    )
-    ''')
-    con.commit()
-    con.close()
+def save_db(data):
+    with open(DB_FILE, "w") as f:
+        json.dump(data, f, indent=2)
 
-def get_stats():
-    con=sqlite3.connect(DB)
-    cur=con.cursor()
-    cur.execute("SELECT COUNT(*) FROM stories")
-    count=cur.fetchone()[0]
-    con.close()
-    return count
+def add_story(story):
+    db = load_db()
+    db[story["name"].lower()] = story
+    save_db(db)
 
-def search_story_ai(query):
-    con=sqlite3.connect(DB)
-    cur=con.cursor()
-    cur.execute("SELECT name,type,link FROM stories")
-    rows=cur.fetchall()
-    con.close()
+def search_story(query):
+    db = load_db()
 
-    if not rows:
-        return None
-
-    names=[r[0] for r in rows]
-    match=process.extractOne(query,names,score_cutoff=55)
-
-    if not match:
-        return None
-
-    name=match[0]
-
-    for r in rows:
-        if r[0]==name:
-            return r
+    for title, data in db.items():
+        if query in title:
+            return data
 
     return None
