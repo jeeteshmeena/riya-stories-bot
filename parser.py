@@ -1,24 +1,42 @@
 import re
-from format_manager import check_format
 
-def parse_story(msg):
+def parse_story(message):
 
-    if not msg.text:
+    text = None
+
+    # Telethon message
+    if hasattr(message, "text") and message.text:
+        text = message.text
+
+    # Telegram Bot API message
+    elif hasattr(message, "caption") and message.caption:
+        text = message.caption
+
+    if not text:
         return None
 
-    text = msg.text
+    name = None
+    story_type = None
+    link = None
 
-    if not check_format(text):
-        return None
+    name_match = re.search(r"Name\s*[:-]\s*(.*)", text, re.IGNORECASE)
+    type_match = re.search(r"Story\s*Type\s*[:-]\s*(.*)", text, re.IGNORECASE)
+    link_match = re.search(r"https://t\.me/\S+", text)
 
-    name = re.findall(r"Name\s*[:-]\s*(.*)",text)
+    if name_match:
+        name = name_match.group(1).strip()
 
-    links = re.findall(r"https://t\.me/\S+",text)
+    if type_match:
+        story_type = type_match.group(1).strip()
 
-    if not name or not links:
+    if link_match:
+        link = link_match.group(0)
+
+    if not name or not link:
         return None
 
     return {
-        "name": name[0],
-        "link": links[0]
+        "name": name,
+        "type": story_type if story_type else "Unknown",
+        "link": link
     }
