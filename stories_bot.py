@@ -1,5 +1,9 @@
 import asyncio
 import logging
+import threading
+import http.server
+import socketserver
+import os
 
 from telegram import Update
 from telegram.ext import (
@@ -24,9 +28,26 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# -------------------------------
-# START COMMAND
-# -------------------------------
+# ------------------------------------
+# Dummy Web Server (Render ke liye)
+# ------------------------------------
+
+def start_dummy_server():
+
+    port = int(os.environ.get("PORT", 10000))
+
+    handler = http.server.SimpleHTTPRequestHandler
+
+    with socketserver.TCPServer(("", port), handler) as httpd:
+
+        logger.info(f"Dummy web server running on port {port}")
+
+        httpd.serve_forever()
+
+
+# ------------------------------------
+# Start Command
+# ------------------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -36,9 +57,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# -------------------------------
-# CHANNEL SCAN COMMAND
-# -------------------------------
+# ------------------------------------
+# Scan Command
+# ------------------------------------
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -48,27 +69,23 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await scan_channel(CHANNEL_ID)
 
-        await msg.edit_text(
-            "✅ Scan completed\n\nDatabase updated."
-        )
+        await msg.edit_text("✅ Scan completed")
 
     except Exception as e:
 
-        await msg.edit_text(
-            f"❌ Scan error\n\n{str(e)}"
-        )
+        await msg.edit_text(f"❌ Scan error\n{str(e)}")
 
 
-# -------------------------------
-# SEARCH HANDLER
-# -------------------------------
+# ------------------------------------
+# Search Handler
+# ------------------------------------
 
 async def search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.message.text.lower().strip()
 
     progress_msg = await update.message.reply_text(
-        "Searching...\n" + progress_bar(1)
+        "Searching...\n" + progress_bar(2)
     )
 
     await asyncio.sleep(1)
@@ -77,10 +94,7 @@ async def search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not result:
 
-        await progress_msg.edit_text(
-            "❌ Story not found\n\n"
-            "Use request option."
-        )
+        await progress_msg.edit_text("❌ Story not found")
 
         return
 
@@ -97,18 +111,18 @@ Link
     await progress_msg.edit_text(text)
 
 
-# -------------------------------
-# ERROR HANDLER
-# -------------------------------
+# ------------------------------------
+# Error Handler
+# ------------------------------------
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
-    logger.error(msg="Exception while handling update:", exc_info=context.error)
+    logger.error("Exception while handling update:", exc_info=context.error)
 
 
-# -------------------------------
-# BOT STARTER
-# -------------------------------
+# ------------------------------------
+# Bot Starter
+# ------------------------------------
 
 async def start_bot():
 
@@ -130,22 +144,27 @@ async def start_bot():
 
     await app.initialize()
     await app.start()
+
     await app.updater.start_polling()
 
 
-# -------------------------------
-# MAIN ENTRY
-# -------------------------------
+# ------------------------------------
+# Main
+# ------------------------------------
 
 def main():
 
     try:
+
+        # Dummy web server thread
+        threading.Thread(target=start_dummy_server).start()
 
         asyncio.run(start_bot())
 
     except RuntimeError:
 
         loop = asyncio.new_event_loop()
+
         asyncio.set_event_loop(loop)
 
         loop.run_until_complete(start_bot())
