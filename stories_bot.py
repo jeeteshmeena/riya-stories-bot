@@ -4,16 +4,22 @@ import threading
 import http.server
 import socketserver
 
-from telegram import Update
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
+
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     ContextTypes,
+    CallbackQueryHandler,
     filters
 )
 
-from config import BOT_TOKEN, CHANNEL_ID
+from config import BOT_TOKEN, CHANNEL_ID, REQUEST_GROUP
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
 
@@ -22,9 +28,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# -------------------------
-# Dummy server (Render fix)
-# -------------------------
+# -----------------------
+# Dummy Web Server (Render)
+# -----------------------
 
 def start_server():
 
@@ -34,26 +40,55 @@ def start_server():
 
     with socketserver.TCPServer(("", port), handler) as httpd:
 
-        logger.info(f"Dummy server running on {port}")
+        logger.info(f"Dummy server running on port {port}")
+
         httpd.serve_forever()
 
 
-# -------------------------
+# -----------------------
+# Ignore normal chat words
+# -----------------------
+
+IGNORE_WORDS = [
+    "hi",
+    "hey",
+    "hello",
+    "good morning",
+    "good night",
+    "good evening",
+    "ok",
+    "okay",
+    "thanks"
+]
+
+
+def is_conversation(text):
+
+    text = text.lower().strip()
+
+    if text in IGNORE_WORDS:
+        return True
+
+    if len(text) < 4:
+        return True
+
+    return False
+
+
+# -----------------------
 # /start
-# -------------------------
+# -----------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "✨ Riya Bot v10 Quantum\n\n"
-        "Use /scan to index stories\n"
-        "Then send story name"
+        "✨ Riya Bot v10\n\nSend story name to search."
     )
 
 
-# -------------------------
+# -----------------------
 # /scan
-# -------------------------
+# -----------------------
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -64,7 +99,7 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result = await scan_channel(CHANNEL_ID)
 
         await msg.edit_text(
-            f"✅ Scan finished\n\n"
+            f"✅ Scan Complete\n\n"
             f"Messages: {result['messages']}\n"
             f"Stories: {result['stories']}"
         )
@@ -74,35 +109,83 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text(f"❌ Scan failed\n{e}")
 
 
-# -------------------------
-# search
-# -------------------------
+# -----------------------
+# Story Search
+# -----------------------
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    text = update.message.text.lower().strip()
+    query = update.message.text.strip()
 
-    # ignore small messages
-    if len(text) < 4:
+    if is_conversation(query):
         return
 
-    result = fuzzy_search(text)
+    result = fuzzy_search(query)
 
     if not result:
 
-        await update.message.reply_text("❌ Story not found")
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "📩 Request Story",
+                    url="https://t.me/ReqStory"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🗑 Delete",
+                    callback_data="delete"
+                )
+            ]
+        ]
+
+        await update.message.reply_text(
+            f"❌ Story not found\n\n"
+            f"Name: {query}",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
         return
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "📖 Read Story",
+                url=result["link"]
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🗑 Delete",
+                callback_data="delete"
+            )
+        ]
+    ]
 
     await update.message.reply_text(
         f"🔥 Story Found\n\n"
-        f"Name: {result['name']}\n\n"
-        f"{result['link']}"
+        f"Name: {result['name']}\n"
+        f"Type: {result.get('type','Unknown')}",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
-# -------------------------
-# main bot
-# -------------------------
+# -----------------------
+# Button handler
+# -----------------------
+
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+
+    if query.data == "delete":
+
+        await query.message.delete()
+
+
+# -----------------------
+# Bot Start
+# -----------------------
 
 def start_bot():
 
@@ -115,14 +198,16 @@ def start_bot():
         MessageHandler(filters.TEXT & ~filters.COMMAND, search)
     )
 
+    app.add_handler(CallbackQueryHandler(buttons))
+
     logger.info("Riya Bot running")
 
     app.run_polling()
 
 
-# -------------------------
-# main
-# -------------------------
+# -----------------------
+# Main
+# -----------------------
 
 def main():
 
