@@ -27,9 +27,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# --------------------------
-# Dummy web server (Render)
-# --------------------------
+# -----------------------
+# Dummy Web Server
+# -----------------------
 
 def start_dummy_server():
 
@@ -43,21 +43,21 @@ def start_dummy_server():
         httpd.serve_forever()
 
 
-# --------------------------
+# -----------------------
 # Commands
-# --------------------------
+# -----------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "✨ Riya Bot v10 Quantum AI\n\nSend story name to search."
+        "✨ Riya Bot v10 Quantum\n\nSend story name to search."
     )
 
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = await update.message.reply_text(
-        "🔍 Scanning channel...\n" + progress_bar(1)
+        "🔍 Scanning channel..."
     )
 
     try:
@@ -72,7 +72,7 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
 
-        await msg.edit_text(f"❌ Scan failed\n\n{e}")
+        await msg.edit_text(f"❌ Scan failed\n{e}")
 
 
 async def search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -103,9 +103,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Error:", exc_info=context.error)
 
 
-# --------------------------
-# Bot runner
-# --------------------------
+# -----------------------
+# Bot start
+# -----------------------
 
 def start_bot():
 
@@ -113,7 +113,10 @@ def start_bot():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("scan", scan))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_handler))
+
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, search_handler)
+    )
 
     app.add_error_handler(error_handler)
 
@@ -122,13 +125,13 @@ def start_bot():
     app.run_polling()
 
 
-# --------------------------
+# -----------------------
 # Main
-# --------------------------
+# -----------------------
 
 def main():
 
-    # Render port server
+    # Render port
     threading.Thread(target=start_dummy_server).start()
 
     # Telegram bot
