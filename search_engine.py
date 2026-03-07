@@ -1,10 +1,20 @@
-from database import search_story
+from rapidfuzz import process
+from database import load_db
 
-def search(query):
+def fuzzy_search(query):
 
-    result = search_story(query.lower())
+    db = load_db()
 
-    if result:
-        return result
+    titles = list(db.keys())
 
-    return None
+    match = process.extractOne(query, titles)
+
+    if not match:
+        return None
+
+    score = match[1]
+
+    if score < 60:
+        return None
+
+    return db[match[0]]
