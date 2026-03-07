@@ -1,68 +1,59 @@
 import asyncio
 import logging
-from telegram import Update
+
 from telegram.ext import (
     Application,
-    MessageHandler,
     CommandHandler,
-    ContextTypes,
+    MessageHandler,
     filters
 )
 
-from config import BOT_TOKEN, CHANNEL_ID
-from database import add_story, search_story
-from parser import parse_story
+from telegram import Update
+from telegram.ext import ContextTypes
+
+from config import BOT_TOKEN
+from search_engine import search
+from scanner import scan_channel
 from progress_bar import progress_bar
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# ------------------------------
-# CHANNEL SCANNER
-# ------------------------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-async def scan_channel(app):
-
-    logger.info("Starting channel scan...")
-
-    try:
-        async for message in app.bot.get_chat_history(CHANNEL_ID):
-
-            story = parse_story(message)
-
-            if story:
-                add_story(story)
-
-    except Exception as e:
-        logger.error(f"Scanner error: {e}")
+    await update.message.reply_text(
+        "✨ Riya Bot v10 Quantum AI running"
+    )
 
 
-# ------------------------------
-# SEARCH HANDLER
-# ------------------------------
+async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = await update.message.reply_text("Scanning channel...")
+
+    await scan_channel(context.bot)
+
+    await msg.edit_text("Scan completed")
+
+
+async def search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.message.text.lower()
 
-    progress = await update.message.reply_text("Searching...\n" + progress_bar(2))
+    msg = await update.message.reply_text(
+        "Searching...\n" + progress_bar(1)
+    )
 
-    result = search_story(query)
+    result = search(query)
 
     if not result:
 
-        await progress.edit_text(
-            "Story not found.\n\nUse Request button."
-        )
+        await msg.edit_text("Story not found")
         return
 
     text = f"""
-✨ **Story Found**
+✨ Story Found
 
 Name : {result['name']}
 Type : {result['type']}
@@ -71,32 +62,8 @@ Link
 {result['link']}
 """
 
-    await progress.edit_text(text, parse_mode="Markdown")
+    await msg.edit_text(text)
 
-
-# ------------------------------
-# COMMANDS
-# ------------------------------
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    await update.message.reply_text(
-        "Riya Bot v10 Quantum AI running"
-    )
-
-
-async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    await update.message.reply_text("Scanning channel...")
-
-    await scan_channel(context.application)
-
-    await update.message.reply_text("Scan complete")
-
-
-# ------------------------------
-# MAIN
-# ------------------------------
 
 async def start_bot():
 
@@ -108,11 +75,11 @@ async def start_bot():
     app.add_handler(
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
-            search
+            search_handler
         )
     )
 
-    logger.info("Riya Bot v10 Quantum running")
+    logger.info("Riya Bot started")
 
     await app.initialize()
     await app.start()
