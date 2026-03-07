@@ -1,66 +1,134 @@
-
 import asyncio
-from telegram.ext import Application, MessageHandler, CommandHandler, CallbackQueryHandler, filters
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from config import BOT_TOKEN
-from database import init_db, search_story_ai
-from progress_bar import run_progress
-from filters_text import is_valid_query
-from language_system import get_language_reply
+import logging
+from telegram import Update
+from telegram.ext import (
+    Application,
+    MessageHandler,
+    CommandHandler,
+    ContextTypes,
+    filters
+)
 
-async def start(update, context):
-    await update.message.reply_text("🚀 Riya Bot v10 Quantum AI Engine Online")
+from config import BOT_TOKEN, CHANNEL_ID
+from database import add_story, search_story
+from parser import parse_story
+from progress_bar import progress_bar
 
-async def stats(update, context):
-    from database import get_stats
-    total = get_stats()
-    await update.message.reply_text(f"📊 Database Stats\nStories: {total}")
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 
-async def search(update, context):
-    text = update.message.text.strip()
+logger = logging.getLogger(__name__)
 
-    if not is_valid_query(text):
-        return
 
-    msg = await run_progress(update)
+# ------------------------------
+# CHANNEL SCANNER
+# ------------------------------
 
-    result = search_story_ai(text)
+async def scan_channel(app):
+
+    logger.info("Starting channel scan...")
+
+    try:
+        async for message in app.bot.get_chat_history(CHANNEL_ID):
+
+            story = parse_story(message)
+
+            if story:
+                add_story(story)
+
+    except Exception as e:
+        logger.error(f"Scanner error: {e}")
+
+
+# ------------------------------
+# SEARCH HANDLER
+# ------------------------------
+
+async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.message.text.lower()
+
+    progress = await update.message.reply_text("Searching...\n" + progress_bar(2))
+
+    result = search_story(query)
 
     if not result:
-        keyboard = InlineKeyboardMarkup([[
-            InlineKeyboardButton("Request Story", callback_data="request")
-        ]])
-        await msg.edit_text("❌ Story not found", reply_markup=keyboard)
+
+        await progress.edit_text(
+            "Story not found.\n\nUse Request button."
+        )
         return
 
-    name, type_, link = result
+    text = f"""
+✨ **Story Found**
 
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Open Story", url=link)],
-        [InlineKeyboardButton("Delete", callback_data="delete")],
-        [InlineKeyboardButton("Copyright", callback_data="copyright")]
-    ])
+Name : {result['name']}
+Type : {result['type']}
 
-    await msg.edit_text(
-        f"✨ 𝐑𝐢𝐲𝐚 𝐒𝐭𝐨𝐫𝐲 𝐅𝐢𝐧𝐝𝐞𝐫 ✨\n\n🔥 Name :- {name}\n📖 Type :- {type_}",
-        reply_markup=keyboard
+Link
+{result['link']}
+"""
+
+    await progress.edit_text(text, parse_mode="Markdown")
+
+
+# ------------------------------
+# COMMANDS
+# ------------------------------
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    await update.message.reply_text(
+        "Riya Bot v10 Quantum AI running"
     )
 
-async def delete_msg(update, context):
-    await update.callback_query.message.delete()
 
-def main():
-    init_db()
+async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    await update.message.reply_text("Scanning channel...")
+
+    await scan_channel(context.application)
+
+    await update.message.reply_text("Scan complete")
+
+
+# ------------------------------
+# MAIN
+# ------------------------------
+
+async def start_bot():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CallbackQueryHandler(delete_msg, pattern="delete"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search))
+    app.add_handler(CommandHandler("scan", scan))
 
-    print("Riya Bot v10 Quantum running")
-    app.run_polling()
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            search
+        )
+    )
+
+    logger.info("Riya Bot v10 Quantum running")
+
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+
+
+def main():
+
+    try:
+        asyncio.run(start_bot())
+
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(start_bot())
+
 
 if __name__ == "__main__":
     main()
