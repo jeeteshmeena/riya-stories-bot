@@ -1,29 +1,24 @@
 import re
+from format_manager import check_format
 
-def extract_story(text):
+def parse_story(msg):
 
-    name=None
-    story_type=None
-    link=None
+    if not msg.text:
+        return None
 
-    n=re.search(r"Name\s*[:-]\s*(.+)",text,re.I)
-    t=re.search(r"Story Type\s*[:-]\s*(.+)",text,re.I)
-    l=re.search(r"https?://\S+",text)
+    text = msg.text
 
-    if n:
-        name=n.group(1).strip()
+    if not check_format(text):
+        return None
 
-    if t:
-        story_type=t.group(1).strip()
+    name = re.findall(r"Name\s*[:-]\s*(.*)",text)
 
-    if l:
-        link=l.group(0)
+    links = re.findall(r"https://t\.me/\S+",text)
 
-    if name:
-        return {
-            "name":name,
-            "type":story_type or "Unknown",
-            "link":link
-        }
+    if not name or not links:
+        return None
 
-    return None
+    return {
+        "name": name[0],
+        "link": links[0]
+    }
