@@ -1,9 +1,9 @@
 import asyncio
 import logging
+import os
 import threading
 import http.server
 import socketserver
-import os
 
 from telegram import Update
 from telegram.ext import (
@@ -15,10 +15,14 @@ from telegram.ext import (
 )
 
 from config import BOT_TOKEN, CHANNEL_ID
-from search_engine import fuzzy_search
 from scanner_client import scan_channel
+from search_engine import fuzzy_search
 from progress_bar import progress_bar
 
+
+# ------------------------------
+# Logging
+# ------------------------------
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -28,9 +32,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ------------------------------------
-# Dummy Web Server (Render ke liye)
-# ------------------------------------
+# ------------------------------
+# Dummy Web Server (Render fix)
+# ------------------------------
 
 def start_dummy_server():
 
@@ -45,47 +49,55 @@ def start_dummy_server():
         httpd.serve_forever()
 
 
-# ------------------------------------
-# Start Command
-# ------------------------------------
+# ------------------------------
+# /start command
+# ------------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "✨ Riya Bot v10 Quantum AI Online\n\n"
-        "Type story name to search."
+        "✨ Riya Bot v10 Quantum AI\n\n"
+        "Send story name to search."
     )
 
 
-# ------------------------------------
-# Scan Command
-# ------------------------------------
+# ------------------------------
+# /scan command
+# ------------------------------
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    msg = await update.message.reply_text("🔍 Scanning channel...")
+    msg = await update.message.reply_text(
+        "🔍 Scanning channel...\n" + progress_bar(1)
+    )
 
     try:
 
-        await scan_channel(CHANNEL_ID)
+        result = await scan_channel(CHANNEL_ID)
 
-        await msg.edit_text("✅ Scan completed")
+        await msg.edit_text(
+            f"✅ Scan Completed\n\n"
+            f"Messages scanned : {result['messages']}\n"
+            f"Stories found : {result['stories']}"
+        )
 
     except Exception as e:
 
-        await msg.edit_text(f"❌ Scan error\n{str(e)}")
+        await msg.edit_text(
+            f"❌ Scan failed\n\n{str(e)}"
+        )
 
 
-# ------------------------------------
+# ------------------------------
 # Search Handler
-# ------------------------------------
+# ------------------------------
 
 async def search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.message.text.lower().strip()
 
     progress_msg = await update.message.reply_text(
-        "Searching...\n" + progress_bar(2)
+        progress_bar(0)
     )
 
     await asyncio.sleep(1)
@@ -94,12 +106,14 @@ async def search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not result:
 
-        await progress_msg.edit_text("❌ Story not found")
+        await progress_msg.edit_text(
+            "❌ Story not found"
+        )
 
         return
 
     text = f"""
-✨ Story Found
+🔥 Story Found
 
 Name : {result['name']}
 Type : {result.get('type','Unknown')}
@@ -111,18 +125,21 @@ Link
     await progress_msg.edit_text(text)
 
 
-# ------------------------------------
-# Error Handler
-# ------------------------------------
+# ------------------------------
+# Error handler
+# ------------------------------
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
-    logger.error("Exception while handling update:", exc_info=context.error)
+    logger.error(
+        msg="Exception while handling update:",
+        exc_info=context.error
+    )
 
 
-# ------------------------------------
-# Bot Starter
-# ------------------------------------
+# ------------------------------
+# Telegram Bot Runner
+# ------------------------------
 
 async def start_bot():
 
@@ -142,21 +159,18 @@ async def start_bot():
 
     logger.info("Riya Bot v10 Quantum running")
 
-    await app.initialize()
-    await app.start()
-
-    await app.updater.start_polling()
+    await app.run_polling()
 
 
-# ------------------------------------
+# ------------------------------
 # Main
-# ------------------------------------
+# ------------------------------
 
 def main():
 
     try:
 
-        # Dummy web server thread
+        # start dummy web server
         threading.Thread(target=start_dummy_server).start()
 
         asyncio.run(start_bot())
