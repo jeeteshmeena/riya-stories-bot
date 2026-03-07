@@ -16,22 +16,17 @@ from telegram.ext import (
 from config import BOT_TOKEN, CHANNEL_ID
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
-from progress_bar import progress_bar
 
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
-
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# -----------------------
-# Dummy Web Server
-# -----------------------
+# -------------------------
+# Dummy server (Render fix)
+# -------------------------
 
-def start_dummy_server():
+def start_server():
 
     port = int(os.environ.get("PORT", 10000))
 
@@ -39,35 +34,39 @@ def start_dummy_server():
 
     with socketserver.TCPServer(("", port), handler) as httpd:
 
-        logger.info(f"Dummy web server running on port {port}")
+        logger.info(f"Dummy server running on {port}")
         httpd.serve_forever()
 
 
-# -----------------------
-# Commands
-# -----------------------
+# -------------------------
+# /start
+# -------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "✨ Riya Bot v10 Quantum\n\nSend story name to search."
+        "✨ Riya Bot v10 Quantum\n\n"
+        "Use /scan to index stories\n"
+        "Then send story name"
     )
 
+
+# -------------------------
+# /scan
+# -------------------------
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    msg = await update.message.reply_text(
-        "🔍 Scanning channel..."
-    )
+    msg = await update.message.reply_text("🔍 Scanning channel...")
 
     try:
 
         result = await scan_channel(CHANNEL_ID)
 
         await msg.edit_text(
-            f"✅ Scan Completed\n\n"
-            f"Messages scanned: {result['messages']}\n"
-            f"Stories found: {result['stories']}"
+            f"✅ Scan finished\n\n"
+            f"Messages: {result['messages']}\n"
+            f"Stories: {result['stories']}"
         )
 
     except Exception as e:
@@ -75,37 +74,35 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.edit_text(f"❌ Scan failed\n{e}")
 
 
-async def search_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# -------------------------
+# search
+# -------------------------
 
-    query = update.message.text.lower().strip()
+async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    progress = await update.message.reply_text(progress_bar(0))
+    text = update.message.text.lower().strip()
 
-    result = fuzzy_search(query)
+    # ignore small messages
+    if len(text) < 4:
+        return
+
+    result = fuzzy_search(text)
 
     if not result:
 
-        await progress.edit_text("❌ Story not found")
+        await update.message.reply_text("❌ Story not found")
         return
 
-    text = (
+    await update.message.reply_text(
         f"🔥 Story Found\n\n"
-        f"Name: {result['name']}\n"
-        f"Type: {result.get('type','Unknown')}\n\n"
+        f"Name: {result['name']}\n\n"
         f"{result['link']}"
     )
 
-    await progress.edit_text(text)
 
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-
-    logger.error("Error:", exc_info=context.error)
-
-
-# -----------------------
-# Bot start
-# -----------------------
+# -------------------------
+# main bot
+# -------------------------
 
 def start_bot():
 
@@ -115,26 +112,22 @@ def start_bot():
     app.add_handler(CommandHandler("scan", scan))
 
     app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, search_handler)
+        MessageHandler(filters.TEXT & ~filters.COMMAND, search)
     )
 
-    app.add_error_handler(error_handler)
-
-    logger.info("Riya Bot v10 Quantum running")
+    logger.info("Riya Bot running")
 
     app.run_polling()
 
 
-# -----------------------
-# Main
-# -----------------------
+# -------------------------
+# main
+# -------------------------
 
 def main():
 
-    # Render port
-    threading.Thread(target=start_dummy_server).start()
+    threading.Thread(target=start_server).start()
 
-    # Telegram bot
     start_bot()
 
 
