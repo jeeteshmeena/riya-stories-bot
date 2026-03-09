@@ -3,6 +3,7 @@ import os
 import threading
 import http.server
 import socketserver
+import json
 
 from telegram import (
     Update,
@@ -19,7 +20,7 @@ from telegram.ext import (
     filters
 )
 
-from config import BOT_TOKEN, CHANNEL_ID, REQUEST_GROUP
+from config import BOT_TOKEN, CHANNEL_ID, REQUEST_GROUP, COPYRIGHT_CHANNEL
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
 
@@ -27,9 +28,11 @@ from search_engine import fuzzy_search
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+REQUEST_DB = "requests.json"
+
 
 # -----------------------
-# Dummy Web Server (Render)
+# Dummy Web Server
 # -----------------------
 
 def start_server():
@@ -43,6 +46,28 @@ def start_server():
         logger.info(f"Dummy server running on port {port}")
 
         httpd.serve_forever()
+
+
+# -----------------------
+# Request Database
+# -----------------------
+
+def load_requests():
+
+    if os.path.exists(REQUEST_DB):
+
+        with open(REQUEST_DB, "r") as f:
+
+            return json.load(f)
+
+    return {}
+
+
+def save_requests(data):
+
+    with open(REQUEST_DB, "w") as f:
+
+        json.dump(data, f, indent=2)
 
 
 # -----------------------
@@ -122,13 +147,14 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     result = fuzzy_search(query)
 
+    # ---------- NOT FOUND ----------
     if not result:
 
         keyboard = [
             [
                 InlineKeyboardButton(
                     "📩 Request Story",
-                    url="https://t.me/ReqStory"
+                    callback_data=f"request|{query}"
                 )
             ],
             [
@@ -147,11 +173,19 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
+    # ---------- STORY FOUND ----------
+
     keyboard = [
         [
             InlineKeyboardButton(
                 "📖 Read Story",
                 url=result["link"]
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "© Copyright",
+                url=f"https://t.me/{COPYRIGHT_CHANNEL}"
             )
         ],
         [
@@ -178,9 +212,53 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
 
-    if query.data == "delete":
+    data = query.data
+
+    # Delete message
+    if data == "delete":
 
         await query.message.delete()
+
+        return
+
+    # Request system
+    if data.startswith("request|"):
+
+        story = data.split("|")[1]
+
+        user = query.from_user
+
+        db = load_requests()
+
+        if story not in db:
+
+            db[story] = {
+                "count": 0,
+                "users": []
+            }
+
+        if user.id not in db[story]["users"]:
+
+            db[story]["users"].append(user.id)
+
+            db[story]["count"] += 1
+
+            await context.bot.send_message(
+
+                chat_id=REQUEST_GROUP,
+
+                text=(
+                    f"📚 Story Request\n\n"
+                    f"Name: {story}\n"
+                    f"Requests: +{db[story]['count']}\n\n"
+                    f"User: @{user.username if user.username else 'NoUsername'}\n"
+                    f"ID: {user.id}"
+                )
+            )
+
+            save_requests(db)
+
+        await query.answer("Request recorded ✅")
 
 
 # -----------------------
