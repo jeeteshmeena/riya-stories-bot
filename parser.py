@@ -2,6 +2,8 @@ import re
 
 # possible fields used in posts
 NAME_PATTERNS = [
+    # Bullet format with status: "- Story Title ( Completed )"
+    r"^\s*-\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)\s*$",
     r"name\s*[:\-]\s*(.+)",
     r"story\s*[:\-]\s*(.+)",
     r"title\s*[:\-]\s*(.+)",
@@ -44,13 +46,30 @@ def extract_name(text):
         if match:
             return match.group(1).strip()
 
-    # fallback: first line of message
+    # fallback: first line of message, but only if it looks like a story title
     lines = text.split("\n")
 
     if len(lines) > 0:
         first = lines[0].strip()
 
-        if len(first) < 60:   # avoid long sentences
+        # ignore obvious non-story lines
+        bad_keywords = [
+            "telegram support",
+            "copyright",
+            "method batao",
+            "looking for",
+            "new stories chat group",
+            "https://",
+            "http://",
+            "t.me/",
+        ]
+
+        lowered = first.lower()
+        if any(k in lowered for k in bad_keywords):
+            return None
+
+        # require a status marker like (Completed) / (Ongoing) to accept as title
+        if re.search(r"\(\s*(completed?|complete|ongoing)\s*\)", first, re.IGNORECASE):
             return first
 
     return None
