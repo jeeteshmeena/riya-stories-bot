@@ -158,10 +158,10 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 "*Progress:* ░░░░░░░░░░ 0%"
 )
 
-msg = await update.message.reply_text(
-    text=scan_text,
-    parse_mode="Markdown"
-)
+    msg = await update.message.reply_text(
+        text=scan_text,
+        parse_mode="Markdown"
+    )
 
     await asyncio.sleep(1)
 
