@@ -3,36 +3,37 @@ import re
 
 def parse_story(message):
 
-    text = message.text or message.caption
+    # Telethon message text safely read
+    text = message.message
 
     if not text:
         return None
 
+    # story name patterns
     patterns = [
 
-        r"name\s*:-\s*(.+)",
-        r"name\s*:\s*(.+)",
-        r"story\s*:-\s*(.+)",
-        r"story\s*:\s*(.+)",
+        r"Name\s*[:-]\s*(.+)",
+        r"Story\s*[:-]\s*(.+)",
+        r"Title\s*[:-]\s*(.+)"
 
     ]
 
     name = None
 
-    for p in patterns:
+    for pattern in patterns:
 
-        m = re.search(p, text, re.IGNORECASE)
+        match = re.search(pattern, text, re.IGNORECASE)
 
-        if m:
+        if match:
 
-            name = m.group(1).strip()
-
+            name = match.group(1).strip()
             break
 
     if not name:
         return None
 
-    links = re.findall(r"https://t\.me/[^\s,]+", text)
+    # find telegram links
+    links = re.findall(r"https://t\.me/[^\s]+", text)
 
     if not links:
         return None
