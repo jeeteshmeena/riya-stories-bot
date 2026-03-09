@@ -26,7 +26,6 @@ from telegram.ext import (
 
 from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP, LOG_CHANNEL
 from scanner_client import scan_channel
-from search_engine import fuzzy_search
 from database import get_story
 
 
@@ -145,6 +144,48 @@ We only index Telegram files. We do not host content.</i></blockquote>
     )
 
 
+async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    text = """
+<b>About Stories Finder Bot</b>
+
+This bot helps you quickly find stories from the official Riya stories channel using a structured database built from specific story formats.
+"""
+
+    await update.message.reply_text(text=text, parse_mode="HTML")
+
+
+async def how(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    text = """
+<b>How to use</b>
+
+• Use /scan to index the channel stories.
+• After scanning, just send the exact story title to get its link.
+• Use /stories to view the list of available titles.
+"""
+
+    await update.message.reply_text(text=text, parse_mode="HTML")
+
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    text = """
+<b>Help</b>
+
+Available commands:
+• /start – Welcome message
+• /scan – Scan channel and update database
+• /stories – List available story titles
+• /request &lt;story name&gt; – Request a new story
+• /about – About this bot
+• /how – How to use
+• /help – Show this help message
+"""
+
+    await update.message.reply_text(text=text, parse_mode="HTML")
+
+
 # -----------------------
 # /scan premium progress
 # -----------------------
@@ -247,7 +288,8 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "<b>Available stories on this channel 👇🏻</b>\n\n"
 
     for i, name in enumerate(story_index, 1):
-        text += f"<i>{i}:- {name}</i>\n"
+        title = clean_story(name)
+        text += f"<i>{i}:- {title}</i>\n"
 
     await update.message.reply_text(text=text, parse_mode="HTML")
 
@@ -346,19 +388,15 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query_text = update.message.text.strip()
 
-    # First try fast in‑memory search (after /scan has populated indexes)
-    result = None
-
+    # Use only strict in-memory search based on scanned titles.
     fast_results = fast_search(query_text)
 
-    if fast_results:
-        # pick the first match and load full data from DB
-        candidate_name = fast_results[0]
-        result = get_story(candidate_name.lower())
+    if not fast_results:
+        return
 
-    # Fallback to fuzzy DB search if nothing matched from in‑memory index
-    if not result:
-        result = fuzzy_search(query_text)
+    # pick the first match and load full data from DB
+    candidate_name = fast_results[0]
+    result = get_story(candidate_name.lower())
 
     if not result:
         return
@@ -554,6 +592,9 @@ def start_bot():
     app.add_handler(CommandHandler("scan", scan))
     app.add_handler(CommandHandler("stories", stories))
     app.add_handler(CommandHandler("request", request_story))
+    app.add_handler(CommandHandler("about", about))
+    app.add_handler(CommandHandler("how", how))
+    app.add_handler(CommandHandler("help", help_cmd))
 
     app.add_handler(InlineQueryHandler(inline_search))
 
