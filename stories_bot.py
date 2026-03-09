@@ -33,7 +33,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # -----------------------
-# Render server
+# Render dummy server
 # -----------------------
 
 def start_server():
@@ -72,43 +72,33 @@ def clean_story(name):
 
 
 def build_search_index(names):
-
     global search_index
     search_index = {}
-
     for name in names:
         search_index[name.lower()] = name
 
 
 def fast_search(query):
-
     query = query.lower()
-
     results = []
-
     for key in search_index:
-
         if query in key:
             results.append(search_index[key])
-
     return results[:10]
 
 
 async def log(context, text):
-
     try:
-
         await context.bot.send_message(
             chat_id=LOG_CHANNEL,
             text=text
         )
-
     except:
         pass
 
 
 # -----------------------
-# Welcome
+# Welcome message
 # -----------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -200,7 +190,6 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await asyncio.sleep(1)
 
-        # fix for names error
         if "names" in result:
             story_index = result["names"]
         else:
@@ -230,7 +219,7 @@ _Your story database is now fully updated._
 
 
 # -----------------------
-# /stories
+# /stories command
 # -----------------------
 
 async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -334,7 +323,7 @@ If we find it, it will be uploaded soon.</b>
 
 
 # -----------------------
-# Search
+# search
 # -----------------------
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -365,21 +354,39 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )]
     ]
 
-    msg = await update.message.reply_text(
+    mention = user.mention_html()
 
-        text=f"""
-Hey {user.mention_html()} 👋
+    photo = result.get("photo") or result.get("image")
+
+    caption = f"""
+Hey {mention} 👋
 I found this story 👇
 
 <b>{story_name}</b>
 
 <i>This reply will be deleted automatically in 30 minutes.</i>
-""",
+"""
 
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+    if photo:
 
-    )
+        msg = await update.message.reply_photo(
+
+            photo=photo,
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
+
+    else:
+
+        msg = await update.message.reply_text(
+
+            text=caption,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+
+        )
 
     message_owner[msg.message_id] = user.id
 
@@ -407,19 +414,19 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg_id = query.message.message_id
         owner = message_owner.get(msg_id)
 
-        if user.id == owner:
+        try:
 
-            try:
-                await query.message.delete()
-            except:
-                pass
-
-        else:
-
-            await query.answer(
-                text="You cannot delete this message",
-                show_alert=True
+            member = await context.bot.get_chat_member(
+                query.message.chat.id,
+                user.id
             )
+
+            if user.id == owner or member.status in ["administrator", "creator"]:
+
+                await query.message.delete()
+
+        except:
+            pass
 
         return
 
@@ -479,9 +486,7 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineQueryResultArticle(
 
                 id=story,
-
                 title=story,
-
                 input_message_content=InputTextMessageContent(story)
 
             )
@@ -492,7 +497,7 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # -----------------------
-# Start bot
+# start bot
 # -----------------------
 
 def start_bot():
