@@ -5,6 +5,7 @@ import http.server
 import socketserver
 import asyncio
 import re
+import time
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -44,7 +45,7 @@ def start_server():
 
 
 # -----------------------
-# Ignore normal messages
+# Ignore normal chat
 # -----------------------
 
 IGNORE_WORDS = [
@@ -67,7 +68,7 @@ def is_conversation(text):
 
 
 # -----------------------
-# Clean story name
+# Story name clean
 # -----------------------
 
 def clean_story(name):
@@ -75,6 +76,46 @@ def clean_story(name):
     name = re.sub(r"\(.*?\)", "", name)
 
     return name.strip()
+
+
+# -----------------------
+# Claim system storage
+# -----------------------
+
+claims_db = {}
+cooldown_db = {}
+
+
+def is_user_blocked(user_id):
+
+    if user_id not in cooldown_db:
+        return False
+
+    if cooldown_db[user_id] < time.time():
+        del cooldown_db[user_id]
+        return False
+
+    return True
+
+
+# -----------------------
+# /cooldown admin command
+# -----------------------
+
+async def cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not context.args:
+        return
+
+    user_id = int(context.args[0])
+    minutes = int(context.args[1])
+
+    cooldown_db[user_id] = time.time() + minutes * 60
+
+    await update.message.reply_text(
+        f"Cooldown applied to `{user_id}` for {minutes} minutes",
+        parse_mode="Markdown"
+    )
 
 
 # -----------------------
@@ -116,10 +157,15 @@ Stories indexed: {result['stories']}
 
 
 # -----------------------
-# Story Search
+# Story search
 # -----------------------
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    user = update.message.from_user
+
+    if is_user_blocked(user.id):
+        return
 
     query = update.message.text.strip()
 
@@ -157,12 +203,10 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ]
 
-    user = update.message.from_user.first_name
-
     msg = await update.message.reply_text(
 
 f"""
-Hey {user} 👋
+Hey {user.first_name} 👋
 I found this story 👇
 
 *{story_name}*
@@ -203,14 +247,7 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_message(
         chat_id=REQUEST_GROUP,
-        text=f"""
-Story Request
-
-Name: {story}
-
-User: @{user.username if user.username else user.first_name}
-ID: {user.id}
-"""
+        text=f"Story Request\n\nName: {story}\nUser: {user.id}"
     )
 
     await update.effective_chat.send_message(
@@ -225,6 +262,9 @@ ID: {user.id}
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
+    user = query.from_user
+
+    await query.answer()
 
     if query.data == "delete":
 
@@ -240,8 +280,20 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         story = query.data.split("|")[1]
 
-        user = query.from_user
+        # duplicate claim check
+        key = f"{user.id}:{story}"
 
+        if key in claims_db:
+
+            await query.answer(
+                "You already claimed this story.",
+                show_alert=True
+            )
+            return
+
+        claims_db[key] = True
+
+        # send log
         await context.bot.send_message(
 
             chat_id=COPYRIGHT_CHANNEL,
@@ -256,7 +308,10 @@ ID: {user.id}
 """
         )
 
-        await query.answer("Copyright claim sent")
+        # confirmation
+        await query.message.reply_text(
+            "✅ Your copyright claim has been submitted."
+        )
 
 
 # -----------------------
@@ -270,6 +325,7 @@ def start_bot():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("scan", scan))
     app.add_handler(CommandHandler("request", request_story))
+    app.add_handler(CommandHandler("cooldown", cooldown))
 
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, search)
