@@ -28,6 +28,7 @@ from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP, LOG_
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
 
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -87,12 +88,16 @@ def fast_search(query):
     return results[:10]
 
 
-def extract_story_type(caption: str):
+def extract_story_type(text):
 
-    if not caption:
+    if not text:
         return "Can't find"
 
-    match = re.search(r"(Story Type|Type|Genre)\s*:-\s*(.*)", caption, re.IGNORECASE)
+    match = re.search(
+        r"(Story Type|Type|Genre)\s*:-\s*(.+)",
+        text,
+        re.IGNORECASE
+    )
 
     if match:
         return match.group(2).strip()
@@ -203,10 +208,7 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await asyncio.sleep(1)
 
-        if "names" in result:
-            story_index = result["names"]
-        else:
-            story_index = []
+        story_index = result.get("names", [])
 
         build_search_index(story_index)
 
@@ -247,6 +249,92 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"<i>{i}:- {name}</i>\n"
 
     await update.message.reply_text(text=text, parse_mode="HTML")
+
+
+# -----------------------
+# request story
+# -----------------------
+
+async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not context.args:
+        return
+
+    story = " ".join(context.args).lower()
+
+    user = update.effective_user
+    mention = user.mention_html()
+
+    try:
+        await update.message.delete()
+    except:
+        pass
+
+    if story not in request_db:
+        request_db[story] = set()
+        request_chat[story] = update.effective_chat.id
+
+    if user.id in request_db[story]:
+
+        await update.effective_chat.send_message(
+            text=f"""
+<b>{mention}</b>
+
+<i>You have already requested <b>{story}</b>.  
+Please avoid sending duplicate requests.</i>
+""",
+            parse_mode="HTML"
+        )
+
+        return
+
+    request_db[story].add(user.id)
+
+    count = len(request_db[story])
+
+    username = f"@{user.username}" if user.username else "No username"
+
+    await context.bot.send_message(
+
+        chat_id=REQUEST_GROUP,
+
+        text=f"""
+Story Request
+
+Name: {story}
+User ID: {user.id}
+Username: {username}
+
+Total Requests: {count}
+"""
+    )
+
+    if count == 1:
+
+        text = f"""
+<b>{mention}</b>
+
+<b>Your request for <i>{story}</i> has been sent.  
+We will try our best to provide this story.  
+If we find it, it will be uploaded soon.</b>
+"""
+
+    else:
+
+        others = count - 1
+
+        text = f"""
+<b>{mention}</b>
+
+<b>You and {others} other users requested <i>{story}</i>.  
+We will try our best to provide this story.  
+If we find it, it will be uploaded soon.</b>
+"""
+
+    await update.effective_chat.send_message(
+        text=text,
+        parse_mode="HTML"
+    )
 
 
 # -----------------------
@@ -322,7 +410,7 @@ Hey {mention} 👋
 
     message_owner[msg.message_id] = user.id
 
-    await asyncio.sleep(300)
+    await asyncio.sleep(1800)
 
     try:
         await msg.delete()
@@ -441,6 +529,7 @@ def start_bot():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("scan", scan))
     app.add_handler(CommandHandler("stories", stories))
+    app.add_handler(CommandHandler("request", request_story))
 
     app.add_handler(InlineQueryHandler(inline_search))
 
