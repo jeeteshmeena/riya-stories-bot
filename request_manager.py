@@ -1,21 +1,21 @@
 import json
 import os
 
-DB_FILE = "requests.json"
+FILE = "requests.json"
 
 
 def load():
 
-    if not os.path.exists(DB_FILE):
+    if not os.path.exists(FILE):
         return {}
 
-    with open(DB_FILE) as f:
+    with open(FILE) as f:
         return json.load(f)
 
 
 def save(data):
 
-    with open(DB_FILE,"w") as f:
+    with open(FILE,"w") as f:
         json.dump(data,f,indent=2)
 
 
@@ -36,9 +36,8 @@ def add_request(story,user):
         return "duplicate"
 
     db[story]["users"].append(user.id)
-
     db[story]["count"] += 1
 
     save(db)
 
-    return "added"
+    return "ok"
