@@ -36,15 +36,19 @@ def get_text(message):
 
 def extract_name(text):
     """
-    Try multiple patterns to detect story name
+    Try multiple patterns to detect story name (title).
+    We normalise out status markers like (Completed)/(Ongoing).
     """
 
     for pattern in NAME_PATTERNS:
 
-        match = re.search(pattern, text, re.IGNORECASE)
+        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
 
         if match:
-            return match.group(1).strip()
+            raw = match.group(1).strip()
+            # drop any status in parentheses
+            cleaned = re.sub(r"\(.*?\)", "", raw).strip()
+            return cleaned or None
 
     # fallback: first line of message, but only if it looks like a story title
     lines = text.split("\n")
@@ -70,7 +74,8 @@ def extract_name(text):
 
         # require a status marker like (Completed) / (Ongoing) to accept as title
         if re.search(r"\(\s*(completed?|complete|ongoing)\s*\)", first, re.IGNORECASE):
-            return first
+            cleaned = re.sub(r"\(.*?\)", "", first).strip()
+            return cleaned or None
 
     return None
 
@@ -123,8 +128,11 @@ def parse_story(message):
 
     story_type = extract_story_type(text)
 
+    # normalised key for lookups
+    key = re.sub(r"\s+", " ", name).strip().lower()
+
     return {
-        "name": name.lower(),
+        "name": key,
         "text": name,
         "link": link,
         "message_id": message.id,
