@@ -7,20 +7,27 @@ import asyncio
 import re
 import time
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InlineQueryResultArticle,
+    InputTextMessageContent
+)
+
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
     ContextTypes,
     CallbackQueryHandler,
+    InlineQueryHandler,
     filters
 )
 
 from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP, LOG_CHANNEL
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
-
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -39,17 +46,18 @@ def start_server():
 
 
 # -----------------------
-# Memory databases
+# Databases
 # -----------------------
 
 claims_db = {}
 cooldown_db = {}
 message_owner = {}
 
-request_db = {}   # story -> set(user_ids)
-request_chat = {} # story -> chat_id
+request_db = {}   
+request_chat = {} 
 
 story_index = []
+search_index = {}
 
 last_scan_count = 0
 
@@ -61,6 +69,34 @@ last_scan_count = 0
 def clean_story(name):
     name = re.sub(r"\(.*?\)", "", name)
     return name.strip()
+
+
+def build_search_index(names):
+
+    global search_index
+
+    search_index = {}
+
+    for name in names:
+
+        key = name.lower()
+
+        search_index[key] = name
+
+
+def fast_search(query):
+
+    query = query.lower()
+
+    results = []
+
+    for key in search_index:
+
+        if query in key:
+
+            results.append(search_index[key])
+
+    return results[:10]
 
 
 def is_user_blocked(user_id):
@@ -78,10 +114,12 @@ def is_user_blocked(user_id):
 async def log(context, text):
 
     try:
+
         await context.bot.send_message(
             chat_id=LOG_CHANNEL,
             text=text
         )
+
     except:
         pass
 
@@ -99,7 +137,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 <blockquote>@RiyaBot</blockquote>
 
-Commands: Type / to open the command menu and explore available options to search or request stories.
+Commands: Type / to open command menu and explore story search and request options.
 
 <blockquote><i>Disclaimer 📌
 We only index Telegram files. We do not host content.</i></blockquote>
@@ -150,7 +188,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 <u>/start</u> → Start the bot
 <u>/request</u> → Request a story
-<u>/scan</u> → Refresh story database [only admins]
+<u>/scan</u> → Refresh story database [admins]
 
 <b>You can also simply send a story name to search.</b>
 """
@@ -167,7 +205,7 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = """
 <b>📌 About Riya</b>
 
-<i>Riya is a smart Telegram story finder that helps users discover stories shared across Stories channels.</i>
+<i>Riya is a smart Telegram story finder that helps users discover stories shared across Telegram story channels.</i>
 
 <b>Fast search • Instant results • Story requests • Auto notifications</b>
 
@@ -185,19 +223,21 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not story_index:
+
         await update.message.reply_text("No stories indexed yet.")
         return
 
     text = "<b>Available stories on this channel 👇🏻</b>\n\n"
 
     for i, name in enumerate(story_index, 1):
+
         text += f"<i>{i}:- {name}</i>\n"
 
     await update.message.reply_text(text=text, parse_mode="HTML")
 
 
 # -----------------------
-# scan
+# Scan
 # -----------------------
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -211,6 +251,8 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result = await scan_channel(CHANNEL_ID)
 
         story_index = result["names"]
+
+        build_search_index(story_index)
 
         if result["stories"] == last_scan_count:
 
@@ -283,7 +325,43 @@ async def notify_requested(context):
 
 
 # -----------------------
-# request
+# Inline search
+# -----------------------
+
+async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.inline_query.query
+
+    if not query:
+        return
+
+    results = fast_search(query)
+
+    articles = []
+
+    for story in results:
+
+        articles.append(
+
+            InlineQueryResultArticle(
+
+                id=story,
+
+                title=story,
+
+                input_message_content=InputTextMessageContent(
+                    f"🔎 {story}"
+                )
+
+            )
+
+        )
+
+    await update.inline_query.answer(articles, cache_time=5)
+
+
+# -----------------------
+# Request
 # -----------------------
 
 async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -302,6 +380,7 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
     if story not in request_db:
+
         request_db[story] = set()
         request_chat[story] = update.effective_chat.id
 
@@ -340,13 +419,13 @@ Total Requests: {count}
 
     if count == 1:
 
-        text = f"<b>{mention}</b>\n\n<b>Your request for <i>{story}</i> has been sent. We will try our best to provide it.</b>"
+        text = f"<b>{mention}</b>\n\n<b>Your request for <i>{story}</i> has been sent.</b>"
 
     else:
 
         others = count - 1
 
-        text = f"<b>{mention}</b>\n\n<b>You and {others} other users requested <i>{story}</i>. We will try our best to provide it.</b>"
+        text = f"<b>{mention}</b>\n\n<b>You and {others} other users requested <i>{story}</i>.</b>"
 
     await update.effective_chat.send_message(
         text=text,
@@ -355,7 +434,7 @@ Total Requests: {count}
 
 
 # -----------------------
-# search
+# Search
 # -----------------------
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -413,7 +492,7 @@ I found this story 👇
 
 
 # -----------------------
-# buttons
+# Buttons
 # -----------------------
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -494,7 +573,7 @@ ID: {user.id}
 
 
 # -----------------------
-# start bot
+# Start bot
 # -----------------------
 
 def start_bot():
@@ -511,6 +590,8 @@ def start_bot():
     app.add_handler(CommandHandler("scan", scan))
     app.add_handler(CommandHandler("request", request_story))
 
+    app.add_handler(InlineQueryHandler(inline_search))
+
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, search)
     )
@@ -523,7 +604,7 @@ def start_bot():
 
 
 # -----------------------
-# main
+# Main
 # -----------------------
 
 def main():
@@ -534,4 +615,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
