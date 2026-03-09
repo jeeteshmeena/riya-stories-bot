@@ -1,42 +1,52 @@
 import re
 
+
 def parse_story(message):
 
-    text = None
-
-    # Telethon message
-    if hasattr(message, "text") and message.text:
-        text = message.text
-
-    # Telegram Bot API message
-    elif hasattr(message, "caption") and message.caption:
-        text = message.caption
+    text = message.text or message.caption
 
     if not text:
         return None
 
-    name = None
-    story_type = None
-    link = None
+    text_lower = text.lower()
 
-    name_match = re.search(r"Name\s*[:-]\s*(.*)", text, re.IGNORECASE)
-    type_match = re.search(r"Story\s*Type\s*[:-]\s*(.*)", text, re.IGNORECASE)
-    link_match = re.search(r"https://t\.me/\S+", text)
+    # story name patterns
+    patterns = [
 
-    if name_match:
-        name = name_match.group(1).strip()
+        r"name\s*:-\s*(.+)",
+        r"name\s*:\s*(.+)",
+        r"story\s*:-\s*(.+)",
+        r"story\s*:\s*(.+)",
 
-    if type_match:
-        story_type = type_match.group(1).strip()
+    ]
 
-    if link_match:
-        link = link_match.group(0)
+    story_name = None
 
-    if not name or not link:
+    for pattern in patterns:
+
+        match = re.search(pattern, text, re.IGNORECASE)
+
+        if match:
+
+            story_name = match.group(1).strip()
+
+            break
+
+    if not story_name:
         return None
 
+    # find telegram link
+    link_match = re.findall(r"https://t\.me/[^\s,]+", text)
+
+    if not link_match:
+        return None
+
+    link = link_match[-1]  # latest link
+
     return {
-        "name": name,
-        "type": story_type if story_type else "Unknown",
-        "link": link
+
+        "name": story_name.lower(),
+        "link": link,
+        "text": story_name
+
     }
