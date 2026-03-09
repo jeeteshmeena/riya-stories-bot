@@ -3,38 +3,21 @@ import os
 import threading
 import http.server
 import socketserver
-import json
 import asyncio
+import json
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
-)
-
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    ContextTypes,
-    CallbackQueryHandler,
-    filters
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, CallbackQueryHandler, filters
 
 from config import BOT_TOKEN, CHANNEL_ID, REQUEST_GROUP, COPYRIGHT_CHANNEL
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
-
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 REQUEST_DB = "requests.json"
 
-
-# -----------------------
-# Dummy Web Server
-# -----------------------
 
 def start_server():
 
@@ -44,46 +27,16 @@ def start_server():
 
     with socketserver.TCPServer(("", port), handler) as httpd:
 
-        logger.info(f"Dummy server running on port {port}")
+        logger.info(f"Server running {port}")
 
         httpd.serve_forever()
 
 
-# -----------------------
-# Request Database
-# -----------------------
-
-def load_requests():
-
-    if os.path.exists(REQUEST_DB):
-
-        with open(REQUEST_DB, "r") as f:
-
-            return json.load(f)
-
-    return {}
-
-
-def save_requests(data):
-
-    with open(REQUEST_DB, "w") as f:
-
-        json.dump(data, f, indent=2)
-
-
-# -----------------------
-# Ignore normal chat words
-# -----------------------
-
 IGNORE_WORDS = [
     "hi",
-    "hey",
     "hello",
-    "good morning",
-    "good night",
-    "good evening",
+    "hey",
     "ok",
-    "okay",
     "thanks"
 ]
 
@@ -101,42 +54,29 @@ def is_conversation(text):
     return False
 
 
-# -----------------------
-# /start
-# -----------------------
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "✨ Riya Bot v10\n\nSend story name to search."
+        "✨ Riya Bot v10\n\nSend story name."
     )
 
 
-# -----------------------
-# /scan
-# -----------------------
-
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    msg = await update.message.reply_text("🔍 Scanning channel...")
+    msg = await update.message.reply_text("Scanning...")
 
     try:
 
         result = await scan_channel(CHANNEL_ID)
 
         await msg.edit_text(
-            f"✅ Scan Complete\n\n"
-            f"Stories Indexed: {result['stories']}"
+            f"Scan Complete\nStories: {result['stories']}"
         )
 
     except Exception as e:
 
-        await msg.edit_text(f"❌ Scan failed\n{e}")
+        await msg.edit_text(f"Scan failed\n{e}")
 
-
-# -----------------------
-# Story Search
-# -----------------------
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -172,21 +112,19 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 callback_data="delete"
             )
         ]
-
     ]
 
     msg = await update.message.reply_text(
 
-        f"👋 Hey {update.message.from_user.first_name}\n"
+        f"Hey {update.message.from_user.first_name} 👋\n"
         f"I found this story 👇\n\n"
-        f"📚 {result['text']}\n\n"
-        f"🔗 Click below to open",
+        f"{result['text']}\n"
+        f"Click below to open",
 
         reply_markup=InlineKeyboardMarkup(keyboard)
 
     )
 
-    # auto delete after 5 minutes
     await asyncio.sleep(300)
 
     try:
@@ -194,28 +132,17 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.delete()
 
     except:
-
         pass
 
-
-# -----------------------
-# Button handler
-# -----------------------
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
 
-    data = query.data
-
-    if data == "delete":
+    if query.data == "delete":
 
         await query.message.delete()
 
-
-# -----------------------
-# Bot Start
-# -----------------------
 
 def start_bot():
 
@@ -224,20 +151,12 @@ def start_bot():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("scan", scan))
 
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, search)
-    )
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search))
 
     app.add_handler(CallbackQueryHandler(buttons))
 
-    logger.info("Riya Bot running")
-
     app.run_polling()
 
-
-# -----------------------
-# Main
-# -----------------------
 
 def main():
 
@@ -247,4 +166,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
