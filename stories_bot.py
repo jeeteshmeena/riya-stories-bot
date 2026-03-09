@@ -12,7 +12,6 @@ from telegram.ext import (
     MessageHandler,
     ContextTypes,
     CallbackQueryHandler,
-    InlineQueryHandler,
     filters
 )
 
@@ -20,7 +19,6 @@ from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
 from auto_scanner import auto_scan_loop
-from inline_search import search_inline
 
 
 logging.basicConfig(level=logging.INFO)
@@ -45,7 +43,7 @@ def start_server():
 
 
 # -----------------------
-# Ignore normal chat words
+# Ignore conversation
 # -----------------------
 
 IGNORE_WORDS = [
@@ -84,7 +82,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # -----------------------
-# /scan (manual scan)
+# /scan
 # -----------------------
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -97,8 +95,8 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await msg.edit_text(
             f"✅ Scan Complete\n\n"
-            f"Messages scanned: {result['messages']}\n"
-            f"Stories indexed: {result['stories']}"
+            f"Messages: {result['messages']}\n"
+            f"Stories: {result['stories']}"
         )
 
     except Exception as e:
@@ -161,33 +159,13 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     # auto delete after 5 minutes
+
     await asyncio.sleep(300)
 
     try:
         await msg.delete()
     except:
         pass
-
-
-# -----------------------
-# Inline Search
-# -----------------------
-
-async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    query = update.inline_query.query
-    offset = update.inline_query.offset
-
-    if not query:
-        return
-
-    results, next_offset = search_inline(query, offset)
-
-    await update.inline_query.answer(
-        results,
-        next_offset=next_offset,
-        cache_time=5
-    )
 
 
 # -----------------------
@@ -212,14 +190,14 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def error_handler(update, context):
 
-    logger.error(msg="Exception while handling update:", exc_info=context.error)
+    logger.error(context.error)
 
 
 # -----------------------
 # Bot Start
 # -----------------------
 
-async def start_bot():
+async def run_bot():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -230,22 +208,17 @@ async def start_bot():
         MessageHandler(filters.TEXT & ~filters.COMMAND, search)
     )
 
-    app.add_handler(InlineQueryHandler(inline_query))
-
     app.add_handler(CallbackQueryHandler(buttons))
 
     app.add_error_handler(error_handler)
 
     logger.info("Riya Bot running")
 
-    # auto scanner
+    # start auto scanner
+
     asyncio.create_task(auto_scan_loop())
 
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-
-    await app.updater.idle()
+    await app.run_polling()
 
 
 # -----------------------
@@ -256,7 +229,7 @@ def main():
 
     threading.Thread(target=start_server).start()
 
-    asyncio.run(start_bot())
+    asyncio.run(run_bot())
 
 
 if __name__ == "__main__":
