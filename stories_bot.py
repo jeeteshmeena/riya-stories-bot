@@ -27,6 +27,7 @@ from telegram.ext import (
 from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP, LOG_CHANNEL
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
+from database import get_story
 
 
 logging.basicConfig(level=logging.INFO)
@@ -343,9 +344,21 @@ If we find it, it will be uploaded soon.</b>
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    query = update.message.text.strip()
+    query_text = update.message.text.strip()
 
-    result = fuzzy_search(query)
+    # First try fast in‑memory search (after /scan has populated indexes)
+    result = None
+
+    fast_results = fast_search(query_text)
+
+    if fast_results:
+        # pick the first match and load full data from DB
+        candidate_name = fast_results[0]
+        result = get_story(candidate_name.lower())
+
+    # Fallback to fuzzy DB search if nothing matched from in‑memory index
+    if not result:
+        result = fuzzy_search(query_text)
 
     if not result:
         return
@@ -355,9 +368,15 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     story_name = clean_story(result["name"])
 
-    caption_text = result.get("caption", "")
+    # Prefer pre‑computed story_type from the scanner, fallback to regex
+    story_type = result.get("story_type")
 
-    story_type = extract_story_type(caption_text)
+    if not story_type:
+        caption_text = result.get("caption", "")
+        story_type = extract_story_type(caption_text)
+
+    if not story_type:
+        story_type = "Can't find"
 
     keyboard = [
 
@@ -410,12 +429,17 @@ Hey {mention} 👋
 
     message_owner[msg.message_id] = user.id
 
-    await asyncio.sleep(1800)
+    # delete the reply later without blocking the handler
+    async def _delete_later():
 
-    try:
-        await msg.delete()
-    except:
-        pass
+        await asyncio.sleep(1800)
+
+        try:
+            await msg.delete()
+        except:
+            pass
+
+    asyncio.create_task(_delete_later())
 
 
 # -----------------------
