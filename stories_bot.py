@@ -17,15 +17,16 @@ from telegram.ext import (
     filters
 )
 
-from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP
+from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP, LOG_CHANNEL
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # -----------------------
-# Dummy server for Render
+# Dummy server (Render)
 # -----------------------
 
 def start_server():
@@ -38,15 +39,17 @@ def start_server():
 
 
 # -----------------------
-# Databases
+# Memory databases
 # -----------------------
 
 claims_db = {}
 cooldown_db = {}
 message_owner = {}
 
-# story -> set(user_ids)
-request_db = {}
+request_db = {}   # story -> set(user_ids)
+request_chat = {} # story -> chat_id
+
+story_index = []
 
 last_scan_count = 0
 
@@ -57,7 +60,7 @@ last_scan_count = 0
 
 def clean_story(name):
     name = re.sub(r"\(.*?\)", "", name)
-    return name.strip().lower()
+    return name.strip()
 
 
 def is_user_blocked(user_id):
@@ -72,24 +75,15 @@ def is_user_blocked(user_id):
     return True
 
 
-# -----------------------
-# Cooldown
-# -----------------------
+async def log(context, text):
 
-async def cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if len(context.args) < 2:
-        return
-
-    user_id = int(context.args[0])
-    minutes = int(context.args[1])
-
-    cooldown_db[user_id] = time.time() + minutes * 60
-
-    await update.message.reply_text(
-        text=f"Cooldown applied to `{user_id}` for {minutes} minutes",
-        parse_mode="Markdown"
-    )
+    try:
+        await context.bot.send_message(
+            chat_id=LOG_CHANNEL,
+            text=text
+        )
+    except:
+        pass
 
 
 # -----------------------
@@ -98,52 +92,150 @@ async def cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    user = update.effective_user.mention_html()
+
+    text = f"""
+<b>♡ Hey Welcome</b>, {user}
+
+<blockquote>@RiyaBot</blockquote>
+
+Commands: Type / to open the command menu and explore available options to search or request stories.
+
+<blockquote><i>Disclaimer 📌
+We only index Telegram files. We do not host content.</i></blockquote>
+
+<u>Send your query to begin!</u>
+
+<b>By</b> @MeJeetX
+"""
+
     await update.message.reply_text(
-        text="✨ Riya Bot\n\nSend story name to search."
+        text=text,
+        parse_mode="HTML"
     )
+
+    await log(context, f"User started bot: {update.effective_user.id}")
 
 
 # -----------------------
-# Scan + update detection
+# /how
+# -----------------------
+
+async def how(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    text = """
+<b>⚙️ How This Bot Works</b>
+
+<b>• Send a story name</b>
+<b>• Bot searches the database</b>
+<b>• If available → you get the link</b>
+<b>• If not → request it using /request</b>
+
+When the story gets uploaded, you will be notified automatically.
+"""
+
+    await update.message.reply_text(text=text, parse_mode="HTML")
+
+
+# -----------------------
+# /help
+# -----------------------
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    text = """
+<b>🆘 Help Center</b>
+
+<i>Use these commands to interact with the bot:</i>
+
+<u>/start</u> → Start the bot
+<u>/request</u> → Request a story
+<u>/scan</u> → Refresh story database [only admins]
+
+<b>You can also simply send a story name to search.</b>
+"""
+
+    await update.message.reply_text(text=text, parse_mode="HTML")
+
+
+# -----------------------
+# /about
+# -----------------------
+
+async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    text = """
+<b>📌 About Riya</b>
+
+<i>Riya is a smart Telegram story finder that helps users discover stories shared across Stories channels.</i>
+
+<b>Fast search • Instant results • Story requests • Auto notifications</b>
+
+<b>Developer:</b> @MeJeetX
+<b>Version:</b> Riya v10
+"""
+
+    await update.message.reply_text(text=text, parse_mode="HTML")
+
+
+# -----------------------
+# /stories
+# -----------------------
+
+async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not story_index:
+        await update.message.reply_text("No stories indexed yet.")
+        return
+
+    text = "<b>Available stories on this channel 👇🏻</b>\n\n"
+
+    for i, name in enumerate(story_index, 1):
+        text += f"<i>{i}:- {name}</i>\n"
+
+    await update.message.reply_text(text=text, parse_mode="HTML")
+
+
+# -----------------------
+# scan
 # -----------------------
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    global last_scan_count
+    global last_scan_count, story_index
 
-    msg = await update.message.reply_text(text="Scanning channel...")
+    msg = await update.message.reply_text("Scanning channel...")
 
     try:
 
         result = await scan_channel(CHANNEL_ID)
 
+        story_index = result["names"]
+
         if result["stories"] == last_scan_count:
 
-            await msg.edit_text(
-                text="Scan complete.\n\nNo updates found."
-            )
+            await msg.edit_text("No updates found.")
 
         else:
 
-            new_count = result["stories"]
-            last_scan_count = new_count
+            last_scan_count = result["stories"]
 
             await msg.edit_text(
-                text=f"Scan Complete\n\nStories indexed: {new_count}"
+                f"Scan complete.\nStories indexed: {last_scan_count}"
             )
 
-            await notify_requested_users()
+            await notify_requested(context)
 
     except Exception as e:
 
-        await msg.edit_text(text=f"Scan failed\n{e}")
+        await msg.edit_text(f"Scan failed\n{e}")
 
 
 # -----------------------
-# Notify users if story found
+# Notify system
 # -----------------------
 
-async def notify_requested_users():
+async def notify_requested(context):
 
     for story, users in request_db.items():
 
@@ -152,43 +244,123 @@ async def notify_requested_users():
         if not result:
             continue
 
-        story_name = clean_story(result["name"])
         link = result["link"]
 
+        tags = []
+
         for user_id in users:
+            tags.append(f'<a href="tg://user?id={user_id}">user</a>')
 
-            try:
+        mention_text = " ".join(tags)
 
-                await app.bot.send_message(
+        chat_id = request_chat.get(story)
 
-                    chat_id=user_id,
+        try:
 
-                    text=f"""
-📚 Story Available
+            await context.bot.send_message(
 
-Your requested story *{story_name}* is now available.
+                chat_id=chat_id,
 
-Read here:
+                text=f"""
+<b>Hey {mention_text} 👻</b>
+
+<i>Your requested story - {story} now available.</i>
+
+<b>Read here:</b>
 {link}
 """,
 
-                    parse_mode="Markdown"
+                parse_mode="HTML"
 
-                )
+            )
 
-            except:
-                pass
+        except:
+            pass
+
+        await log(context, f"Story delivered: {story}")
 
         request_db[story] = set()
 
 
 # -----------------------
-# Search
+# request
+# -----------------------
+
+async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not context.args:
+        return
+
+    story = " ".join(context.args).lower()
+
+    user = update.effective_user
+    mention = user.mention_html()
+
+    try:
+        await update.message.delete()
+    except:
+        pass
+
+    if story not in request_db:
+        request_db[story] = set()
+        request_chat[story] = update.effective_chat.id
+
+    if user.id in request_db[story]:
+
+        await update.effective_chat.send_message(
+
+            text=f"<b>{mention}</b>\n\n<i>You already requested <b>{story}</b>. Please avoid duplicate requests.</i>",
+
+            parse_mode="HTML"
+
+        )
+
+        return
+
+    request_db[story].add(user.id)
+
+    count = len(request_db[story])
+
+    username = f"@{user.username}" if user.username else "No username"
+
+    await context.bot.send_message(
+
+        chat_id=REQUEST_GROUP,
+
+        text=f"""
+Story Request
+
+Name: {story}
+User ID: {user.id}
+Username: {username}
+
+Total Requests: {count}
+"""
+    )
+
+    if count == 1:
+
+        text = f"<b>{mention}</b>\n\n<b>Your request for <i>{story}</i> has been sent. We will try our best to provide it.</b>"
+
+    else:
+
+        others = count - 1
+
+        text = f"<b>{mention}</b>\n\n<b>You and {others} other users requested <i>{story}</i>. We will try our best to provide it.</b>"
+
+    await update.effective_chat.send_message(
+        text=text,
+        parse_mode="HTML"
+    )
+
+
+# -----------------------
+# search
 # -----------------------
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    user = update.message.from_user
+    user = update.effective_user
 
     if is_user_blocked(user.id):
         return
@@ -206,10 +378,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         [InlineKeyboardButton("OPEN STORY", url=result["link"])],
 
-        [InlineKeyboardButton(
-            "Got Copyright ?",
-            callback_data=f"copyright|{story_name}"
-        )],
+        [InlineKeyboardButton("Got Copyright ?", callback_data=f"copyright|{story_name}")],
 
         [InlineKeyboardButton("Delete", callback_data="delete")]
 
@@ -244,94 +413,7 @@ I found this story 👇
 
 
 # -----------------------
-# Request story
-# -----------------------
-
-async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if not context.args:
-        return
-
-    story = " ".join(context.args).lower()
-
-    user = update.message.from_user
-    mention = user.mention_html()
-
-    try:
-        await update.message.delete()
-    except:
-        pass
-
-    if story not in request_db:
-        request_db[story] = set()
-
-    if user.id in request_db[story]:
-
-        await update.effective_chat.send_message(
-
-            text=f"""
-<b>{mention}</b>
-
-<i>You already requested <b>{story}</b>.
-Please avoid duplicate requests.</i>
-""",
-
-            parse_mode="HTML"
-
-        )
-
-        return
-
-    request_db[story].add(user.id)
-
-    count = len(request_db[story])
-
-    username = f"@{user.username}" if user.username else "No username"
-
-    await context.bot.send_message(
-
-        chat_id=REQUEST_GROUP,
-
-        text=f"""
-Story Request
-
-Name: {story}
-User ID: {user.id}
-Username: {username}
-
-Total Requests: {count}
-"""
-
-    )
-
-    if count == 1:
-
-        text = f"""
-<b>{mention}</b>
-
-<b>Your request for <i>{story}</i> has been sent.
-We will try our best to provide this story.</b>
-"""
-
-    else:
-
-        others = count - 1
-
-        text = f"""
-<b>{mention}</b>
-
-<b>You and {others} other users requested <i>{story}</i>.
-We will try our best to provide this story.</b>
-"""
-
-    await update.effective_chat.send_message(
-        text=text,
-        parse_mode="HTML"
-    )
-
-
-# -----------------------
-# Buttons
+# buttons
 # -----------------------
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -412,7 +494,7 @@ ID: {user.id}
 
 
 # -----------------------
-# Start bot
+# start bot
 # -----------------------
 
 def start_bot():
@@ -422,9 +504,12 @@ def start_bot():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("how", how))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("about", about))
+    app.add_handler(CommandHandler("stories", stories))
     app.add_handler(CommandHandler("scan", scan))
     app.add_handler(CommandHandler("request", request_story))
-    app.add_handler(CommandHandler("cooldown", cooldown))
 
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, search)
@@ -438,7 +523,7 @@ def start_bot():
 
 
 # -----------------------
-# Main
+# main
 # -----------------------
 
 def main():
