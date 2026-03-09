@@ -1,32 +1,12 @@
-import json
 from telethon import TelegramClient
-from telethon.sessions import StringSession
-from parser import parse_story
 from config import API_ID, API_HASH, SESSION_STRING
+from telethon.sessions import StringSession
 
-DB_FILE = "database.json"
-
-
-def load_db():
-
-    try:
-
-        with open(DB_FILE) as f:
-            return json.load(f)
-
-    except:
-        return {}
+from parser import parse_story
+from database import add_story
 
 
-def save_db(data):
-
-    with open(DB_FILE, "w") as f:
-        json.dump(data, f, indent=2)
-
-
-async def scan_channel(channel):
-
-    db = load_db()
+async def scan_channel(channel_id):
 
     client = TelegramClient(
         StringSession(SESSION_STRING),
@@ -36,30 +16,25 @@ async def scan_channel(channel):
 
     await client.start()
 
-    total = 0
+    total_messages = 0
+    stories_found = 0
 
-    async for msg in client.iter_messages(channel):
+    async for msg in client.iter_messages(channel_id):
+
+        total_messages += 1
 
         story = parse_story(msg)
 
         if not story:
             continue
 
-        name = story["name"]
+        add_story(story)
 
-        total += 1
+        stories_found += 1
 
-        if name not in db:
+    await client.disconnect()
 
-            db[name] = story
-
-        else:
-
-            # latest post logic
-            if msg.id > db[name]["message_id"]:
-
-                db[name] = story
-
-    save_db(db)
-
-    return {"stories": len(db), "messages": total}
+    return {
+        "messages": total_messages,
+        "stories": stories_found
+    }
