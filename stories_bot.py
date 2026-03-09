@@ -12,24 +12,18 @@ from telegram.ext import (
     MessageHandler,
     ContextTypes,
     CallbackQueryHandler,
-    InlineQueryHandler,
     filters
 )
 
 from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
-from auto_scanner import auto_scan_loop
-from inline_search import search_inline
+from database import load_db
 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-# -----------------------
-# Dummy Web Server (Render)
-# -----------------------
 
 def start_server():
 
@@ -44,18 +38,9 @@ def start_server():
         httpd.serve_forever()
 
 
-# -----------------------
-# Ignore normal chat words
-# -----------------------
-
 IGNORE_WORDS = [
-    "hi",
-    "hello",
-    "hey",
-    "ok",
-    "thanks",
-    "good morning",
-    "good night"
+    "hi","hello","hey","ok","thanks",
+    "good morning","good night"
 ]
 
 
@@ -66,15 +51,11 @@ def is_conversation(text):
     if text in IGNORE_WORDS:
         return True
 
-    if len(text) < 4:
+    if len(text) < 3:
         return True
 
     return False
 
-
-# -----------------------
-# /start
-# -----------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -83,23 +64,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-# -----------------------
-# /scan (manual scan)
-# -----------------------
-
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = await update.message.reply_text("🔍 Scanning channel...")
 
     try:
 
+        before = len(load_db())
+
         result = await scan_channel(CHANNEL_ID)
 
-        await msg.edit_text(
-            f"✅ Scan Complete\n\n"
-            f"Messages scanned: {result['messages']}\n"
-            f"Stories indexed: {result['stories']}"
-        )
+        after = len(load_db())
+
+        if after == before:
+
+            await msg.edit_text(
+                f"✅ Scan Complete\n\n"
+                f"No new stories found.\n"
+                f"Total stories: {after}"
+            )
+
+        else:
+
+            new = after - before
+
+            await msg.edit_text(
+                f"✅ Scan Complete\n\n"
+                f"New stories added: {new}\n"
+                f"Total stories: {after}"
+            )
 
     except Exception as e:
 
@@ -107,10 +100,6 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await msg.edit_text(f"❌ Scan failed\n{e}")
 
-
-# -----------------------
-# Story Search
-# -----------------------
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -126,26 +115,17 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
 
-        [
-            InlineKeyboardButton(
-                "📖 Open Story",
-                url=result["link"]
-            )
-        ],
+        [InlineKeyboardButton("📖 Open Story", url=result["link"])],
 
-        [
-            InlineKeyboardButton(
-                "⚠️ Copyright",
-                url=f"https://t.me/{COPYRIGHT_CHANNEL}"
-            )
-        ],
+        [InlineKeyboardButton(
+            "⚠️ Copyright",
+            url=f"https://t.me/{COPYRIGHT_CHANNEL}"
+        )],
 
-        [
-            InlineKeyboardButton(
-                "🗑 Delete",
-                callback_data="delete"
-            )
-        ]
+        [InlineKeyboardButton(
+            "🗑 Delete",
+            callback_data="delete"
+        )]
 
     ]
 
@@ -160,7 +140,6 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     )
 
-    # auto delete after 5 minutes
     await asyncio.sleep(300)
 
     try:
@@ -168,31 +147,6 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-
-# -----------------------
-# Inline Search
-# -----------------------
-
-async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    query = update.inline_query.query
-    offset = update.inline_query.offset
-
-    if not query:
-        return
-
-    results, next_offset = search_inline(query, offset)
-
-    await update.inline_query.answer(
-        results,
-        next_offset=next_offset,
-        cache_time=5
-    )
-
-
-# -----------------------
-# Button handler
-# -----------------------
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -206,20 +160,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
-# -----------------------
-# Error handler
-# -----------------------
-
-async def error_handler(update, context):
-
-    logger.error(msg="Exception while handling update:", exc_info=context.error)
-
-
-# -----------------------
-# Bot Start
-# -----------------------
-
-async def start_bot():
+async def run_bot():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -230,35 +171,19 @@ async def start_bot():
         MessageHandler(filters.TEXT & ~filters.COMMAND, search)
     )
 
-    app.add_handler(InlineQueryHandler(inline_query))
-
     app.add_handler(CallbackQueryHandler(buttons))
-
-    app.add_error_handler(error_handler)
 
     logger.info("Riya Bot running")
 
-    # auto scanner
-    asyncio.create_task(auto_scan_loop())
+    await app.run_polling()
 
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-
-    await app.updater.idle()
-
-
-# -----------------------
-# Main
-# -----------------------
 
 def main():
 
     threading.Thread(target=start_server).start()
 
-    asyncio.run(start_bot())
+    asyncio.run(run_bot())
 
 
 if __name__ == "__main__":
-
     main()
