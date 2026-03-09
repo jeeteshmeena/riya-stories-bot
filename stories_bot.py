@@ -4,7 +4,6 @@ import threading
 import http.server
 import socketserver
 import asyncio
-import time
 import re
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -17,13 +16,7 @@ from telegram.ext import (
     filters
 )
 
-from config import (
-    BOT_TOKEN,
-    CHANNEL_ID,
-    COPYRIGHT_CHANNEL,   # private group id for copyright claims
-    REQUEST_GROUP,       # requests private channel
-    LOG_CHANNEL          # bot logs private group
-)
+from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP
 
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
@@ -34,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 # -----------------------
-# Dummy server (Render)
+# Render dummy server
 # -----------------------
 
 def start_server():
@@ -46,50 +39,12 @@ def start_server():
     with socketserver.TCPServer(("", port), handler) as httpd:
 
         logger.info(f"Server running {port}")
+
         httpd.serve_forever()
 
 
 # -----------------------
-# Cooldown system
-# -----------------------
-
-cooldowns = {}
-
-
-def is_user_blocked(user_id):
-
-    if user_id not in cooldowns:
-        return False
-
-    if cooldowns[user_id] < time.time():
-        del cooldowns[user_id]
-        return False
-
-    return True
-
-
-# admin command in LOG group
-async def cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    if update.effective_chat.id != LOG_CHANNEL:
-        return
-
-    if len(context.args) < 2:
-        return
-
-    user_id = int(context.args[0])
-    minutes = int(context.args[1])
-
-    cooldowns[user_id] = time.time() + minutes * 60
-
-    await update.message.reply_text(
-        f"User `{user_id}` cooldown applied for {minutes} minutes",
-        parse_mode="Markdown"
-    )
-
-
-# -----------------------
-# Ignore conversation
+# Ignore normal messages
 # -----------------------
 
 IGNORE_WORDS = [
@@ -112,21 +67,25 @@ def is_conversation(text):
 
 
 # -----------------------
+# Clean story name
+# -----------------------
+
+def clean_story(name):
+
+    name = re.sub(r"\(.*?\)", "", name)
+
+    return name.strip()
+
+
+# -----------------------
 # /start
 # -----------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    user = update.message.from_user.first_name
-
     await update.message.reply_text(
-
-f"""
-✨ Welcome {user}
-
-Send story name to search
-""")
-
+        "✨ Riya Bot\n\nSend story name to search."
+    )
 
 
 # -----------------------
@@ -146,8 +105,8 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 f"""
 Scan Complete
 
-Messages: {result['messages']}
-Stories: {result['stories']}
+Messages scanned: {result['messages']}
+Stories indexed: {result['stories']}
 """
         )
 
@@ -157,25 +116,10 @@ Stories: {result['stories']}
 
 
 # -----------------------
-# Clean story name
-# -----------------------
-
-def clean_story_name(name):
-
-    name = re.sub(r"\(.*?\)", "", name)
-    return name.strip()
-
-
-# -----------------------
-# Story search
+# Story Search
 # -----------------------
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    user = update.message.from_user
-
-    if is_user_blocked(user.id):
-        return
 
     query = update.message.text.strip()
 
@@ -187,7 +131,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not result:
         return
 
-    story_name = clean_story_name(result["name"])
+    story_name = clean_story(result["name"])
 
     keyboard = [
 
@@ -211,13 +155,14 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 callback_data="delete"
             )
         ]
-
     ]
+
+    user = update.message.from_user.first_name
 
     msg = await update.message.reply_text(
 
 f"""
-Hey {user.first_name} 👋
+Hey {user} 👋
 I found this story 👇
 
 *{story_name}*
@@ -239,13 +184,47 @@ _༎ຶ‿༎ຶ This reply will be deleted automatically in 30 minutes_
 
 
 # -----------------------
+# Request story
+# -----------------------
+
+async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not context.args:
+        return
+
+    story = " ".join(context.args)
+
+    user = update.message.from_user
+
+    try:
+        await update.message.delete()
+    except:
+        pass
+
+    await context.bot.send_message(
+        chat_id=REQUEST_GROUP,
+        text=f"""
+Story Request
+
+Name: {story}
+
+User: @{user.username if user.username else user.first_name}
+ID: {user.id}
+"""
+    )
+
+    await update.effective_chat.send_message(
+        text=f"{user.first_name}, your request for {story} has been sent."
+    )
+
+
+# -----------------------
 # Button handler
 # -----------------------
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
-    user = query.from_user
 
     if query.data == "delete":
 
@@ -261,65 +240,27 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         story = query.data.split("|")[1]
 
+        user = query.from_user
+
         await context.bot.send_message(
 
             chat_id=COPYRIGHT_CHANNEL,
 
-f"""
+            text=f"""
 Copyright Claim
 
 Story: {story}
 
-User: @{user.username if user.username else "no_username"}
+User: @{user.username if user.username else user.first_name}
 ID: {user.id}
 """
-
         )
 
         await query.answer("Copyright claim sent")
 
 
 # -----------------------
-# Request story
-# -----------------------
-
-async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    user = update.message.from_user
-
-    if not context.args:
-        return
-
-    story = " ".join(context.args)
-
-    await context.bot.send_message(
-
-        chat_id=REQUEST_GROUP,
-
-f"""
-Story Request
-
-Name: {story}
-
-User: @{user.username if user.username else "no_username"}
-ID: {user.id}
-"""
-
-    )
-
-    try:
-        await update.message.delete()
-    except:
-        pass
-
-    await update.effective_chat.send_message(
-        f"{user.mention_html()} request sent",
-        parse_mode="HTML"
-    )
-
-
-# -----------------------
-# Bot start
+# Start bot
 # -----------------------
 
 def start_bot():
@@ -329,7 +270,6 @@ def start_bot():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("scan", scan))
     app.add_handler(CommandHandler("request", request_story))
-    app.add_handler(CommandHandler("cooldown", cooldown))
 
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, search)
