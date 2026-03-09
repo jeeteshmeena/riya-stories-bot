@@ -10,6 +10,12 @@ NAME_PATTERNS = [
 
 LINK_PATTERN = r"https://t\.me/[^\s]+"
 
+TYPE_PATTERN = re.compile(
+    r"(Story Type|Type|Genre)\s*[:\-]\s*(.+)",
+    re.IGNORECASE
+)
+
+
 def get_text(message):
     """
     Safely get text from Telethon message
@@ -64,6 +70,21 @@ def extract_link(text):
     return links[-1]
 
 
+def extract_story_type(text):
+    """
+    Detect story type / genre from full message text.
+    """
+    if not text:
+        return None
+
+    match = TYPE_PATTERN.search(text)
+
+    if match:
+        return match.group(2).strip()
+
+    return None
+
+
 def parse_story(message):
 
     text = get_text(message)
@@ -81,9 +102,13 @@ def parse_story(message):
     if not link:
         return None
 
+    story_type = extract_story_type(text)
+
     return {
         "name": name.lower(),
         "text": name,
         "link": link,
-        "message_id": message.id
+        "message_id": message.id,
+        "caption": text,
+        "story_type": story_type
     }
