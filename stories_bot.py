@@ -16,12 +16,12 @@ from telegram.ext import (
     filters
 )
 
-from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL
+from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
 from auto_scanner import auto_scan_loop
 from inline_search import search_inline
-from database import load_db
+from request_manager import add_request
 
 
 logging.basicConfig(level=logging.INFO)
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 # -----------------------
-# Dummy Web Server
+# Dummy Server
 # -----------------------
 
 def start_server():
@@ -74,15 +74,31 @@ def is_conversation(text):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    user = update.message.from_user.first_name
+
     await update.message.reply_text(
 
-        "✨ **Riya Bot v10**\n\n"
-        "Send any story name to search.\n\n"
-        "Example:\n"
-        "`Haweli`\n"
-        "`Saaya`",
+f"""
+✨ **Welcome, {user}!**
 
-        parse_mode="Markdown"
+📚 **Riya Stories Bot**
+
+Search any story instantly.
+
+**Commands**
+
+`/scan` — scan database  
+`/request story name` — request story
+
+📌 _Example_
+
+`/request Haweli`
+
+Send story name to begin 🔍
+""",
+
+parse_mode="Markdown"
+
     )
 
 
@@ -92,37 +108,92 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    msg = await update.message.reply_text("🔍 Scanning channel...")
+    msg = await update.message.reply_text("🔎 **Scanning channel...**", parse_mode="Markdown")
 
     try:
 
-        old_count = len(load_db())
-
         result = await scan_channel(CHANNEL_ID)
 
-        new_count = result["stories"]
+        await msg.edit_text(
 
-        if new_count == old_count:
+f"""
+✅ **Scan Complete**
 
-            await msg.edit_text(
-                f"✅ Scan Complete\n\n"
-                f"No updates found.\n"
-                f"Stories remain: {new_count}"
-            )
+📨 Messages scanned: `{result['messages']}`  
+📚 Stories indexed: `{result['stories']}`
+""",
 
-        else:
+parse_mode="Markdown"
 
-            await msg.edit_text(
-                f"✅ Scan Complete\n\n"
-                f"Messages scanned: {result['messages']}\n"
-                f"Stories indexed: {new_count}"
-            )
+        )
 
     except Exception as e:
 
-        logger.error(e)
+        await msg.edit_text(f"❌ Scan failed\n`{e}`", parse_mode="Markdown")
 
-        await msg.edit_text(f"❌ Scan failed\n{e}")
+
+# -----------------------
+# Request Command
+# -----------------------
+
+async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    user = update.message.from_user
+
+    if not context.args:
+
+        await update.message.reply_text(
+            "❌ Usage:\n`/request story name`",
+            parse_mode="Markdown"
+        )
+        return
+
+    story = " ".join(context.args)
+
+    status = add_request(story, user)
+
+    # delete user message
+    try:
+        await update.message.delete()
+    except:
+        pass
+
+    if status == "duplicate":
+
+        await update.effective_chat.send_message(
+
+f"⚠️ {user.mention_html()} this story is already requested.\nPlease don't request again.",
+
+parse_mode="HTML"
+
+        )
+
+        return
+
+    await context.bot.send_message(
+
+        chat_id=REQUEST_GROUP,
+
+f"""
+📚 **Story Request**
+
+Name: **{story}**
+
+Requested by: {user.mention_html()}
+ID: `{user.id}`
+""",
+
+parse_mode="HTML"
+
+    )
+
+    await update.effective_chat.send_message(
+
+f"✅ {user.mention_html()} your request for **{story}** has been sent.",
+
+parse_mode="HTML"
+
+    )
 
 
 # -----------------------
@@ -139,43 +210,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = fuzzy_search(query)
 
     if not result:
-
-        keyboard = [
-
-            [
-                InlineKeyboardButton(
-                    "📩 Request Story",
-                    url=f"https://t.me/{COPYRIGHT_CHANNEL}"
-                )
-            ],
-
-            [
-                InlineKeyboardButton(
-                    "🗑 Delete",
-                    callback_data="delete"
-                )
-            ]
-
-        ]
-
-        msg = await update.message.reply_text(
-
-            f"❌ Story not found\n\n"
-            f"Name: {query}",
-
-            reply_markup=InlineKeyboardMarkup(keyboard)
-
-        )
-
-        await asyncio.sleep(300)
-
-        try:
-            await msg.delete()
-        except:
-            pass
-
         return
-
 
     keyboard = [
 
@@ -204,12 +239,17 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = await update.message.reply_text(
 
-        f"Hey {update.message.from_user.first_name} 👋\n"
-        f"I found this story 👇\n\n"
-        f"{result['text']}\n\n"
-        f"Click below to open",
+f"""
+✨ **Story Found**
 
-        reply_markup=InlineKeyboardMarkup(keyboard)
+📖 **{result['name']}**
+
+_{result['text']}_
+""",
+
+parse_mode="Markdown",
+
+reply_markup=InlineKeyboardMarkup(keyboard)
 
     )
 
@@ -219,93 +259,3 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.delete()
     except:
         pass
-
-
-# -----------------------
-# Inline Search
-# -----------------------
-
-async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    query = update.inline_query.query
-    offset = update.inline_query.offset
-
-    if not query:
-        return
-
-    results, next_offset = search_inline(query, offset)
-
-    await update.inline_query.answer(
-        results,
-        next_offset=next_offset,
-        cache_time=5
-    )
-
-
-# -----------------------
-# Buttons
-# -----------------------
-
-async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    query = update.callback_query
-
-    if query.data == "delete":
-
-        try:
-            await query.message.delete()
-        except:
-            pass
-
-
-# -----------------------
-# Error handler
-# -----------------------
-
-async def error_handler(update, context):
-
-    logger.error(context.error)
-
-
-# -----------------------
-# Bot Start
-# -----------------------
-
-async def start_bot():
-
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("scan", scan))
-
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, search)
-    )
-
-    app.add_handler(InlineQueryHandler(inline_query))
-
-    app.add_handler(CallbackQueryHandler(buttons))
-
-    app.add_error_handler(error_handler)
-
-    logger.info("Riya Bot running")
-
-    asyncio.create_task(auto_scan_loop())
-
-    await app.run_polling()
-
-
-# -----------------------
-# Main
-# -----------------------
-
-def main():
-
-    threading.Thread(target=start_server).start()
-
-    asyncio.run(start_bot())
-
-
-if __name__ == "__main__":
-
-    main()
