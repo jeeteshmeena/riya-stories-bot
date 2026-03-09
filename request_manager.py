@@ -1,41 +1,44 @@
 import json
 import os
 
-REQUEST_FILE = "requests.json"
+DB_FILE = "requests.json"
 
 
-def load_requests():
+def load():
 
-    if os.path.exists(REQUEST_FILE):
+    if not os.path.exists(DB_FILE):
+        return {}
 
-        with open(REQUEST_FILE, "r") as f:
-            return json.load(f)
-
-    return {}
-
-
-def save_requests(data):
-
-    with open(REQUEST_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    with open(DB_FILE) as f:
+        return json.load(f)
 
 
-def add_request(story, user_id):
+def save(data):
 
-    db = load_requests()
+    with open(DB_FILE,"w") as f:
+        json.dump(data,f,indent=2)
+
+
+def add_request(story,user):
+
+    db = load()
+
+    story = story.lower()
 
     if story not in db:
 
         db[story] = {
-            "count": 0,
-            "users": []
+            "count":0,
+            "users":[]
         }
 
-    if user_id not in db[story]["users"]:
+    if user.id in db[story]["users"]:
+        return "duplicate"
 
-        db[story]["users"].append(user_id)
-        db[story]["count"] += 1
+    db[story]["users"].append(user.id)
 
-    save_requests(db)
+    db[story]["count"] += 1
 
-    return db[story]["count"]
+    save(db)
+
+    return "added"
