@@ -8,9 +8,6 @@ def parse_story(message):
     if not text:
         return None
 
-    text_lower = text.lower()
-
-    # story name patterns
     patterns = [
 
         r"name\s*:-\s*(.+)",
@@ -20,33 +17,31 @@ def parse_story(message):
 
     ]
 
-    story_name = None
+    name = None
 
-    for pattern in patterns:
+    for p in patterns:
 
-        match = re.search(pattern, text, re.IGNORECASE)
+        m = re.search(p, text, re.IGNORECASE)
 
-        if match:
+        if m:
 
-            story_name = match.group(1).strip()
+            name = m.group(1).strip()
 
             break
 
-    if not story_name:
+    if not name:
         return None
 
-    # find telegram link
-    link_match = re.findall(r"https://t\.me/[^\s,]+", text)
+    links = re.findall(r"https://t\.me/[^\s,]+", text)
 
-    if not link_match:
+    if not links:
         return None
-
-    link = link_match[-1]  # latest link
 
     return {
 
-        "name": story_name.lower(),
-        "link": link,
-        "text": story_name
+        "name": name.lower(),
+        "text": name,
+        "link": links[-1],
+        "message_id": message.id
 
     }
