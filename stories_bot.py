@@ -4,6 +4,7 @@ import threading
 import http.server
 import socketserver
 import json
+import asyncio
 
 from telegram import (
     Update,
@@ -125,8 +126,7 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await msg.edit_text(
             f"✅ Scan Complete\n\n"
-            f"Messages: {result['messages']}\n"
-            f"Stories: {result['stories']}"
+            f"Stories Indexed: {result['stories']}"
         )
 
     except Exception as e:
@@ -147,61 +147,55 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     result = fuzzy_search(query)
 
-    # ---------- NOT FOUND ----------
     if not result:
-
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "📩 Request Story",
-                    callback_data=f"request|{query}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🗑 Delete",
-                    callback_data="delete"
-                )
-            ]
-        ]
-
-        await update.message.reply_text(
-            f"❌ Story not found\n\n"
-            f"Name: {query}",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-
         return
 
-    # ---------- STORY FOUND ----------
-
     keyboard = [
+
         [
             InlineKeyboardButton(
-                "📖 Read Story",
+                "📖 Open Story",
                 url=result["link"]
             )
         ],
+
         [
             InlineKeyboardButton(
-                "© Copyright",
+                "⚠️ Copyright",
                 url=f"https://t.me/{COPYRIGHT_CHANNEL}"
             )
         ],
+
         [
             InlineKeyboardButton(
                 "🗑 Delete",
                 callback_data="delete"
             )
         ]
+
     ]
 
-    await update.message.reply_text(
-        f"🔥 Story Found\n\n"
-        f"Name: {result['name']}\n"
-        f"Type: {result.get('type','Unknown')}",
+    msg = await update.message.reply_text(
+
+        f"👋 Hey {update.message.from_user.first_name}\n"
+        f"I found this story 👇\n\n"
+        f"📚 {result['text']}\n\n"
+        f"🔗 Click below to open",
+
         reply_markup=InlineKeyboardMarkup(keyboard)
+
     )
+
+    # auto delete after 5 minutes
+    await asyncio.sleep(300)
+
+    try:
+
+        await msg.delete()
+
+    except:
+
+        pass
 
 
 # -----------------------
@@ -214,51 +208,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
-    # Delete message
     if data == "delete":
 
         await query.message.delete()
-
-        return
-
-    # Request system
-    if data.startswith("request|"):
-
-        story = data.split("|")[1]
-
-        user = query.from_user
-
-        db = load_requests()
-
-        if story not in db:
-
-            db[story] = {
-                "count": 0,
-                "users": []
-            }
-
-        if user.id not in db[story]["users"]:
-
-            db[story]["users"].append(user.id)
-
-            db[story]["count"] += 1
-
-            await context.bot.send_message(
-
-                chat_id=REQUEST_GROUP,
-
-                text=(
-                    f"📚 Story Request\n\n"
-                    f"Name: {story}\n"
-                    f"Requests: +{db[story]['count']}\n\n"
-                    f"User: @{user.username if user.username else 'NoUsername'}\n"
-                    f"ID: {user.id}"
-                )
-            )
-
-            save_requests(db)
-
-        await query.answer("Request recorded ✅")
 
 
 # -----------------------
