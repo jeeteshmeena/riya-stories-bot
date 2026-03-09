@@ -4,20 +4,30 @@ import threading
 import http.server
 import socketserver
 import asyncio
-import json
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, CallbackQueryHandler, filters
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    CallbackQueryHandler,
+    filters
+)
 
-from config import BOT_TOKEN, CHANNEL_ID, REQUEST_GROUP, COPYRIGHT_CHANNEL
+from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
+from auto_scanner import auto_scan_loop
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-REQUEST_DB = "requests.json"
 
+# -----------------------
+# Dummy Web Server (Render)
+# -----------------------
 
 def start_server():
 
@@ -32,12 +42,18 @@ def start_server():
         httpd.serve_forever()
 
 
+# -----------------------
+# Ignore normal chat words
+# -----------------------
+
 IGNORE_WORDS = [
     "hi",
     "hello",
     "hey",
     "ok",
-    "thanks"
+    "thanks",
+    "good morning",
+    "good night"
 ]
 
 
@@ -54,29 +70,45 @@ def is_conversation(text):
     return False
 
 
+# -----------------------
+# /start
+# -----------------------
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "✨ Riya Bot v10\n\nSend story name."
+        "✨ Riya Bot v10\n\nSend story name to search."
     )
 
 
+# -----------------------
+# /scan (manual scan)
+# -----------------------
+
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    msg = await update.message.reply_text("Scanning...")
+    msg = await update.message.reply_text("🔍 Scanning channel...")
 
     try:
 
         result = await scan_channel(CHANNEL_ID)
 
         await msg.edit_text(
-            f"Scan Complete\nStories: {result['stories']}"
+            f"✅ Scan Complete\n\n"
+            f"Messages scanned: {result['messages']}\n"
+            f"Stories indexed: {result['stories']}"
         )
 
     except Exception as e:
 
-        await msg.edit_text(f"Scan failed\n{e}")
+        logger.error(e)
 
+        await msg.edit_text(f"❌ Scan failed\n{e}")
+
+
+# -----------------------
+# Story Search
+# -----------------------
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -112,28 +144,32 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 callback_data="delete"
             )
         ]
+
     ]
 
     msg = await update.message.reply_text(
 
         f"Hey {update.message.from_user.first_name} 👋\n"
         f"I found this story 👇\n\n"
-        f"{result['text']}\n"
+        f"{result['text']}\n\n"
         f"Click below to open",
 
         reply_markup=InlineKeyboardMarkup(keyboard)
 
     )
 
+    # auto delete after 5 minutes
     await asyncio.sleep(300)
 
     try:
-
         await msg.delete()
-
     except:
         pass
 
+
+# -----------------------
+# Button handler
+# -----------------------
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -141,8 +177,24 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "delete":
 
-        await query.message.delete()
+        try:
+            await query.message.delete()
+        except:
+            pass
 
+
+# -----------------------
+# Error handler
+# -----------------------
+
+async def error_handler(update, context):
+
+    logger.error(msg="Exception while handling update:", exc_info=context.error)
+
+
+# -----------------------
+# Bot Start
+# -----------------------
 
 def start_bot():
 
@@ -151,12 +203,26 @@ def start_bot():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("scan", scan))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search))
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, search)
+    )
 
     app.add_handler(CallbackQueryHandler(buttons))
 
+    app.add_error_handler(error_handler)
+
+    logger.info("Riya Bot running")
+
+    # start auto scanner loop
+    loop = asyncio.get_event_loop()
+    loop.create_task(auto_scan_loop())
+
     app.run_polling()
 
+
+# -----------------------
+# Main
+# -----------------------
 
 def main():
 
