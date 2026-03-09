@@ -8,19 +8,18 @@ def fuzzy_search(query):
 
     query = query.lower()
 
-    best_match = None
-    best_score = 0
+    best = None
+    score = 0
 
-    for name, data in db.items():
+    for name,data in db.items():
 
-        score = fuzz.partial_ratio(query, name)
+        s = fuzz.partial_ratio(query, name)
 
-        if score > best_score:
+        if s > score:
+            score = s
+            best = data
 
-            best_score = score
-            best_match = data
-
-    if best_score < 55:
+    if score < 55:
         return None
 
-    return best_match
+    return best
