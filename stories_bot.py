@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 # -----------------------
-# Dummy Server
+# Dummy Web Server
 # -----------------------
 
 def start_server():
@@ -160,10 +160,8 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if status == "duplicate":
 
         await update.effective_chat.send_message(
-
-            text=f"⚠️ {user.mention_html()} this story is already requested.\nPlease don't request again.",
+            text=f"⚠️ {user.mention_html()} this story is already requested.",
             parse_mode="HTML"
-
         )
 
         return
@@ -190,6 +188,7 @@ ID: `{user.id}`
     await update.effective_chat.send_message(
 
         text=f"✅ {user.mention_html()} your request for **{story}** has been sent.",
+
         parse_mode="HTML"
 
     )
@@ -300,7 +299,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Bot Start
 # -----------------------
 
-async def start_bot():
+def start_bot():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -318,9 +317,10 @@ async def start_bot():
 
     logger.info("Riya Bot running")
 
-    asyncio.create_task(auto_scan_loop())
+    # auto scanner
+    asyncio.get_event_loop().create_task(auto_scan_loop())
 
-    await app.run_polling()
+    app.run_polling()
 
 
 # -----------------------
@@ -331,7 +331,7 @@ def main():
 
     threading.Thread(target=start_server).start()
 
-    asyncio.run(start_bot())
+    start_bot()
 
 
 if __name__ == "__main__":
