@@ -69,6 +69,7 @@ last_scan_count = 0
 
 def clean_story(name):
     name = re.sub(r"\(.*?\)", "", name)
+    name = re.sub(r"\s+", " ", name)
     return name.strip()
 
 
@@ -76,16 +77,18 @@ def build_search_index(names):
     global search_index
     search_index = {}
     for name in names:
-        search_index[name.lower()] = name
+        key = clean_story(name).lower()
+        search_index[key] = name
 
 
 def fast_search(query):
-    query = query.lower()
-    results = []
-    for key in search_index:
-        if query in key:
-            results.append(search_index[key])
-    return results[:10]
+    query_key = clean_story(query).lower()
+    if not query_key:
+        return []
+    name = search_index.get(query_key)
+    if not name:
+        return []
+    return [name]
 
 
 def extract_story_type(text):
@@ -121,14 +124,15 @@ async def log(context, text):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    user = update.effective_user.mention_html()
+    u = update.effective_user
+    user = u.mention_html()
 
     text = f"""
-<b>✨ Hey Welcome</b>, {user}
+<b>♡ Hey Welcome</b>, {user}
 
 <blockquote>@StoriesFinderBot</blockquote>
 
-Commands: Type / to open the command menu and explore available options to search or request stories.
+Commands: Type / to open the menu and use the options to search, request, or explore stories.
 
 <blockquote><i>Disclaimer 📌
 We only index Telegram files. We do not host content.</i></blockquote>
@@ -143,13 +147,23 @@ We only index Telegram files. We do not host content.</i></blockquote>
         parse_mode="HTML"
     )
 
+    await log(
+        context,
+        f"START | user_id={u.id} username={u.username}"
+    )
+
 
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = """
-<b>About Stories Finder Bot</b>
+<b>📌 About Riya</b>
 
-This bot helps you quickly find stories from the official Riya stories channel using a structured database built from specific story formats.
+<i>Riya is a smart Telegram story finder that helps users discover stories shared across Stories channels.</i>
+
+<b>Fast search • Instant results • Story requests • Auto notifications</b>
+
+<b>Developer:</b> @MeJeetX
+<b>Version:</b> Riya v10
 """
 
     await update.message.reply_text(text=text, parse_mode="HTML")
@@ -158,11 +172,14 @@ This bot helps you quickly find stories from the official Riya stories channel u
 async def how(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = """
-<b>How to use</b>
+<b>⚙️ How This Bot Works</b>
 
-• Use /scan to index the channel stories.
-• After scanning, just send the exact story title to get its link.
-• Use /stories to view the list of available titles.
+<b>• Send a story name</b>
+<b>• Bot searches the database</b>
+<b>• If available → you get the link</b>
+<b>• If not → request it using /request</b>
+
+When the story gets uploaded, you will be notified automatically.
 """
 
     await update.message.reply_text(text=text, parse_mode="HTML")
@@ -171,16 +188,15 @@ async def how(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = """
-<b>Help</b>
+<b>🆘 Help Center</b>
 
-Available commands:
-• /start – Welcome message
-• /scan – Scan channel and update database
-• /stories – List available story titles
-• /request &lt;story name&gt; – Request a new story
-• /about – About this bot
-• /how – How to use
-• /help – Show this help message
+<i>Use these commands to interact with the bot:</i>
+
+<u>/start</u> → Start the bot
+<u>/request</u> → Request a story
+<u>/scan</u> → Refresh story database [only for admins]
+
+<b>You can also simply send a story name to search.</b>
 """
 
     await update.message.reply_text(text=text, parse_mode="HTML")
@@ -235,6 +251,11 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
 
+        await log(
+            context,
+            f"SCAN START | user_id={update.effective_user.id} username={update.effective_user.username}"
+        )
+
         result = await scan_channel(CHANNEL_ID)
 
         await msg.edit_text(
@@ -268,10 +289,20 @@ _Your story database is now fully updated._
             parse_mode="Markdown"
         )
 
+        await log(
+            context,
+            f"SCAN DONE | stories={last_scan_count}"
+        )
+
     except Exception as e:
 
         await msg.edit_text(
             text=f"Scan failed\n{e}"
+        )
+
+        await log(
+            context,
+            f"SCAN ERROR | {e}"
         )
 
 
@@ -291,7 +322,30 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         title = clean_story(name)
         text += f"<i>{i}:- {title}</i>\n"
 
-    await update.message.reply_text(text=text, parse_mode="HTML")
+    cmd_msg = update.message
+
+    reply = await update.message.reply_text(text=text, parse_mode="HTML")
+
+    await log(
+        context,
+        f"STORIES | user_id={cmd_msg.from_user.id} username={cmd_msg.from_user.username}"
+    )
+
+    async def _delete_later():
+
+        await asyncio.sleep(1800)
+
+        try:
+            await reply.delete()
+        except:
+            pass
+
+        try:
+            await cmd_msg.delete()
+        except:
+            pass
+
+    asyncio.create_task(_delete_later())
 
 
 # -----------------------
@@ -301,6 +355,32 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
+
+        warn_text = """
+🎬 Please provide the name of Story/Series
+📝 Examples:
+/request Vashikaran
+/request Saaya
+"""
+
+        warn_msg = await update.effective_chat.send_message(warn_text)
+
+        async def _delete_later():
+
+            await asyncio.sleep(3600)
+
+            try:
+                await warn_msg.delete()
+            except:
+                pass
+
+            try:
+                await update.message.delete()
+            except:
+                pass
+
+        asyncio.create_task(_delete_later())
+
         return
 
     story = " ".join(context.args).lower()
@@ -379,6 +459,11 @@ If we find it, it will be uploaded soon.</b>
         parse_mode="HTML"
     )
 
+    await log(
+        context,
+        f"REQUEST | user_id={user.id} username={user.username} story={story}"
+    )
+
 
 # -----------------------
 # search
@@ -392,6 +477,12 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fast_results = fast_search(query_text)
 
     if not fast_results:
+
+        await log(
+            context,
+            f"SEARCH MISS | user_id={update.effective_user.id} username={update.effective_user.username} query={query_text}"
+        )
+
         return
 
     # pick the first match and load full data from DB
@@ -404,7 +495,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     mention = user.mention_html()
 
-    story_name = clean_story(result["name"])
+    story_name = clean_story(result["text"])
 
     # Prefer pre‑computed story_type from the scanner, fallback to regex
     story_type = result.get("story_type")
@@ -441,7 +532,7 @@ Hey {mention} 👋
 
 <b>Story Type:-</b> <i>{story_type}</i>
 
-<tg-spoiler>This reply will be deleted automatically in 30 minutes.</tg-spoiler>
+<tg-spoiler>This reply will be deleted automatically in 5 minutes.</tg-spoiler>
 """
 
     if photo:
@@ -457,9 +548,10 @@ Hey {mention} 👋
 
     else:
 
-        msg = await update.message.reply_text(
+        msg = await update.message.reply_video(
 
-            text=caption,
+            video="https://files.catbox.moe/0cldq9.mp4",
+            caption=caption,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard)
 
@@ -470,14 +562,24 @@ Hey {mention} 👋
     # delete the reply later without blocking the handler
     async def _delete_later():
 
-        await asyncio.sleep(1800)
+        await asyncio.sleep(300)
 
         try:
             await msg.delete()
         except:
             pass
 
+        try:
+            await update.message.delete()
+        except:
+            pass
+
     asyncio.create_task(_delete_later())
+
+    await log(
+        context,
+        f"SEARCH HIT | user_id={user.id} username={user.username} title={story_name}"
+    )
 
 
 # -----------------------
@@ -576,6 +678,11 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     await update.inline_query.answer(articles, cache_time=5)
+
+    await log(
+        context,
+        f"INLINE SEARCH | user_id={update.inline_query.from_user.id} username={update.inline_query.from_user.username} query={query} results={len(articles)}"
+    )
 
 
 # -----------------------
