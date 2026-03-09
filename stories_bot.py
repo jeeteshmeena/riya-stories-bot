@@ -4,6 +4,7 @@ import threading
 import http.server
 import socketserver
 import asyncio
+import time
 import re
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -16,9 +17,16 @@ from telegram.ext import (
     filters
 )
 
-from config import BOT_TOKEN, COPYRIGHT_CHANNEL, REQUEST_GROUP
+from config import (
+    BOT_TOKEN,
+    CHANNEL_ID,
+    COPYRIGHT_CHANNEL,   # private group id for copyright claims
+    REQUEST_GROUP,       # requests private channel
+    LOG_CHANNEL          # bot logs private group
+)
+
+from scanner_client import scan_channel
 from search_engine import fuzzy_search
-from request_manager import add_request
 
 
 logging.basicConfig(level=logging.INFO)
@@ -30,40 +38,71 @@ logger = logging.getLogger(__name__)
 # -----------------------
 
 def start_server():
+
     port = int(os.environ.get("PORT", 10000))
+
     handler = http.server.SimpleHTTPRequestHandler
 
     with socketserver.TCPServer(("", port), handler) as httpd:
+
         logger.info(f"Server running {port}")
         httpd.serve_forever()
 
 
 # -----------------------
-# Clean story title
+# Cooldown system
 # -----------------------
 
-def clean_title(name):
+cooldowns = {}
 
-    name = re.sub(r"\(.*?\)", "", name)
-    name = name.replace("-", "").strip()
-    return name
+
+def is_user_blocked(user_id):
+
+    if user_id not in cooldowns:
+        return False
+
+    if cooldowns[user_id] < time.time():
+        del cooldowns[user_id]
+        return False
+
+    return True
+
+
+# admin command in LOG group
+async def cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.effective_chat.id != LOG_CHANNEL:
+        return
+
+    if len(context.args) < 2:
+        return
+
+    user_id = int(context.args[0])
+    minutes = int(context.args[1])
+
+    cooldowns[user_id] = time.time() + minutes * 60
+
+    await update.message.reply_text(
+        f"User `{user_id}` cooldown applied for {minutes} minutes",
+        parse_mode="Markdown"
+    )
 
 
 # -----------------------
-# Ignore chat words
+# Ignore conversation
 # -----------------------
 
-IGNORE = [
-    "hi","hello","hey","ok",
-    "thanks","good morning","good night"
+IGNORE_WORDS = [
+    "hi","hello","hey","ok","thanks",
+    "good morning","good night"
 ]
 
 
-def ignore(text):
+def is_conversation(text):
 
     text = text.lower().strip()
 
-    if text in IGNORE:
+    if text in IGNORE_WORDS:
         return True
 
     if len(text) < 3:
@@ -85,24 +124,62 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 f"""
 ✨ Welcome {user}
 
-Send story name to search.
-Example:
-
-Saaya
-Haweli
+Send story name to search
 """)
 
 
 
 # -----------------------
-# SEARCH STORY
+# /scan
+# -----------------------
+
+async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    msg = await update.message.reply_text("Scanning channel...")
+
+    try:
+
+        result = await scan_channel(CHANNEL_ID)
+
+        await msg.edit_text(
+
+f"""
+Scan Complete
+
+Messages: {result['messages']}
+Stories: {result['stories']}
+"""
+        )
+
+    except Exception as e:
+
+        await msg.edit_text(f"Scan failed\n{e}")
+
+
+# -----------------------
+# Clean story name
+# -----------------------
+
+def clean_story_name(name):
+
+    name = re.sub(r"\(.*?\)", "", name)
+    return name.strip()
+
+
+# -----------------------
+# Story search
 # -----------------------
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    user = update.message.from_user
+
+    if is_user_blocked(user.id):
+        return
+
     query = update.message.text.strip()
 
-    if ignore(query):
+    if is_conversation(query):
         return
 
     result = fuzzy_search(query)
@@ -110,15 +187,13 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not result:
         return
 
-    user = update.message.from_user.first_name
-
-    title = clean_title(result["name"])
+    story_name = clean_story_name(result["name"])
 
     keyboard = [
 
         [
             InlineKeyboardButton(
-                "📖 OPEN STORY",
+                "OPEN STORY",
                 url=result["link"]
             )
         ],
@@ -126,13 +201,13 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [
             InlineKeyboardButton(
                 "Got Copyright ?",
-                callback_data=f"copyright|{title}"
+                callback_data=f"copyright|{story_name}"
             )
         ],
 
         [
             InlineKeyboardButton(
-                "🗑 Delete",
+                "Delete",
                 callback_data="delete"
             )
         ]
@@ -142,12 +217,12 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text(
 
 f"""
-Hey {user} 👋
+Hey {user.first_name} 👋
 I found this story 👇
 
-*{title}*
+*{story_name}*
 
-_༎ຶ‿༎ຶ This reply will be deleted automatically in 5 minutes_
+_༎ຶ‿༎ຶ This reply will be deleted automatically in 30 minutes_
 """,
 
         parse_mode="Markdown",
@@ -163,19 +238,16 @@ _༎ຶ‿༎ຶ This reply will be deleted automatically in 5 minutes_
         pass
 
 
-
 # -----------------------
-# COPYRIGHT CLAIM
+# Button handler
 # -----------------------
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
-    data = query.data
-
     user = query.from_user
 
-    if data == "delete":
+    if query.data == "delete":
 
         try:
             await query.message.delete()
@@ -185,92 +257,69 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-    if data.startswith("copyright|"):
+    if query.data.startswith("copyright"):
 
-        story = data.split("|")[1]
+        story = query.data.split("|")[1]
 
         await context.bot.send_message(
 
             chat_id=COPYRIGHT_CHANNEL,
 
 f"""
-⚠ COPYRIGHT CLAIM
+Copyright Claim
 
 Story: {story}
 
-User: @{user.username if user.username else user.first_name}
+User: @{user.username if user.username else "no_username"}
 ID: {user.id}
-""")
+"""
 
-        await query.answer("Copyright request sent")
+        )
+
+        await query.answer("Copyright claim sent")
 
 
 # -----------------------
-# REQUEST STORY
+# Request story
 # -----------------------
 
-async def request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.message.from_user
 
     if not context.args:
-
-        await update.message.reply_text(
-            "Usage:\n/request story name"
-        )
-
         return
-
 
     story = " ".join(context.args)
-
-    status = add_request(story, user)
-
-    try:
-        await update.message.delete()
-    except:
-        pass
-
-
-    if status == "duplicate":
-
-        await update.effective_chat.send_message(
-
-f"{user.mention_html()} please do not request again.",
-
-parse_mode="HTML"
-
-        )
-
-        return
-
 
     await context.bot.send_message(
 
         chat_id=REQUEST_GROUP,
 
 f"""
-📚 STORY REQUEST
+Story Request
 
 Name: {story}
 
-User: @{user.username if user.username else user.first_name}
+User: @{user.username if user.username else "no_username"}
 ID: {user.id}
 """
+
     )
+
+    try:
+        await update.message.delete()
+    except:
+        pass
 
     await update.effective_chat.send_message(
-
-f"{user.mention_html()} your request has been sent.",
-
-parse_mode="HTML"
-
+        f"{user.mention_html()} request sent",
+        parse_mode="HTML"
     )
-
 
 
 # -----------------------
-# BOT START
+# Bot start
 # -----------------------
 
 def start_bot():
@@ -278,7 +327,9 @@ def start_bot():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("request", request))
+    app.add_handler(CommandHandler("scan", scan))
+    app.add_handler(CommandHandler("request", request_story))
+    app.add_handler(CommandHandler("cooldown", cooldown))
 
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, search)
@@ -291,9 +342,8 @@ def start_bot():
     app.run_polling()
 
 
-
 # -----------------------
-# MAIN
+# Main
 # -----------------------
 
 def main():
@@ -304,4 +354,5 @@ def main():
 
 
 if __name__ == "__main__":
+
     main()
