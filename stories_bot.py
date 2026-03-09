@@ -5,8 +5,6 @@ import http.server
 import socketserver
 import asyncio
 import re
-import json
-import time
 
 from telegram import (
     Update,
@@ -49,35 +47,15 @@ def start_server():
 
 
 # -----------------------
-# Persistent files
-# -----------------------
-
-REQUEST_FILE = "requests.json"
-CLAIMS_FILE = "claims.json"
-COOLDOWN_FILE = "cooldowns.json"
-
-
-def load_json(path):
-    if not os.path.exists(path):
-        return {}
-    with open(path, "r") as f:
-        return json.load(f)
-
-
-def save_json(path, data):
-    with open(path, "w") as f:
-        json.dump(data, f, indent=2)
-
-
-# -----------------------
 # Databases
 # -----------------------
 
-claims_db = load_json(CLAIMS_FILE)
-cooldown_db = load_json(COOLDOWN_FILE)
-request_db = load_json(REQUEST_FILE)
-
+claims_db = {}
+cooldown_db = {}
 message_owner = {}
+
+request_db = {}
+request_chat = {}
 
 story_index = []
 search_index = {}
@@ -94,7 +72,24 @@ def clean_story(name):
     return name.strip()
 
 
+def build_search_index(names):
+    global search_index
+    search_index = {}
+    for name in names:
+        search_index[name.lower()] = name
+
+
+def fast_search(query):
+    query = query.lower()
+    results = []
+    for key in search_index:
+        if query in key:
+            results.append(search_index[key])
+    return results[:10]
+
+
 def extract_story_type(text):
+
     if not text:
         return "Can't find"
 
@@ -110,53 +105,12 @@ def extract_story_type(text):
     return "Can't find"
 
 
-def build_search_index(names):
-
-    global search_index
-
-    search_index = {}
-
-    for item in names:
-
-        name = item["name"]
-
-        search_index[name.lower()] = item
-
-
-def fast_search(query):
-
-    query = query.lower()
-
-    results = []
-
-    for key in search_index:
-
-        if query in key:
-            results.append(search_index[key])
-
-    return results[:10]
-
-
 async def log(context, text):
-
     try:
-
         await context.bot.send_message(
             chat_id=LOG_CHANNEL,
             text=text
         )
-
-    except:
-
-        pass
-
-
-async def auto_delete(msg, seconds):
-
-    await asyncio.sleep(seconds)
-
-    try:
-        await msg.delete()
     except:
         pass
 
@@ -191,7 +145,7 @@ We only index Telegram files. We do not host content.</i></blockquote>
 
 
 # -----------------------
-# /scan
+# /scan premium progress
 # -----------------------
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -199,34 +153,88 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global story_index, last_scan_count
 
     msg = await update.message.reply_text(
-        "🔎 Starting scan..."
+        text="""
+🔎 *Riya Database Scan*
+
+*Status:* _Initializing scanner..._
+
+*Progress:* ░░░░░░░░░░ 0%
+""",
+        parse_mode="Markdown"
     )
+
+    await asyncio.sleep(1)
+
+    await msg.edit_text(
+        text="""
+🔎 *Riya Database Scan*
+
+*Status:* _Fetching channel messages..._
+
+*Progress:* ▓▓░░░░░░░░ 20%
+""",
+        parse_mode="Markdown"
+    )
+
+    await asyncio.sleep(1)
+
+    await msg.edit_text(
+        text="""
+🔎 *Riya Database Scan*
+
+*Status:* _Detecting stories..._
+
+*Progress:* ▓▓▓▓░░░░░░ 40%
+""",
+        parse_mode="Markdown"
+    )
+
+    await asyncio.sleep(1)
 
     try:
 
         result = await scan_channel(CHANNEL_ID)
 
-        stories = result.get("stories_data", [])
+        await msg.edit_text(
+            text="""
+🔎 *Riya Database Scan*
 
-        story_index = stories
+*Status:* _Building search index..._
 
-        build_search_index(stories)
+*Progress:* ▓▓▓▓▓▓▓▓░░ 80%
+""",
+            parse_mode="Markdown"
+        )
 
-        last_scan_count = len(stories)
+        await asyncio.sleep(1)
+
+        story_index = result.get("names", [])
+
+        build_search_index(story_index)
+
+        last_scan_count = result.get("stories", len(story_index))
 
         await msg.edit_text(
-            f"✅ Scan complete\n\nStories indexed: {last_scan_count}"
+            text=f"""
+✅ *Scan Completed*
+
+📚 *Stories Indexed:* {last_scan_count}  
+⚡ *Search Engine:* _Optimized_
+
+_Your story database is now fully updated._
+""",
+            parse_mode="Markdown"
         )
 
     except Exception as e:
 
         await msg.edit_text(
-            f"Scan failed\n{e}"
+            text=f"Scan failed\n{e}"
         )
 
 
 # -----------------------
-# /stories
+# /stories command
 # -----------------------
 
 async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -235,17 +243,16 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No stories indexed yet.")
         return
 
-    text = "<b>Available stories 👇</b>\n\n"
+    text = "<b>Available stories on this channel 👇🏻</b>\n\n"
 
-    for i, story in enumerate(story_index, 1):
+    for i, name in enumerate(story_index, 1):
+        text += f"<i>{i}:- {name}</i>\n"
 
-        text += f"<i>{i}. {story['name']}</i>\n"
-
-    await update.message.reply_text(text, parse_mode="HTML")
+    await update.message.reply_text(text=text, parse_mode="HTML")
 
 
 # -----------------------
-# /request
+# request story
 # -----------------------
 
 async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -256,33 +263,76 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
     story = " ".join(context.args).lower()
 
     user = update.effective_user
-
     mention = user.mention_html()
 
+    try:
+        await update.message.delete()
+    except:
+        pass
+
     if story not in request_db:
-        request_db[story] = []
+        request_db[story] = set()
+        request_chat[story] = update.effective_chat.id
 
     if user.id in request_db[story]:
 
-        await update.message.reply_text(
-            f"<b>{mention}</b>\n\n<i>You already requested this story.</i>",
+        await update.effective_chat.send_message(
+            text=f"""
+<b>{mention}</b>
+
+<i>You have already requested <b>{story}</b>.  
+Please avoid sending duplicate requests.</i>
+""",
             parse_mode="HTML"
         )
+
         return
 
-    request_db[story].append(user.id)
-
-    save_json(REQUEST_FILE, request_db)
+    request_db[story].add(user.id)
 
     count = len(request_db[story])
 
+    username = f"@{user.username}" if user.username else "No username"
+
     await context.bot.send_message(
+
         chat_id=REQUEST_GROUP,
-        text=f"Story Request\n\nName: {story}\nUser: {user.id}\nTotal: {count}"
+
+        text=f"""
+Story Request
+
+Name: {story}
+User ID: {user.id}
+Username: {username}
+
+Total Requests: {count}
+"""
     )
 
-    await update.message.reply_text(
-        f"<b>{mention}</b>\n\n<b>Your request for <i>{story}</i> has been sent.</b>",
+    if count == 1:
+
+        text = f"""
+<b>{mention}</b>
+
+<b>Your request for <i>{story}</i> has been sent.  
+We will try our best to provide this story.  
+If we find it, it will be uploaded soon.</b>
+"""
+
+    else:
+
+        others = count - 1
+
+        text = f"""
+<b>{mention}</b>
+
+<b>You and {others} other users requested <i>{story}</i>.  
+We will try our best to provide this story.  
+If we find it, it will be uploaded soon.</b>
+"""
+
+    await update.effective_chat.send_message(
+        text=text,
         parse_mode="HTML"
     )
 
@@ -301,7 +351,6 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     user = update.effective_user
-
     mention = user.mention_html()
 
     story_name = clean_story(result["name"])
@@ -323,10 +372,9 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Delete",
             callback_data="delete"
         )]
-
     ]
 
-    photo = result.get("photo")
+    photo = result.get("photo") or result.get("image")
 
     caption = f"""
 Hey {mention} 👋
@@ -342,23 +390,32 @@ Hey {mention} 👋
     if photo:
 
         msg = await update.message.reply_photo(
+
             photo=photo,
             caption=caption,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard)
+
         )
 
     else:
 
         msg = await update.message.reply_text(
-            caption,
+
+            text=caption,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard)
+
         )
 
     message_owner[msg.message_id] = user.id
 
-    asyncio.create_task(auto_delete(msg, 1800))
+    await asyncio.sleep(1800)
+
+    try:
+        await msg.delete()
+    except:
+        pass
 
 
 # -----------------------
@@ -368,18 +425,28 @@ Hey {mention} 👋
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
-
     user = query.from_user
 
     await query.answer()
 
     if query.data == "delete":
 
-        owner = message_owner.get(query.message.message_id)
+        msg_id = query.message.message_id
+        owner = message_owner.get(msg_id)
 
-        if user.id == owner:
+        try:
 
-            await query.message.delete()
+            member = await context.bot.get_chat_member(
+                query.message.chat.id,
+                user.id
+            )
+
+            if user.id == owner or member.status in ["administrator", "creator"]:
+
+                await query.message.delete()
+
+        except:
+            pass
 
         return
 
@@ -399,8 +466,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         claims_db[key] = True
 
-        save_json(CLAIMS_FILE, claims_db)
-
         await context.bot.send_message(
 
             chat_id=COPYRIGHT_CHANNEL,
@@ -415,17 +480,20 @@ ID: {user.id}
         )
 
         await query.message.reply_text(
-            "✅ Your copyright claim has been submitted."
+            text="✅ Your copyright claim has been submitted."
         )
 
 
 # -----------------------
-# Inline search
+# inline search
 # -----------------------
 
 async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.inline_query.query
+
+    if not query:
+        return
 
     results = fast_search(query)
 
@@ -437,22 +505,15 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             InlineQueryResultArticle(
 
-                id=story["name"],
-
-                title=story["name"],
-
-                input_message_content=InputTextMessageContent(
-                    story["name"]
-                )
+                id=story,
+                title=story,
+                input_message_content=InputTextMessageContent(story)
 
             )
 
         )
 
-    await update.inline_query.answer(
-        articles,
-        cache_time=5
-    )
+    await update.inline_query.answer(articles, cache_time=5)
 
 
 # -----------------------
