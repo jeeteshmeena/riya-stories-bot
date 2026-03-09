@@ -33,7 +33,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # -----------------------
-# Dummy server (Render)
+# Render server
 # -----------------------
 
 def start_server():
@@ -53,8 +53,8 @@ claims_db = {}
 cooldown_db = {}
 message_owner = {}
 
-request_db = {}   
-request_chat = {} 
+request_db = {}
+request_chat = {}
 
 story_index = []
 search_index = {}
@@ -74,14 +74,10 @@ def clean_story(name):
 def build_search_index(names):
 
     global search_index
-
     search_index = {}
 
     for name in names:
-
-        key = name.lower()
-
-        search_index[key] = name
+        search_index[name.lower()] = name
 
 
 def fast_search(query):
@@ -93,22 +89,9 @@ def fast_search(query):
     for key in search_index:
 
         if query in key:
-
             results.append(search_index[key])
 
     return results[:10]
-
-
-def is_user_blocked(user_id):
-
-    if user_id not in cooldown_db:
-        return False
-
-    if cooldown_db[user_id] < time.time():
-        del cooldown_db[user_id]
-        return False
-
-    return True
 
 
 async def log(context, text):
@@ -125,7 +108,7 @@ async def log(context, text):
 
 
 # -----------------------
-# /start
+# Welcome
 # -----------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -133,11 +116,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user.mention_html()
 
     text = f"""
-<b>♡ Hey Welcome</b>, {user}
+<b>✨ Hey Welcome</b>, {user}
 
-<blockquote>@RiyaBot</blockquote>
+<blockquote>@StoriesFinderBot</blockquote>
 
-Commands: Type / to open command menu and explore story search and request options.
+Commands: Type / to open the command menu and explore available options to search or request stories.
 
 <blockquote><i>Disclaimer 📌
 We only index Telegram files. We do not host content.</i></blockquote>
@@ -152,68 +135,98 @@ We only index Telegram files. We do not host content.</i></blockquote>
         parse_mode="HTML"
     )
 
-    await log(context, f"User started bot: {update.effective_user.id}")
-
 
 # -----------------------
-# /how
+# /scan premium progress
 # -----------------------
 
-async def how(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    text = """
-<b>⚙️ How This Bot Works</b>
+    global story_index, last_scan_count
 
-<b>• Send a story name</b>
-<b>• Bot searches the database</b>
-<b>• If available → you get the link</b>
-<b>• If not → request it using /request</b>
+    msg = await update.message.reply_text(
+        text="""
+🔎 *Riya Database Scan*
 
-When the story gets uploaded, you will be notified automatically.
-"""
+*Status:* _Initializing scanner..._
 
-    await update.message.reply_text(text=text, parse_mode="HTML")
+*Progress:* ░░░░░░░░░░ 0%
+""",
+        parse_mode="Markdown"
+    )
 
+    await asyncio.sleep(1)
 
-# -----------------------
-# /help
-# -----------------------
+    await msg.edit_text(
+        text="""
+🔎 *Riya Database Scan*
 
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+*Status:* _Fetching channel messages..._
 
-    text = """
-<b>🆘 Help Center</b>
+*Progress:* ▓▓░░░░░░░░ 20%
+""",
+        parse_mode="Markdown"
+    )
 
-<i>Use these commands to interact with the bot:</i>
+    await asyncio.sleep(1)
 
-<u>/start</u> → Start the bot
-<u>/request</u> → Request a story
-<u>/scan</u> → Refresh story database [admins]
+    await msg.edit_text(
+        text="""
+🔎 *Riya Database Scan*
 
-<b>You can also simply send a story name to search.</b>
-"""
+*Status:* _Detecting stories..._
 
-    await update.message.reply_text(text=text, parse_mode="HTML")
+*Progress:* ▓▓▓▓░░░░░░ 40%
+""",
+        parse_mode="Markdown"
+    )
 
+    await asyncio.sleep(1)
 
-# -----------------------
-# /about
-# -----------------------
+    try:
 
-async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        result = await scan_channel(CHANNEL_ID)
 
-    text = """
-<b>📌 About Riya</b>
+        await msg.edit_text(
+            text="""
+🔎 *Riya Database Scan*
 
-<i>Riya is a smart Telegram story finder that helps users discover stories shared across Telegram story channels.</i>
+*Status:* _Building search index..._
 
-<b>Fast search • Instant results • Story requests • Auto notifications</b>
+*Progress:* ▓▓▓▓▓▓▓▓░░ 80%
+""",
+            parse_mode="Markdown"
+        )
 
-<b>Developer:</b> @MeJeetX
-<b>Version:</b> Riya v10
-"""
+        await asyncio.sleep(1)
 
-    await update.message.reply_text(text=text, parse_mode="HTML")
+        # fix for names error
+        if "names" in result:
+            story_index = result["names"]
+        else:
+            story_index = []
+
+        build_search_index(story_index)
+
+        last_scan_count = result.get("stories", len(story_index))
+
+        await msg.edit_text(
+            text=f"""
+✅ *Scan Completed*
+
+📚 *Stories Indexed:* {last_scan_count}  
+⚡ *Search Engine:* _Optimized_
+
+_Your story database is now fully updated._
+""",
+            parse_mode="Markdown"
+        )
+
+    except Exception as e:
+
+        await msg.edit_text(
+            text=f"Scan failed\n{e}"
+        )
 
 
 # -----------------------
@@ -223,145 +236,19 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not story_index:
-
         await update.message.reply_text("No stories indexed yet.")
         return
 
     text = "<b>Available stories on this channel 👇🏻</b>\n\n"
 
     for i, name in enumerate(story_index, 1):
-
         text += f"<i>{i}:- {name}</i>\n"
 
     await update.message.reply_text(text=text, parse_mode="HTML")
 
 
 # -----------------------
-# Scan
-# -----------------------
-
-async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    global last_scan_count, story_index
-
-    msg = await update.message.reply_text("Scanning channel...")
-
-    try:
-
-        result = await scan_channel(CHANNEL_ID)
-
-        story_index = result["names"]
-
-        build_search_index(story_index)
-
-        if result["stories"] == last_scan_count:
-
-            await msg.edit_text("No updates found.")
-
-        else:
-
-            last_scan_count = result["stories"]
-
-            await msg.edit_text(
-                f"Scan complete.\nStories indexed: {last_scan_count}"
-            )
-
-            await notify_requested(context)
-
-    except Exception as e:
-
-        await msg.edit_text(f"Scan failed\n{e}")
-
-
-# -----------------------
-# Notify system
-# -----------------------
-
-async def notify_requested(context):
-
-    for story, users in request_db.items():
-
-        result = fuzzy_search(story)
-
-        if not result:
-            continue
-
-        link = result["link"]
-
-        tags = []
-
-        for user_id in users:
-            tags.append(f'<a href="tg://user?id={user_id}">user</a>')
-
-        mention_text = " ".join(tags)
-
-        chat_id = request_chat.get(story)
-
-        try:
-
-            await context.bot.send_message(
-
-                chat_id=chat_id,
-
-                text=f"""
-<b>Hey {mention_text} 👻</b>
-
-<i>Your requested story - {story} now available.</i>
-
-<b>Read here:</b>
-{link}
-""",
-
-                parse_mode="HTML"
-
-            )
-
-        except:
-            pass
-
-        await log(context, f"Story delivered: {story}")
-
-        request_db[story] = set()
-
-
-# -----------------------
-# Inline search
-# -----------------------
-
-async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    query = update.inline_query.query
-
-    if not query:
-        return
-
-    results = fast_search(query)
-
-    articles = []
-
-    for story in results:
-
-        articles.append(
-
-            InlineQueryResultArticle(
-
-                id=story,
-
-                title=story,
-
-                input_message_content=InputTextMessageContent(
-                    f"🔎 {story}"
-                )
-
-            )
-
-        )
-
-    await update.inline_query.answer(articles, cache_time=5)
-
-
-# -----------------------
-# Request
+# request story
 # -----------------------
 
 async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -380,18 +267,19 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pass
 
     if story not in request_db:
-
         request_db[story] = set()
         request_chat[story] = update.effective_chat.id
 
     if user.id in request_db[story]:
 
         await update.effective_chat.send_message(
+            text=f"""
+<b>{mention}</b>
 
-            text=f"<b>{mention}</b>\n\n<i>You already requested <b>{story}</b>. Please avoid duplicate requests.</i>",
-
+<i>You have already requested <b>{story}</b>.  
+Please avoid sending duplicate requests.</i>
+""",
             parse_mode="HTML"
-
         )
 
         return
@@ -419,13 +307,25 @@ Total Requests: {count}
 
     if count == 1:
 
-        text = f"<b>{mention}</b>\n\n<b>Your request for <i>{story}</i> has been sent.</b>"
+        text = f"""
+<b>{mention}</b>
+
+<b>Your request for <i>{story}</i> has been sent.  
+We will try our best to provide this story.  
+If we find it, it will be uploaded soon.</b>
+"""
 
     else:
 
         others = count - 1
 
-        text = f"<b>{mention}</b>\n\n<b>You and {others} other users requested <i>{story}</i>.</b>"
+        text = f"""
+<b>{mention}</b>
+
+<b>You and {others} other users requested <i>{story}</i>.  
+We will try our best to provide this story.  
+If we find it, it will be uploaded soon.</b>
+"""
 
     await update.effective_chat.send_message(
         text=text,
@@ -439,11 +339,6 @@ Total Requests: {count}
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    user = update.effective_user
-
-    if is_user_blocked(user.id):
-        return
-
     query = update.message.text.strip()
 
     result = fuzzy_search(query)
@@ -451,24 +346,29 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not result:
         return
 
+    user = update.effective_user
+
     story_name = clean_story(result["name"])
 
     keyboard = [
 
         [InlineKeyboardButton("OPEN STORY", url=result["link"])],
 
-        [InlineKeyboardButton("Got Copyright ?", callback_data=f"copyright|{story_name}")],
+        [InlineKeyboardButton(
+            "Got Copyright ?",
+            callback_data=f"copyright|{story_name}"
+        )],
 
-        [InlineKeyboardButton("Delete", callback_data="delete")]
-
+        [InlineKeyboardButton(
+            "Delete",
+            callback_data="delete"
+        )]
     ]
-
-    mention = user.mention_html()
 
     msg = await update.message.reply_text(
 
         text=f"""
-Hey {mention} 👋
+Hey {user.mention_html()} 👋
 I found this story 👇
 
 <b>{story_name}</b>
@@ -492,7 +392,7 @@ I found this story 👇
 
 
 # -----------------------
-# Buttons
+# buttons
 # -----------------------
 
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -505,24 +405,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data == "delete":
 
         msg_id = query.message.message_id
-        owner_id = message_owner.get(msg_id)
+        owner = message_owner.get(msg_id)
 
-        is_admin = False
-
-        try:
-
-            member = await context.bot.get_chat_member(
-                query.message.chat.id,
-                user.id
-            )
-
-            if member.status in ["administrator", "creator"]:
-                is_admin = True
-
-        except:
-            pass
-
-        if user.id == owner_id or is_admin:
+        if user.id == owner:
 
             try:
                 await query.message.delete()
@@ -573,6 +458,40 @@ ID: {user.id}
 
 
 # -----------------------
+# inline search
+# -----------------------
+
+async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.inline_query.query
+
+    if not query:
+        return
+
+    results = fast_search(query)
+
+    articles = []
+
+    for story in results:
+
+        articles.append(
+
+            InlineQueryResultArticle(
+
+                id=story,
+
+                title=story,
+
+                input_message_content=InputTextMessageContent(story)
+
+            )
+
+        )
+
+    await update.inline_query.answer(articles, cache_time=5)
+
+
+# -----------------------
 # Start bot
 # -----------------------
 
@@ -583,11 +502,8 @@ def start_bot():
     app = Application.builder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("how", how))
-    app.add_handler(CommandHandler("help", help_cmd))
-    app.add_handler(CommandHandler("about", about))
-    app.add_handler(CommandHandler("stories", stories))
     app.add_handler(CommandHandler("scan", scan))
+    app.add_handler(CommandHandler("stories", stories))
     app.add_handler(CommandHandler("request", request_story))
 
     app.add_handler(InlineQueryHandler(inline_search))
@@ -604,7 +520,7 @@ def start_bot():
 
 
 # -----------------------
-# Main
+# main
 # -----------------------
 
 def main():
@@ -615,5 +531,4 @@ def main():
 
 
 if __name__ == "__main__":
-
     main()
