@@ -21,71 +21,43 @@ from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
 
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 # -----------------------
-# Render dummy server
+# Dummy server
 # -----------------------
 
 def start_server():
 
     port = int(os.environ.get("PORT", 10000))
-
     handler = http.server.SimpleHTTPRequestHandler
 
     with socketserver.TCPServer(("", port), handler) as httpd:
 
         logger.info(f"Server running {port}")
-
         httpd.serve_forever()
 
 
 # -----------------------
-# Ignore normal chat
+# Storage
 # -----------------------
 
-IGNORE_WORDS = [
-    "hi","hello","hey","ok","thanks",
-    "good morning","good night"
-]
-
-
-def is_conversation(text):
-
-    text = text.lower().strip()
-
-    if text in IGNORE_WORDS:
-        return True
-
-    if len(text) < 3:
-        return True
-
-    return False
+claims_db = {}
+cooldown_db = {}
+message_owner = {}
+request_db = {}   # story -> set(user_ids)
+last_scan_count = 0
 
 
 # -----------------------
-# Clean story name
+# Helpers
 # -----------------------
 
 def clean_story(name):
 
     name = re.sub(r"\(.*?\)", "", name)
-
     return name.strip()
-
-
-# -----------------------
-# Claim + cooldown storage
-# -----------------------
-
-claims_db = {}
-cooldown_db = {}
-
-# store message owner
-message_owner = {}
 
 
 def is_user_blocked(user_id):
@@ -132,10 +104,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # -----------------------
-# /scan
+# /scan with update detection
 # -----------------------
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    global last_scan_count
 
     msg = await update.message.reply_text("Scanning channel...")
 
@@ -143,15 +117,26 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         result = await scan_channel(CHANNEL_ID)
 
-        await msg.edit_text(
+        if result["stories"] == last_scan_count:
 
+            await msg.edit_text(
+                "Scan complete.\n\nNo updates found. Story database is already up to date."
+            )
+
+        else:
+
+            last_scan_count = result["stories"]
+
+            await msg.edit_text(
 f"""
 Scan Complete
 
 Messages scanned: {result['messages']}
 Stories indexed: {result['stories']}
+
+Database updated successfully.
 """
-        )
+            )
 
     except Exception as e:
 
@@ -171,9 +156,6 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.message.text.strip()
 
-    if is_conversation(query):
-        return
-
     result = fuzzy_search(query)
 
     if not result:
@@ -183,45 +165,35 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
 
-        [
-            InlineKeyboardButton(
-                "OPEN STORY",
-                url=result["link"]
-            )
-        ],
+        [InlineKeyboardButton("OPEN STORY", url=result["link"])],
 
-        [
-            InlineKeyboardButton(
-                "Got Copyright ?",
-                callback_data=f"copyright|{story_name}"
-            )
-        ],
+        [InlineKeyboardButton(
+            "Got Copyright ?",
+            callback_data=f"copyright|{story_name}"
+        )],
 
-        [
-            InlineKeyboardButton(
-                "Delete",
-                callback_data="delete"
-            )
-        ]
+        [InlineKeyboardButton("Delete", callback_data="delete")]
+
     ]
+
+    mention = user.mention_html()
 
     msg = await update.message.reply_text(
 
 f"""
-Hey {user.first_name} 👋
+Hey {mention} 👋
 I found this story 👇
 
-*{story_name}*
+<b>{story_name}</b>
 
-_༎ຶ‿༎ຶ This reply will be deleted automatically in 30 minutes_
+<i>This reply will be deleted automatically in 30 minutes.</i>
 """,
 
-        parse_mode="Markdown",
+        parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(keyboard)
 
     )
 
-    # store owner
     message_owner[msg.message_id] = user.id
 
     await asyncio.sleep(300)
@@ -241,22 +213,88 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         return
 
-    story = " ".join(context.args)
+    story = " ".join(context.args).lower()
 
     user = update.message.from_user
+    mention = user.mention_html()
 
     try:
         await update.message.delete()
     except:
         pass
 
+    # first request
+    if story not in request_db:
+        request_db[story] = set()
+
+    # duplicate user request
+    if user.id in request_db[story]:
+
+        await update.effective_chat.send_message(
+
+f"""
+<b>{mention}</b>
+
+<i>You have already requested <b>{story}</b>.  
+Please avoid sending duplicate requests.</i>
+""",
+
+            parse_mode="HTML"
+
+        )
+
+        return
+
+    request_db[story].add(user.id)
+
+    count = len(request_db[story])
+
+    # send to request channel
+    username = f"@{user.username}" if user.username else "No username"
+
     await context.bot.send_message(
+
         chat_id=REQUEST_GROUP,
-        text=f"Story Request\n\nName: {story}\nUser: {user.id}"
+
+f"""
+Story Request
+
+Name: {story}
+User ID: {user.id}
+Username: {username}
+
+Total Requests: {count}
+"""
+
     )
 
+    # confirmation message
+
+    if count == 1:
+
+        text = f"""
+<b>{mention}</b>
+
+<b>Your request for <i>{story}</i> has been sent.  
+We will try our best to provide this story.  
+If we find it, it will be uploaded soon.</b>
+"""
+
+    else:
+
+        others = count - 1
+
+        text = f"""
+<b>{mention}</b>
+
+<b>You and {others} other users requested <i>{story}</i>.  
+We will try our best to provide this story.  
+If we find it, it will be uploaded soon.</b>
+"""
+
     await update.effective_chat.send_message(
-        text=f"{user.first_name}, your request for {story} has been sent."
+        text=text,
+        parse_mode="HTML"
     )
 
 
@@ -271,16 +309,16 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.answer()
 
-    # delete button
+    # delete
     if query.data == "delete":
 
         msg_id = query.message.message_id
-
         owner_id = message_owner.get(msg_id)
 
         is_admin = False
 
         try:
+
             member = await context.bot.get_chat_member(
                 query.message.chat.id,
                 user.id
@@ -308,8 +346,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-
-    # copyright claim
+    # copyright
     if query.data.startswith("copyright"):
 
         story = query.data.split("|")[1]
@@ -330,11 +367,10 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             chat_id=COPYRIGHT_CHANNEL,
 
-            text=f"""
+f"""
 Copyright Claim
 
 Story: {story}
-
 User: @{user.username if user.username else user.first_name}
 ID: {user.id}
 """
@@ -376,7 +412,6 @@ def start_bot():
 def main():
 
     threading.Thread(target=start_server).start()
-
     start_bot()
 
 
