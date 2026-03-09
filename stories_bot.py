@@ -152,16 +152,16 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     global story_index, last_scan_count
 
-    msg = await update.message.reply_text(
-        text="""
-🔎 *Riya Database Scan*
+    scan_text = (
+"🔎 *Riya Database Scan*\n\n"
+"*Status:* _Initializing scanner..._\n\n"
+"*Progress:* ░░░░░░░░░░ 0%"
+)
 
-*Status:* _Initializing scanner..._
-
-*Progress:* ░░░░░░░░░░ 0%
-""",
-        parse_mode="Markdown"
-    )
+msg = await update.message.reply_text(
+    text=scan_text,
+    parse_mode="Markdown"
+)
 
     await asyncio.sleep(1)
 
