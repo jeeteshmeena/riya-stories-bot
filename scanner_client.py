@@ -18,6 +18,7 @@ async def scan_channel(channel_id):
 
     total_messages = 0
     stories_found = 0
+    names = []
 
     async for msg in client.iter_messages(channel_id):
 
@@ -29,12 +30,22 @@ async def scan_channel(channel_id):
             continue
 
         add_story(story)
+        names.append(story["text"])
 
         stories_found += 1
 
     await client.disconnect()
 
+    # de-duplicate and keep stable order
+    seen = set()
+    unique_names = []
+    for name in names:
+        if name not in seen:
+            seen.add(name)
+            unique_names.append(name)
+
     return {
         "messages": total_messages,
-        "stories": stories_found
+        "stories": stories_found,
+        "names": unique_names
     }
