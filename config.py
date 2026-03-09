@@ -13,7 +13,8 @@ OWNER_ID = int(os.getenv("OWNER_ID", 0))
 
 REQUEST_GROUP = int(os.getenv("REQUEST_GROUP", 0))
 
-COPYRIGHT_CHANNEL = int(os.getenv("COPYRIGHT_CHANNEL", 0))
+COPYRIGHT_CHANNEL = os.getenv("COPYRIGHT_CHANNEL")
+
 LOG_CHANNEL = int(os.getenv("LOG_CHANNEL", 0))
 
 GROUP_ID = int(os.getenv("GROUP_ID", 0))
@@ -33,4 +34,5 @@ API_ID = int(os.getenv("API_ID", 0))
 
 API_HASH = os.getenv("API_HASH")
 
-SESSION_NAME = os.getenv("SESSION_NAME", "riya_session")
+# Telethon string session (for Render/Koyeb)
+SESSION_STRING = os.getenv("SESSION_STRING")
