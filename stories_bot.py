@@ -12,6 +12,7 @@ from telegram.ext import (
     MessageHandler,
     ContextTypes,
     CallbackQueryHandler,
+    InlineQueryHandler,
     filters
 )
 
@@ -19,6 +20,7 @@ from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
 from auto_scanner import auto_scan_loop
+from inline_search import search_inline
 
 
 logging.basicConfig(level=logging.INFO)
@@ -168,6 +170,27 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # -----------------------
+# Inline Search
+# -----------------------
+
+async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.inline_query.query
+    offset = update.inline_query.offset
+
+    if not query:
+        return
+
+    results, next_offset = search_inline(query, offset)
+
+    await update.inline_query.answer(
+        results,
+        next_offset=next_offset,
+        cache_time=5
+    )
+
+
+# -----------------------
 # Button handler
 # -----------------------
 
@@ -196,7 +219,7 @@ async def error_handler(update, context):
 # Bot Start
 # -----------------------
 
-def start_bot():
+async def start_bot():
 
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -207,17 +230,22 @@ def start_bot():
         MessageHandler(filters.TEXT & ~filters.COMMAND, search)
     )
 
+    app.add_handler(InlineQueryHandler(inline_query))
+
     app.add_handler(CallbackQueryHandler(buttons))
 
     app.add_error_handler(error_handler)
 
     logger.info("Riya Bot running")
 
-    # start auto scanner loop
-    loop = asyncio.get_event_loop()
-    loop.create_task(auto_scan_loop())
+    # auto scanner
+    asyncio.create_task(auto_scan_loop())
 
-    app.run_polling()
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+
+    await app.updater.idle()
 
 
 # -----------------------
@@ -228,7 +256,7 @@ def main():
 
     threading.Thread(target=start_server).start()
 
-    start_bot()
+    asyncio.run(start_bot())
 
 
 if __name__ == "__main__":
