@@ -259,3 +259,83 @@ reply_markup=InlineKeyboardMarkup(keyboard)
         await msg.delete()
     except:
         pass
+
+
+# -----------------------
+# Inline Search
+# -----------------------
+
+async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.inline_query.query
+    offset = update.inline_query.offset
+
+    if not query:
+        return
+
+    results, next_offset = search_inline(query, offset)
+
+    await update.inline_query.answer(
+        results,
+        next_offset=next_offset,
+        cache_time=5
+    )
+
+
+# -----------------------
+# Buttons
+# -----------------------
+
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+
+    if query.data == "delete":
+
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+
+# -----------------------
+# Bot Start
+# -----------------------
+
+async def start_bot():
+
+    app = Application.builder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("scan", scan))
+    app.add_handler(CommandHandler("request", request_story))
+
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, search)
+    )
+
+    app.add_handler(InlineQueryHandler(inline_query))
+
+    app.add_handler(CallbackQueryHandler(buttons))
+
+    logger.info("Riya Bot running")
+
+    asyncio.create_task(auto_scan_loop())
+
+    await app.run_polling()
+
+
+# -----------------------
+# Main
+# -----------------------
+
+def main():
+
+    threading.Thread(target=start_server).start()
+
+    asyncio.run(start_bot())
+
+
+if __name__ == "__main__":
+
+    main()
