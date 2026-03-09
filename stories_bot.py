@@ -152,7 +152,10 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     global story_index, last_scan_count
 
-    msg = await update.message.reply_text(
+    msg = await context.bot.send_message(
+    chat_id=update.effective_chat.id,
+    text="Scanning..."
+)
         text="""
 🔎 *Riya Database Scan*
 
@@ -400,7 +403,10 @@ Hey {mention} 👋
 
     else:
 
-        msg = await update.message.reply_text(
+        msg = await context.bot.send_message(
+    chat_id=update.effective_chat.id,
+    text="Scanning..."
+)
 
             text=caption,
             parse_mode="HTML",
