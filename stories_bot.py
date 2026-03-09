@@ -18,7 +18,6 @@ from telegram.ext import (
 )
 
 from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP
-
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
 
@@ -68,7 +67,7 @@ def is_conversation(text):
 
 
 # -----------------------
-# Story name clean
+# Clean story name
 # -----------------------
 
 def clean_story(name):
@@ -79,11 +78,14 @@ def clean_story(name):
 
 
 # -----------------------
-# Claim system storage
+# Claim + cooldown storage
 # -----------------------
 
 claims_db = {}
 cooldown_db = {}
+
+# store message owner
+message_owner = {}
 
 
 def is_user_blocked(user_id):
@@ -99,7 +101,7 @@ def is_user_blocked(user_id):
 
 
 # -----------------------
-# /cooldown admin command
+# /cooldown
 # -----------------------
 
 async def cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -219,6 +221,9 @@ _༎ຶ‿༎ຶ This reply will be deleted automatically in 30 minutes_
 
     )
 
+    # store owner
+    message_owner[msg.message_id] = user.id
+
     await asyncio.sleep(300)
 
     try:
@@ -266,34 +271,61 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.answer()
 
+    # delete button
     if query.data == "delete":
 
+        msg_id = query.message.message_id
+
+        owner_id = message_owner.get(msg_id)
+
+        is_admin = False
+
         try:
-            await query.message.delete()
+            member = await context.bot.get_chat_member(
+                query.message.chat.id,
+                user.id
+            )
+
+            if member.status in ["administrator", "creator"]:
+                is_admin = True
+
         except:
             pass
+
+        if user.id == owner_id or is_admin:
+
+            try:
+                await query.message.delete()
+            except:
+                pass
+
+        else:
+
+            await query.answer(
+                "You cannot delete this message",
+                show_alert=True
+            )
 
         return
 
 
+    # copyright claim
     if query.data.startswith("copyright"):
 
         story = query.data.split("|")[1]
 
-        # duplicate claim check
         key = f"{user.id}:{story}"
 
         if key in claims_db:
 
             await query.answer(
-                "You already claimed this story.",
+                "You already claimed this story",
                 show_alert=True
             )
             return
 
         claims_db[key] = True
 
-        # send log
         await context.bot.send_message(
 
             chat_id=COPYRIGHT_CHANNEL,
@@ -308,7 +340,6 @@ ID: {user.id}
 """
         )
 
-        # confirmation
         await query.message.reply_text(
             "✅ Your copyright claim has been submitted."
         )
