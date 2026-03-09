@@ -152,7 +152,6 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     status = add_request(story, user)
 
-    # delete user message
     try:
         await update.message.delete()
     except:
@@ -162,19 +161,19 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.effective_chat.send_message(
 
-f"⚠️ {user.mention_html()} this story is already requested.\nPlease don't request again.",
-
-parse_mode="HTML"
+            text=f"⚠️ {user.mention_html()} this story is already requested.\nPlease don't request again.",
+            parse_mode="HTML"
 
         )
 
         return
 
+
     await context.bot.send_message(
 
         chat_id=REQUEST_GROUP,
 
-f"""
+        text=f"""
 📚 **Story Request**
 
 Name: **{story}**
@@ -183,15 +182,15 @@ Requested by: {user.mention_html()}
 ID: `{user.id}`
 """,
 
-parse_mode="HTML"
+        parse_mode="HTML"
 
     )
 
+
     await update.effective_chat.send_message(
 
-f"✅ {user.mention_html()} your request for **{story}** has been sent.",
-
-parse_mode="HTML"
+        text=f"✅ {user.mention_html()} your request for **{story}** has been sent.",
+        parse_mode="HTML"
 
     )
 
@@ -247,9 +246,8 @@ f"""
 _{result['text']}_
 """,
 
-parse_mode="Markdown",
-
-reply_markup=InlineKeyboardMarkup(keyboard)
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
 
     )
 
