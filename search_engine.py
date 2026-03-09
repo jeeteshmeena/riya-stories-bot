@@ -1,35 +1,26 @@
-import json
 from rapidfuzz import fuzz
-
-
-DB_FILE = "database.json"
-
-
-def load_db():
-
-    try:
-
-        with open(DB_FILE) as f:
-            return json.load(f)
-
-    except:
-        return {}
+from database import load_db
 
 
 def fuzzy_search(query):
 
     db = load_db()
 
-    best = None
+    query = query.lower()
+
+    best_match = None
     best_score = 0
 
     for name, data in db.items():
 
-        score = fuzz.ratio(query.lower(), name)
+        score = fuzz.ratio(query, name)
 
-        if score > best_score and score > 70:
+        if score > best_score:
 
             best_score = score
-            best = data
+            best_match = data
 
-    return best
+    if best_score < 60:
+        return None
+
+    return best_match
