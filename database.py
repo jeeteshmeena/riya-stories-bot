@@ -3,21 +3,44 @@ import os
 
 DB_FILE = "stories_db.json"
 
+_DB_CACHE = None
+_DB_MTIME = None
+
 
 def load_db():
 
-    if os.path.exists(DB_FILE):
+    global _DB_CACHE, _DB_MTIME
 
-        with open(DB_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
+    if not os.path.exists(DB_FILE):
+        _DB_CACHE = {}
+        _DB_MTIME = None
+        return _DB_CACHE
 
-    return {}
+    try:
+        mtime = os.path.getmtime(DB_FILE)
+    except OSError:
+        mtime = None
+
+    if _DB_CACHE is not None and _DB_MTIME == mtime:
+        return _DB_CACHE
+
+    with open(DB_FILE, "r", encoding="utf-8") as f:
+        _DB_CACHE = json.load(f)
+        _DB_MTIME = mtime
+        return _DB_CACHE
 
 
 def save_db(data):
+    global _DB_CACHE, _DB_MTIME
 
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
+
+    _DB_CACHE = data
+    try:
+        _DB_MTIME = os.path.getmtime(DB_FILE)
+    except OSError:
+        _DB_MTIME = None
 
 
 def add_story(story):
@@ -42,5 +65,4 @@ def add_story(story):
 def get_story(name):
 
     db = load_db()
-
     return db.get(name)
