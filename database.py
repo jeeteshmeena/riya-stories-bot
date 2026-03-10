@@ -164,3 +164,13 @@ def load_story_index():
 
 def save_story_index(data):
     _save_json(STORY_INDEX_FILE, data)
+
+
+def load_scan_state():
+    """Load the last scan state to support incremental scanning."""
+    return _load_json("scan_state.json", {"last_message_id": 0, "last_scan_time": 0})
+
+
+def save_scan_state(state):
+    """Save scan state for incremental scanning."""
+    _save_json("scan_state.json", state)
