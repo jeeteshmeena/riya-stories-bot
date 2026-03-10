@@ -37,7 +37,7 @@ def get_text(message):
 def extract_name(text):
     """
     Try multiple patterns to detect story name (title).
-    We normalise out status markers like (Completed)/(Ongoing).
+    We normalise out status markers like (Completed)/(Ongoing) and prefixes like "Name :-".
     """
 
     for pattern in NAME_PATTERNS:
@@ -48,6 +48,8 @@ def extract_name(text):
             raw = match.group(1).strip()
             # drop any status in parentheses
             cleaned = re.sub(r"\(.*?\)", "", raw).strip()
+            # Remove common prefixes like "Name :-", "Story :-", etc.
+            cleaned = re.sub(r"^(name|story|title|story name)\s*[:\-]\s*", "", cleaned, flags=re.IGNORECASE).strip()
             return cleaned or None
 
     # fallback: first line of message, but only if it looks like a story title
@@ -75,6 +77,8 @@ def extract_name(text):
         # require a status marker like (Completed) / (Ongoing) to accept as title
         if re.search(r"\(\s*(completed?|complete|ongoing)\s*\)", first, re.IGNORECASE):
             cleaned = re.sub(r"\(.*?\)", "", first).strip()
+            # Remove prefixes from fallback too
+            cleaned = re.sub(r"^(name|story|title|story name)\s*[:\-]\s*", "", cleaned, flags=re.IGNORECASE).strip()
             return cleaned or None
 
     return None
