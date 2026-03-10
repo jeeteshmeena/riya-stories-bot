@@ -67,8 +67,11 @@ def add_story(story):
     if name not in db:
         db[name] = story
     else:
-        # latest message logic
-        if story.get("message_id", 0) > db[name].get("message_id", 0):
+        # Update if the new story has a higher message_id OR if the link has changed
+        # This handles cases where posts are deleted and reposted with corrections
+        existing_story = db[name]
+        if (story.get("message_id", 0) > existing_story.get("message_id", 0) or 
+            story.get("link") != existing_story.get("link")):
             db[name] = story
 
     save_db(db)
@@ -90,6 +93,26 @@ def remove_stories_not_in(keys_to_keep):
     if removed:
         save_db(db)
         _DB_CACHE = db
+        
+        # Also clean up search and story indexes
+        search_index = load_search_index()
+        story_index = load_story_index()
+        
+        # Remove from search index
+        keys_to_remove = []
+        for key, value in search_index.items():
+            if value not in keys_to_keep and value not in [db.get(k, {}).get('text', '') for k in keys_to_keep]:
+                keys_to_remove.append(key)
+        
+        for key in keys_to_remove:
+            del search_index[key]
+            
+        # Remove from story index
+        story_index = [name for name in story_index if name in [db.get(k, {}).get('text', '') for k in keys_to_keep]]
+        
+        # Save updated indexes
+        save_search_index(search_index)
+        save_story_index(story_index)
 
 
 # -----------------------
@@ -128,3 +151,16 @@ def save_requests(data):
 # -----------------------
 
 def load_search_index():
+    return _load_json(SEARCH_INDEX_FILE, {})
+
+
+def save_search_index(data):
+    _save_json(SEARCH_INDEX_FILE, data)
+
+
+def load_story_index():
+    return _load_json(STORY_INDEX_FILE, [])
+
+
+def save_story_index(data):
+    _save_json(STORY_INDEX_FILE, data)
