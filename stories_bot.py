@@ -184,7 +184,7 @@ def init_search_index():
         last_scan_count = len(story_index)
 
 
-async def auto_scan_loop():
+async def auto_scan_loop(bot=None):
     """Periodically rescan channel and refresh search index (runs in background)."""
     global story_index, last_scan_count
     if not CHANNEL_ID or (str(AUTO_SCAN).lower() != "true"):
@@ -193,12 +193,17 @@ async def auto_scan_loop():
         try:
             await asyncio.sleep(600)  # wait 10 min before first run
             logger.info("Auto scan started...")
-            result = await scan_channel(CHANNEL_ID)
-            story_index = result.get("names", [])
-            build_search_index(story_index)
-            save_story_index(story_index)
-            last_scan_count = result.get("stories", len(story_index))
-            logger.info("Auto scan done | stories=%d", last_scan_count)
+            result = await scan_channel(CHANNEL_ID, bot=bot, log_channel=LOG_CHANNEL)
+            names = result.get("names", [])
+            # Only update indexes if we got a successful result - never wipe on failure
+            if names:
+                story_index = names
+                build_search_index(story_index)
+                save_story_index(story_index)
+                last_scan_count = result.get("stories", len(story_index))
+                logger.info("Auto scan done | stories=%d", last_scan_count)
+            else:
+                logger.warning("Auto scan returned no stories, keeping existing index")
         except Exception as e:
             logger.error("Auto scan error: %s", e)
 
@@ -430,7 +435,7 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"SCAN START | user_id={update.effective_user.id} username={update.effective_user.username}"
         )
 
-        result = await scan_channel(CHANNEL_ID)
+        result = await scan_channel(CHANNEL_ID, bot=context.bot, log_channel=LOG_CHANNEL)
 
         await msg.edit_text(
             text="""
@@ -794,7 +799,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         msg = await context.bot.send_video(
             chat_id=chat_id,
-            video="https://files.catbox.moe/0cldq9.mp4",
+            video="https://files.catbox.moe/lr91ja.mp4",
             caption=caption,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard)
@@ -874,7 +879,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 sent = await context.bot.send_video(
                     chat_id=query.message.chat.id,
-                    video="https://files.catbox.moe/0cldq9.mp4",
+                    video="https://files.catbox.moe/lr91ja.mp4",
                     caption=caption,
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup(keyboard)
@@ -1032,9 +1037,9 @@ def start_bot():
 
     init_search_index()
 
-    async def _post_init(app):
+    async def _post_init(application):
         if str(AUTO_SCAN).lower() == "true" and CHANNEL_ID:
-            asyncio.create_task(auto_scan_loop())
+            asyncio.create_task(auto_scan_loop(application.bot))
 
     app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
@@ -1059,7 +1064,8 @@ def start_bot():
 
     logger.info("Riya Bot running")
 
-    app.run_polling()
+    # drop_pending_updates avoids processing stale updates that may cause issues after restart
+    app.run_polling(drop_pending_updates=True)
 
 
 # -----------------------
