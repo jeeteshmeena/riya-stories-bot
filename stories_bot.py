@@ -109,13 +109,30 @@ def extract_story_type(text):
 
 
 async def log(context, text):
-    try:
-        await context.bot.send_message(
-            chat_id=LOG_CHANNEL,
-            text=text
-        )
-    except:
-        pass
+    async def _send():
+        try:
+            await asyncio.wait_for(
+                context.bot.send_message(chat_id=LOG_CHANNEL, text=text),
+                timeout=3
+            )
+        except:
+            pass
+
+    asyncio.create_task(_send())
+
+
+def fast_search_contains(query, limit=10):
+    q = clean_story(query).lower()
+    if not q:
+        return []
+
+    out = []
+    for key, original in search_index.items():
+        if q in key:
+            out.append(original)
+            if len(out) >= limit:
+                break
+    return out
 
 
 # -----------------------
@@ -316,11 +333,14 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No stories indexed yet.")
         return
 
-    text = "<b>Available stories on this channel 👇🏻</b>\n\n"
+    header = "<b>Available stories on this channel 👇🏻</b>\n"
 
+    lines = []
     for i, name in enumerate(story_index, 1):
         title = clean_story(name)
-        text += f"<i>{i}:- {title}</i>\n"
+        lines.append(f"{i} {title}")
+
+    text = header + "\n<pre>" + "\n".join(lines) + "</pre>"
 
     cmd_msg = update.message
 
@@ -485,9 +505,15 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
+    # delete user query immediately on hit (as requested)
+    try:
+        await update.message.delete()
+    except:
+        pass
+
     # pick the first match and load full data from DB
     candidate_name = fast_results[0]
-    result = get_story(candidate_name.lower())
+    result = get_story(clean_story(candidate_name).lower())
 
     if not result:
         return
@@ -569,10 +595,7 @@ Hey {mention} 👋
         except:
             pass
 
-        try:
-            await update.message.delete()
-        except:
-            pass
+        # user message already deleted above
 
     asyncio.create_task(_delete_later())
 
@@ -659,7 +682,7 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not query:
         return
 
-    results = fast_search(query)
+    results = fast_search_contains(query, limit=10)
 
     articles = []
 
@@ -669,9 +692,9 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             InlineQueryResultArticle(
 
-                id=story,
-                title=story,
-                input_message_content=InputTextMessageContent(story)
+                id=clean_story(story).lower(),
+                title=clean_story(story),
+                input_message_content=InputTextMessageContent(clean_story(story))
 
             )
 
