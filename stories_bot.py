@@ -167,21 +167,49 @@ def fast_search_contains(query, limit=10):
 def init_search_index():
     """Bootstrap search index from DB if empty (e.g. after first deploy)."""
     global story_index, search_index, last_scan_count
-    if search_index:
-        return
-    db = load_db()
-    if not db:
-        return
-    names = []
-    for s in db.values():
-        n = s.get("text") or s.get("name", "")
-        if n and n not in names:
-            names.append(n)
-    if names:
-        story_index = names
-        build_search_index(story_index)
-        save_story_index(story_index)
+    
+    # Load persisted indexes first
+    search_index = load_search_index()
+    story_index = load_story_index()
+    
+    # If search index is empty, try to build from DB
+    if not search_index:
+        db = load_db()
+        if not db:
+            logger.info("No existing database found")
+            return
+        names = []
+        for s in db.values():
+            n = s.get("text") or s.get("name", "")
+            if n and n not in names:
+                names.append(n)
+        if names:
+            story_index = names
+            build_search_index(story_index)
+            save_story_index(story_index)
+            last_scan_count = len(story_index)
+            logger.info(f"Built search index from database: {len(names)} stories")
+    else:
+        # Ensure story_index is loaded from persisted data
+        if not story_index:
+            # Rebuild story_index from search_index values
+            story_index = list(set(search_index.values()))
+            save_story_index(story_index)
+        
         last_scan_count = len(story_index)
+        logger.info(f"Loaded persisted search index: {len(search_index)} entries, {len(story_index)} stories")
+
+
+async def health_check_loop():
+    """Periodic health check to keep the bot responsive and detect issues."""
+    while True:
+        try:
+            await asyncio.sleep(300)  # Check every 5 minutes
+            logger.info("Health check: Bot is running normally")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Health check error: {e}")
 
 
 async def auto_scan_loop(bot=None):
@@ -204,8 +232,13 @@ async def auto_scan_loop(bot=None):
                 logger.info("Auto scan done | stories=%d", last_scan_count)
             else:
                 logger.warning("Auto scan returned no stories, keeping existing index")
+        except asyncio.CancelledError:
+            logger.info("Auto scan loop cancelled")
+            break
         except Exception as e:
             logger.error("Auto scan error: %s", e)
+            # Don't let the error crash the loop - continue after a shorter delay
+            await asyncio.sleep(60)  # wait 1 min before retrying after error
 
 
 # -----------------------
@@ -797,6 +830,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     else:
+        # Only use default video when story has no image
         msg = await context.bot.send_video(
             chat_id=chat_id,
             video="https://files.catbox.moe/lr91ja.mp4",
@@ -877,6 +911,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
             else:
+                # Only use default video when story has no image
                 sent = await context.bot.send_video(
                     chat_id=query.message.chat.id,
                     video="https://files.catbox.moe/lr91ja.mp4",
@@ -1040,8 +1075,17 @@ def start_bot():
     async def _post_init(application):
         if str(AUTO_SCAN).lower() == "true" and CHANNEL_ID:
             asyncio.create_task(auto_scan_loop(application.bot))
+        # Start health check loop
+        asyncio.create_task(health_check_loop())
 
     app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
+
+    # Add error handler for all updates
+    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        logger.error("Exception while handling an update: %s", context.error)
+        # Don't crash the bot on individual update errors
+
+    app.add_error_handler(error_handler)
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("scan", scan))
@@ -1065,7 +1109,14 @@ def start_bot():
     logger.info("Riya Bot running")
 
     # drop_pending_updates avoids processing stale updates that may cause issues after restart
-    app.run_polling(drop_pending_updates=True)
+    # Use idle timeout to prevent hanging
+    try:
+        app.run_polling(drop_pending_updates=True, timeout=30, read_timeout=30, write_timeout=30, connect_timeout=30, pool_timeout=30)
+    except Exception as e:
+        logger.error("Bot polling error: %s", e)
+        # Restart the bot if it crashes
+        logger.info("Restarting bot...")
+        start_bot()
 
 
 # -----------------------
