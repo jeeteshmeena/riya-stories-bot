@@ -26,7 +26,13 @@ from telegram.ext import (
 
 from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP, LOG_CHANNEL
 from scanner_client import scan_channel
-from database import get_story
+from database import (
+    get_story,
+    load_claims,
+    save_claims,
+    load_requests,
+    save_requests,
+)
 
 
 logging.basicConfig(level=logging.INFO)
@@ -50,12 +56,13 @@ def start_server():
 # Databases
 # -----------------------
 
-claims_db = {}
+claims_db = load_claims()
 cooldown_db = {}
 message_owner = {}
 
-request_db = {}
-request_chat = {}
+_requests_state = load_requests()
+request_db = _requests_state.get("requests", {})
+request_chat = _requests_state.get("chats", {})
 
 story_index = []
 search_index = {}
@@ -183,7 +190,20 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
 <b>Version:</b> Riya v10
 """
 
-    await update.message.reply_text(text=text, parse_mode="HTML")
+    msg = await update.message.reply_text(text=text, parse_mode="HTML")
+
+    async def _delete_later():
+        await asyncio.sleep(1800)
+        try:
+            await msg.delete()
+        except:
+            pass
+        try:
+            await update.message.delete()
+        except:
+            pass
+
+    asyncio.create_task(_delete_later())
 
 
 async def how(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -199,7 +219,20 @@ async def how(update: Update, context: ContextTypes.DEFAULT_TYPE):
 When the story gets uploaded, you will be notified automatically.
 """
 
-    await update.message.reply_text(text=text, parse_mode="HTML")
+    msg = await update.message.reply_text(text=text, parse_mode="HTML")
+
+    async def _delete_later():
+        await asyncio.sleep(1800)
+        try:
+            await msg.delete()
+        except:
+            pass
+        try:
+            await update.message.delete()
+        except:
+            pass
+
+    asyncio.create_task(_delete_later())
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -216,7 +249,20 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 <b>You can also simply send a story name to search.</b>
 """
 
-    await update.message.reply_text(text=text, parse_mode="HTML")
+    msg = await update.message.reply_text(text=text, parse_mode="HTML")
+
+    async def _delete_later():
+        await asyncio.sleep(1800)
+        try:
+            await msg.delete()
+        except:
+            pass
+        try:
+            await update.message.delete()
+        except:
+            pass
+
+    asyncio.create_task(_delete_later())
 
 
 # -----------------------
@@ -233,7 +279,9 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 "*Progress:* ░░░░░░░░░░ 0%"
 )
 
-    msg = await update.message.reply_text(
+    cmd_msg = update.message
+
+    msg = await cmd_msg.reply_text(
         text=scan_text,
         parse_mode="Markdown"
     )
@@ -321,6 +369,16 @@ _Your story database is now fully updated._
             context,
             f"SCAN ERROR | {e}"
         )
+
+    # delete user's /scan command after short delay, keep progress message
+    async def _delete_cmd_later():
+        await asyncio.sleep(60)
+        try:
+            await cmd_msg.delete()
+        except:
+            pass
+
+    asyncio.create_task(_delete_cmd_later())
 
 
 # -----------------------
@@ -478,6 +536,9 @@ If we find it, it will be uploaded soon.</b>
         text=text,
         parse_mode="HTML"
     )
+
+    # persist requests state
+    save_requests({"requests": request_db, "chats": request_chat})
 
     await log(
         context,
@@ -652,6 +713,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         claims_db[key] = True
+        save_claims(claims_db)
 
         await context.bot.send_message(
 
