@@ -83,6 +83,11 @@ SEARCH_COOLDOWN = 2
 # Pagination
 STORIES_PER_PAGE = 25
 
+# Scan state management
+scan_in_progress = False
+scan_cancel_requested = False
+scan_user = None
+
 
 # -----------------------
 # Helpers
@@ -413,72 +418,133 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -----------------------
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    global story_index, last_scan_count
+    global scan_in_progress, scan_cancel_requested, scan_user, story_index, last_scan_count
 
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ This command is for admins only.")
         return
 
+    # Check if scan is already running
+    if scan_in_progress:
+        user_mention = update.effective_user.mention_html()
+        scan_user_mention = scan_user.mention_html() if scan_user else "Unknown"
+        
+        funny_messages = [
+            f"🚫 <b>Whoa there, {user_mention}!</b>\n\nA scan is already in progress by {scan_user_mention}.\n\n<i>Patience, young grasshopper! Good stories come to those who wait...</i> 🌱",
+            f"🤚 <b>Hold your horses, {user_mention}!</b>\n\n{scan_user_mention} is currently scanning the channel.\n\n<i>The database is having a spa treatment - please wait! 💆‍♀️</i>",
+            f"⏳ <b>Easy there, {user_mention}!</b>\n\n{scan_user_mention} is on a story-hunting mission.\n\n<i>Let them finish before you start your adventure! 🗺️</i>"
+        ]
+        
+        await update.message.reply_text(
+            text=funny_messages[hash(user_mention) % len(funny_messages)],
+            parse_mode="HTML"
+        )
+        return
+
+    # Set scan state
+    scan_in_progress = True
+    scan_cancel_requested = False
+    scan_user = update.effective_user
+
     scan_text = (
-"🔎 *Riya Database Scan*\n\n"
-"*Status:* _Initializing scanner..._\n\n"
-"*Progress:* ░░░░░░░░░░ 0%"
-)
+        "🔎 *Riya Database Scan*\n\n"
+        "*Status:* _Initializing scanner..._\n\n"
+        "*Progress:* ░░░░░░░░░░ 0%\n\n"
+        "🆕 *Tap here to cancel scan*"
+    )
 
     cmd_msg = update.message
 
+    keyboard = [[InlineKeyboardButton("🛑 Cancel Scan", callback_data="cancel_scan")]]
     msg = await cmd_msg.reply_text(
         text=scan_text,
-        parse_mode="Markdown"
-    )
-
-    await asyncio.sleep(1)
-
-    await msg.edit_text(
-        text="""
-🔎 *Riya Database Scan*
-
-*Status:* _Fetching channel messages..._
-
-*Progress:* ▓▓░░░░░░░░ 20%
-""",
-        parse_mode="Markdown"
-    )
-
-    await asyncio.sleep(1)
-
-    await msg.edit_text(
-        text="""
-🔎 *Riya Database Scan*
-
-*Status:* _Detecting stories..._
-
-*Progress:* ▓▓▓▓░░░░░░ 40%
-""",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
     await asyncio.sleep(1)
 
     try:
+        # Check if cancelled before starting
+        if scan_cancel_requested:
+            await msg.edit_text(
+                text="❌ *Scan Cancelled*\n\nThe scan was cancelled by the user.",
+                parse_mode="Markdown"
+            )
+            return
+
+        await msg.edit_text(
+            text="""\
+🔎 *Riya Database Scan*
+
+*Status:* _Fetching channel messages..._
+
+*Progress:* ▓▓░░░░░░░ 20%
+
+🆕 *Tap here to cancel scan*""",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        await asyncio.sleep(1)
+
+        # Check if cancelled
+        if scan_cancel_requested:
+            await msg.edit_text(
+                text="❌ *Scan Cancelled*\n\nThe scan was cancelled by the user.",
+                parse_mode="Markdown"
+            )
+            return
+
+        await msg.edit_text(
+            text="""\
+🔎 *Riya Database Scan*
+
+*Status:* _Detecting stories..._
+
+*Progress:* ▓▓▓▓░░░░░ 40%
+
+🆕 *Tap here to cancel scan*""",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+        await asyncio.sleep(1)
 
         await log(
             context,
             f"SCAN START | user_id={update.effective_user.id} username={update.effective_user.username}"
         )
 
+        # Check if cancelled before scanning
+        if scan_cancel_requested:
+            await msg.edit_text(
+                text="❌ *Scan Cancelled*\n\nThe scan was cancelled by the user.",
+                parse_mode="Markdown"
+            )
+            return
+
         result = await scan_channel(CHANNEL_ID, bot=context.bot, log_channel=LOG_CHANNEL)
 
+        # Check if cancelled during scan
+        if scan_cancel_requested:
+            await msg.edit_text(
+                text="❌ *Scan Cancelled*\n\nThe scan was cancelled by the user.",
+                parse_mode="Markdown"
+            )
+            return
+
         await msg.edit_text(
-            text="""
+            text="""\
 🔎 *Riya Database Scan*
 
 *Status:* _Building search index..._
 
 *Progress:* ▓▓▓▓▓▓▓▓░░ 80%
-""",
-            parse_mode="Markdown"
+
+🆕 *Tap here to cancel scan*""",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
         await asyncio.sleep(1)
@@ -491,14 +557,13 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         last_scan_count = result.get("stories", len(story_index))
 
         await msg.edit_text(
-            text=f"""
+            text=f"""\
 ✅ *Scan Completed*
 
 📚 *Stories Indexed:* {last_scan_count}  
 ⚡ *Search Engine:* _Optimized_
 
-_Your story database is now fully updated._
-""",
+_Your story database is now fully updated._""",
             parse_mode="Markdown"
         )
 
@@ -508,15 +573,20 @@ _Your story database is now fully updated._
         )
 
     except Exception as e:
-
         await msg.edit_text(
-            text=f"Scan failed\n{e}"
+            text=f"❌ *Scan Failed*\n\n{e}",
+            parse_mode="Markdown"
         )
 
         await log(
             context,
             f"SCAN ERROR | {e}"
         )
+    finally:
+        # Reset scan state
+        scan_in_progress = False
+        scan_user = None
+        scan_cancel_requested = False
 
     # delete user's /scan command after short delay, keep progress message
     async def _delete_cmd_later():
@@ -740,40 +810,48 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     cooldown_db[user.id] = now
 
+    # Only respond if it looks like a story search query
+    # Must be at least 3 characters and contain letters only (mostly)
+    if len(query_text) < 3 or not re.match(r'^[a-zA-Z0-9\s\-_]+$', query_text):
+        return
+
     # Try exact match first, then substring match (only from DB)
     fast_results = fast_search(query_text)
     if not fast_results:
         fast_results = fast_search_contains(query_text, limit=1)
 
     if not fast_results:
-        await log(
-            context,
-            f"SEARCH MISS | user_id={user.id} username={user.username} query={query_text}"
-        )
-        suggestions = fast_search_contains(query_text, limit=5)
-        if len(suggestions) >= 2:
-            # "Did you mean?" with buttons
-            keyboard = []
-            for s in suggestions:
-                key = clean_story(s).lower()
-                if len(f"srch|{key}") <= 64:
-                    keyboard.append([InlineKeyboardButton(s, callback_data=f"srch|{key}")])
-            no_msg = await msg.reply_text(
-                "❓ Did you mean one of these?",
-                reply_markup=InlineKeyboardMarkup(keyboard)
+        # Don't respond to queries that don't match stories
+        # Only log if it looks like a genuine story search attempt
+        if len(query_text) >= 3 and re.search(r'[a-zA-Z]', query_text):
+            await log(
+                context,
+                f"SEARCH MISS | user_id={user.id} username={user.username} query={query_text}"
             )
-        else:
-            no_msg = await msg.reply_text(
-                "❌ No story found with that name.\n\n"
-                "Check spelling or use /stories to see available titles."
-            )
-        async def _del_no():
-            await asyncio.sleep(30)
-            try:
-                await no_msg.delete()
-            except Exception:
-                pass
-        asyncio.create_task(_del_no())
+            suggestions = fast_search_contains(query_text, limit=5)
+            if len(suggestions) >= 2:
+                # "Did you mean?" with buttons
+                keyboard = []
+                for s in suggestions:
+                    key = clean_story(s).lower()
+                    if len(f"srch|{key}") <= 64:
+                        keyboard.append([InlineKeyboardButton(s, callback_data=f"srch|{key}")])
+                no_msg = await msg.reply_text(
+                    "❓ Did you mean one of these?",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            else:
+                no_msg = await msg.reply_text(
+                    "❌ No story found with that name.\n\n"
+                    "Check spelling or use /stories to see available titles."
+                )
+            async def _del_no():
+                await asyncio.sleep(30)
+                try:
+                    await no_msg.delete()
+                except Exception:
+                    pass
+            asyncio.create_task(_del_no())
         return
 
     # pick the first match and load full data from DB
@@ -871,6 +949,18 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
 
     await query.answer()
+
+    if query.data == "cancel_scan":
+        global scan_cancel_requested, scan_in_progress
+        if scan_in_progress:
+            scan_cancel_requested = True
+            await query.edit_message_text(
+                text="🛑 *Cancelling scan...*\n\nPlease wait for the current operation to finish.",
+                parse_mode="Markdown"
+            )
+        else:
+            await query.answer("No scan is currently running.", show_alert=True)
+        return
 
     if query.data.startswith("srch|"):
         # "Did you mean?" button clicked - send story reply
@@ -1108,15 +1198,21 @@ def start_bot():
 
     logger.info("Riya Bot running")
 
-    # drop_pending_updates avoids processing stale updates that may cause issues after restart
-    # Use idle timeout to prevent hanging
+    # Use improved polling configuration to prevent conflicts
     try:
-        app.run_polling(drop_pending_updates=True, timeout=30, read_timeout=30, write_timeout=30, connect_timeout=30, pool_timeout=30)
+        app.run_polling(
+            drop_pending_updates=True,
+            timeout=30,
+            read_timeout=30,
+            write_timeout=30,
+            connect_timeout=30,
+            pool_timeout=30,
+            allowed_updates=None  # Get all update types
+        )
     except Exception as e:
         logger.error("Bot polling error: %s", e)
-        # Restart the bot if it crashes
-        logger.info("Restarting bot...")
-        start_bot()
+        # Don't restart automatically - let Render handle it
+        logger.info("Bot stopped. Render will restart if needed.")
 
 
 # -----------------------
