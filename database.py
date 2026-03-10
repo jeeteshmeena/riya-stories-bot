@@ -4,6 +4,8 @@ import os
 DB_FILE = "stories_db.json"
 CLAIMS_FILE = "claims_db.json"
 REQUESTS_FILE = "requests_db.json"
+SEARCH_INDEX_FILE = "search_index.json"
+STORY_INDEX_FILE = "story_index.json"
 
 _DB_CACHE = None
 _DB_MTIME = None
@@ -90,8 +92,39 @@ def save_claims(data):
 
 
 def load_requests():
-    return _load_json(REQUESTS_FILE, {"requests": {}, "chats": {}})
+    raw = _load_json(REQUESTS_FILE, {"requests": {}, "chats": {}})
+    requests_raw = raw.get("requests", {})
+    chats = raw.get("chats", {})
+    requests = {}
+    for k, v in requests_raw.items():
+        requests[k] = set(v) if isinstance(v, list) else set()
+    return {"requests": requests, "chats": chats}
 
 
 def save_requests(data):
-    _save_json(REQUESTS_FILE, data)
+    requests = data.get("requests", {})
+    # Convert sets to lists for JSON
+    serializable = {}
+    for k, v in requests.items():
+        serializable[k] = list(v) if isinstance(v, set) else v
+    _save_json(REQUESTS_FILE, {"requests": serializable, "chats": data.get("chats", {})})
+
+
+# -----------------------
+# Persistent search index (survives restarts)
+# -----------------------
+
+def load_search_index():
+    return _load_json(SEARCH_INDEX_FILE, {})
+
+
+def save_search_index(data):
+    _save_json(SEARCH_INDEX_FILE, data)
+
+
+def load_story_index():
+    return _load_json(STORY_INDEX_FILE, [])
+
+
+def save_story_index(data):
+    _save_json(STORY_INDEX_FILE, data)
