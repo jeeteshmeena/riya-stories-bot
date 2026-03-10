@@ -79,6 +79,19 @@ def get_story(name):
     return db.get(name)
 
 
+def remove_stories_not_in(keys_to_keep):
+    """Remove from DB any story whose key is not in keys_to_keep. Used after scan to drop deleted posts."""
+    global _DB_CACHE
+    db = load_db()
+    keys_set = set(keys_to_keep)
+    removed = [k for k in list(db.keys()) if k not in keys_set]
+    for k in removed:
+        del db[k]
+    if removed:
+        save_db(db)
+        _DB_CACHE = db
+
+
 # -----------------------
 # Persistent claims / requests
 # -----------------------
@@ -115,16 +128,3 @@ def save_requests(data):
 # -----------------------
 
 def load_search_index():
-    return _load_json(SEARCH_INDEX_FILE, {})
-
-
-def save_search_index(data):
-    _save_json(SEARCH_INDEX_FILE, data)
-
-
-def load_story_index():
-    return _load_json(STORY_INDEX_FILE, [])
-
-
-def save_story_index(data):
-    _save_json(STORY_INDEX_FILE, data)
