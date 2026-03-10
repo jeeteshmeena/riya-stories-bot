@@ -29,16 +29,10 @@ from telegram.ext import (
 from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP, LOG_CHANNEL, ADMIN_ID, OWNER_ID, AUTO_SCAN
 from scanner_client import scan_channel
 from database import (
-    get_story,
-    load_db,
-    load_claims,
-    save_claims,
-    load_requests,
-    save_requests,
-    load_search_index,
-    save_search_index,
-    load_story_index,
-    save_story_index,
+    load_db, save_db, add_story, get_story, remove_stories_not_in,
+    load_claims, save_claims, load_requests, save_requests,
+    load_search_index, save_search_index, load_story_index, save_story_index,
+    load_scan_state, save_scan_state, load_bot_stats, save_bot_stats
 )
 
 
@@ -87,6 +81,9 @@ STORIES_PER_PAGE = 25
 scan_in_progress = False
 scan_cancel_requested = False
 scan_user = None
+
+# Bot statistics tracking
+bot_stats = load_bot_stats()
 
 
 # -----------------------
@@ -395,22 +392,89 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="HTML")
 
 
-async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Bot statistics (admin only)."""
+async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show comprehensive bot status with statistics."""
+    global bot_stats
+    
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Admin only.")
+        await update.message.reply_text("⛔ This command is for admins only.")
         return
+    
+    current_time = time.time()
+    start_time = bot_stats.get("start_time", current_time)
+    
+    # Calculate uptime
+    uptime_seconds = current_time - start_time
+    uptime_days = int(uptime_seconds // 86400)
+    uptime_hours = int((uptime_seconds % 86400) // 3600)
+    uptime_minutes = int((uptime_seconds % 3600) // 60)
+    
+    # Calculate downtime
+    downtime_start = bot_stats.get("downtime_start")
+    total_downtime = bot_stats.get("total_downtime", 0)
+    
+    if downtime_start:
+        current_downtime = current_time - downtime_start
+        total_downtime += current_downtime
+        downtime_days = int(current_downtime // 86400)
+        downtime_hours = int((current_downtime % 86400) // 3600)
+        downtime_minutes = int((current_downtime % 3600) // 60)
+        downtime_str = f"{downtime_days}d {downtime_hours}h {downtime_minutes}m (ongoing)"
+        bot_status = "🔴 <b>DEAD</b>"
+    else:
+        total_downtime_seconds = total_downtime
+        downtime_days = int(total_downtime_seconds // 86400)
+        downtime_hours = int((total_downtime_seconds % 86400) // 3600)
+        downtime_minutes = int((total_downtime_seconds % 3600) // 60)
+        downtime_str = f"{downtime_days}d {downtime_hours}h {downtime_minutes}m"
+        bot_status = "🟢 <b>LIVE</b>"
+    
+    # Get current date/time
+    from datetime import datetime
+    current_datetime = datetime.now().strftime("%d %B %Y, %I:%M:%S %p")
+    
+    # Get database stats
     db = load_db()
     total_stories = len(db)
     total_requests = sum(len(v) for v in request_db.values()) if isinstance(request_db, dict) else 0
     unique_requests = len(request_db)
-    text = f"""<b>📊 Bot Statistics</b>
+    total_copyright_claims = len(claims_db)
+    
+    # Format message with all requested formatting
+    status_text = f"""
+<b>🤖 <u>Riya Bot Status Report</u></b>
 
-<b>Stories in DB:</b> {total_stories}
-<b>Indexed titles:</b> {len(story_index)}
-<b>Unique requests:</b> {unique_requests}
-<b>Total request count:</b> {total_requests}"""
-    await update.message.reply_text(text, parse_mode="HTML")
+📊 <i><b>Bot Status:</b></i> {bot_status}
+
+⏱️ <b><i>Total Uptime:</i></b> <tg-spoiler>{uptime_days}d {uptime_hours}h {uptime_minutes}m</tg-spoiler>
+
+📉 <b><i>Total Downtime:</i></b> <tg-spoiler>{downtime_str}</tg-spoiler>
+
+📈 <b><i>Messages Sent:</i></b> <tg-spoiler>{bot_stats.get('total_messages_sent', 0):,}</tg-spoiler>
+
+🔍 <b><i>Requests Received:</i></b> <tg-spoiler>{total_requests:,} (from {unique_requests} users)</tg-spoiler>
+
+⚖️ <b><i>Copyright Claims:</i></b> <tg-spoiler>{total_copyright_claims:,}</tg-spoiler>
+
+📚 <b><i>Stories in Database:</i></b> <tg-spoiler>{total_stories:,}</tg-spoiler>
+
+🕐 <b><i>Current Date & Time:</i></b> <tg-spoiler>{current_datetime}</tg-spoiler>
+
+🔗 <b><i>Bot Link:</i></b> <a href="https://t.me/StoriesFinderBot">Click here to open bot</a>
+
+<tg-spoiler><i>Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i></tg-spoiler>
+"""
+    
+    await update.message.reply_text(
+        text=status_text,
+        parse_mode="HTML",
+        disable_web_page_preview=True
+    )
+    
+    await log(
+        context,
+        f"STATUS | user_id={update.effective_user.id} username={update.effective_user.username}"
+    )
 
 
 # -----------------------
@@ -1168,7 +1232,15 @@ def start_bot():
         # Start health check loop
         asyncio.create_task(health_check_loop())
 
-    app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
+    # Use improved ApplicationBuilder configuration to prevent conflicts
+    app = (Application.builder()
+            .token(BOT_TOKEN)
+            .post_init(_post_init)
+            .get_updates_connection_timeout(30)
+            .get_updates_read_timeout(30)
+            .get_updates_write_timeout(30)
+            .get_updates_pool_timeout(30)
+            .build())
 
     # Add error handler for all updates
     async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1185,7 +1257,8 @@ def start_bot():
     app.add_handler(CommandHandler("how", how))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("info", info_cmd))
-    app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(CommandHandler("stats", status_cmd))
+    app.add_handler(CommandHandler("status", status_cmd))
 
     app.add_handler(InlineQueryHandler(inline_search))
     app.add_handler(ChosenInlineResultHandler(chosen_inline_result))
@@ -1202,17 +1275,12 @@ def start_bot():
     try:
         app.run_polling(
             drop_pending_updates=True,
-            timeout=30,
-            read_timeout=30,
-            write_timeout=30,
-            connect_timeout=30,
-            pool_timeout=30,
             allowed_updates=None  # Get all update types
         )
     except Exception as e:
         logger.error("Bot polling error: %s", e)
-        # Don't restart automatically - let Render handle it
-        logger.info("Bot stopped. Render will restart if needed.")
+        # Don't restart automatically - let platform handle it
+        logger.info("Bot stopped. Platform will restart if needed.")
 
 
 # -----------------------
