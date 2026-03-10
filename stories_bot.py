@@ -26,7 +26,7 @@ from telegram.ext import (
     filters
 )
 
-from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP, LOG_CHANNEL, ADMIN_ID, OWNER_ID
+from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP, LOG_CHANNEL, ADMIN_ID, OWNER_ID, AUTO_SCAN
 from scanner_client import scan_channel
 from database import (
     get_story,
@@ -184,6 +184,25 @@ def init_search_index():
         last_scan_count = len(story_index)
 
 
+async def auto_scan_loop():
+    """Periodically rescan channel and refresh search index (runs in background)."""
+    global story_index, last_scan_count
+    if not CHANNEL_ID or (str(AUTO_SCAN).lower() != "true"):
+        return
+    while True:
+        try:
+            await asyncio.sleep(600)  # wait 10 min before first run
+            logger.info("Auto scan started...")
+            result = await scan_channel(CHANNEL_ID)
+            story_index = result.get("names", [])
+            build_search_index(story_index)
+            save_story_index(story_index)
+            last_scan_count = result.get("stories", len(story_index))
+            logger.info("Auto scan done | stories=%d", last_scan_count)
+        except Exception as e:
+            logger.error("Auto scan error: %s", e)
+
+
 # -----------------------
 # Welcome message
 # -----------------------
@@ -325,10 +344,10 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     name = clean_story(result.get("text", result.get("name", "")))
     link = result.get("link", "")
-    stype = result.get("story_type") or "Not specified"
-    text = f"""<b>📖 {name}</b>
+    stype = result.get("story_type") or extract_story_type(result.get("caption", ""))
+    type_line = f"\n<b>Story Type:</b> {stype}" if stype else ""
+    text = f"""<b>📖 {name}</b>{type_line}
 
-<b>Story Type:</b> {stype}
 <b>Link:</b> {link}"""
     await update.message.reply_text(text, parse_mode="HTML")
 
@@ -693,10 +712,23 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context,
             f"SEARCH MISS | user_id={user.id} username={user.username} query={query_text}"
         )
-        no_msg = await msg.reply_text(
-            "❌ No story found with that name.\n\n"
-            "Check spelling or use /stories to see available titles."
-        )
+        suggestions = fast_search_contains(query_text, limit=5)
+        if len(suggestions) >= 2:
+            # "Did you mean?" with buttons
+            keyboard = []
+            for s in suggestions:
+                key = clean_story(s).lower()
+                if len(f"srch|{key}") <= 64:
+                    keyboard.append([InlineKeyboardButton(s, callback_data=f"srch|{key}")])
+            no_msg = await msg.reply_text(
+                "❓ Did you mean one of these?",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            no_msg = await msg.reply_text(
+                "❌ No story found with that name.\n\n"
+                "Check spelling or use /stories to see available titles."
+            )
         async def _del_no():
             await asyncio.sleep(30)
             try:
@@ -734,29 +766,17 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         story_type = "Not specified"
 
     keyboard = [
-
         [InlineKeyboardButton("OPEN STORY", url=result["link"])],
-
-        [InlineKeyboardButton(
-            "Got Copyright ?",
-            callback_data=f"copyright|{story_name}"
-        )],
-
-        [InlineKeyboardButton(
-            "Delete",
-            callback_data="delete"
-        )]
+        [InlineKeyboardButton("Got Copyright ?", callback_data=f"copyright|{story_name}")],
+        [InlineKeyboardButton("Delete", callback_data="delete")]
     ]
 
     photo = result.get("photo") or result.get("image")
-
-    caption = f"""
-Hey {mention} 👋
+    story_type_line = f"\n<b>Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
+    caption = f"""Hey {mention} 👋
 <b>I found this story</b> 👇
 
-<i>Name:-</i> <b>{story_name}</b>
-
-<b>Story Type:-</b> <i>{story_type}</i>
+<i>Name:-</i> <b>{story_name}</b>{story_type_line}
 
 <tg-spoiler>This reply will be deleted automatically in 5 minutes.</tg-spoiler>
 """
@@ -812,6 +832,70 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
 
     await query.answer()
+
+    if query.data.startswith("srch|"):
+        # "Did you mean?" button clicked - send story reply
+        try:
+            key = query.data.split("|", 1)[1].strip()
+        except IndexError:
+            await query.answer()
+            return
+        result = get_story(key)
+        if not result:
+            await query.answer("Story not found.", show_alert=True)
+            return
+        user = query.from_user
+        mention = user.mention_html()
+        story_name = clean_story(result.get("text", result.get("name", "")))
+        story_type = result.get("story_type") or extract_story_type(result.get("caption", "")) or "Not specified"
+        story_type_line = f"\n<b>Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
+        caption = f"""Hey {mention} 👋
+<b>I found this story</b> 👇
+
+<i>Name:-</i> <b>{story_name}</b>{story_type_line}
+
+<tg-spoiler>This reply will be deleted automatically in 5 minutes.</tg-spoiler>
+"""
+        keyboard = [
+            [InlineKeyboardButton("OPEN STORY", url=result["link"])],
+            [InlineKeyboardButton("Got Copyright ?", callback_data=f"copyright|{story_name}")],
+            [InlineKeyboardButton("Delete", callback_data="delete")]
+        ]
+        photo = result.get("photo") or result.get("image")
+        try:
+            if photo:
+                sent = await context.bot.send_photo(
+                    chat_id=query.message.chat.id,
+                    photo=photo,
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            else:
+                sent = await context.bot.send_video(
+                    chat_id=query.message.chat.id,
+                    video="https://files.catbox.moe/0cldq9.mp4",
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            message_owner[sent.message_id] = user.id
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+
+            async def _del_later():
+                await asyncio.sleep(300)
+                try:
+                    await sent.delete()
+                except Exception:
+                    pass
+            asyncio.create_task(_del_later())
+        except Exception as e:
+            logger.warning("srch callback failed: %s", e)
+        await query.answer()
+        return
 
     if query.data.startswith("stories_p|"):
         try:
@@ -948,7 +1032,11 @@ def start_bot():
 
     init_search_index()
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    async def _post_init(app):
+        if str(AUTO_SCAN).lower() == "true" and CHANNEL_ID:
+            asyncio.create_task(auto_scan_loop())
+
+    app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("scan", scan))
