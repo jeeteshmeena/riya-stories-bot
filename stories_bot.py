@@ -5,6 +5,7 @@ import http.server
 import socketserver
 import asyncio
 import re
+import time
 
 from telegram import (
     Update,
@@ -21,17 +22,23 @@ from telegram.ext import (
     ContextTypes,
     CallbackQueryHandler,
     InlineQueryHandler,
+    ChosenInlineResultHandler,
     filters
 )
 
-from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP, LOG_CHANNEL
+from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP, LOG_CHANNEL, ADMIN_ID, OWNER_ID
 from scanner_client import scan_channel
 from database import (
     get_story,
+    load_db,
     load_claims,
     save_claims,
     load_requests,
     save_requests,
+    load_search_index,
+    save_search_index,
+    load_story_index,
+    save_story_index,
 )
 
 
@@ -64,10 +71,17 @@ _requests_state = load_requests()
 request_db = _requests_state.get("requests", {})
 request_chat = _requests_state.get("chats", {})
 
-story_index = []
-search_index = {}
+# Load persisted indexes so search works immediately after restart
+story_index = load_story_index()
+search_index = load_search_index()
 
-last_scan_count = 0
+last_scan_count = len(story_index)
+
+# Rate limit: min seconds between searches per user
+SEARCH_COOLDOWN = 2
+
+# Pagination
+STORIES_PER_PAGE = 25
 
 
 # -----------------------
@@ -85,7 +99,9 @@ def build_search_index(names):
     search_index = {}
     for name in names:
         key = clean_story(name).lower()
-        search_index[key] = name
+        if key:
+            search_index[key] = name
+    save_search_index(search_index)
 
 
 def fast_search(query):
@@ -101,7 +117,7 @@ def fast_search(query):
 def extract_story_type(text):
 
     if not text:
-        return "Can't find"
+        return None
 
     match = re.search(
         r"(Story Type|Type|Genre)\s*:-\s*(.+)",
@@ -112,7 +128,13 @@ def extract_story_type(text):
     if match:
         return match.group(2).strip()
 
-    return "Can't find"
+    return None
+
+
+def is_admin(user_id):
+    if not user_id:
+        return False
+    return user_id == OWNER_ID or user_id == ADMIN_ID or (OWNER_ID and user_id == OWNER_ID)
 
 
 async def log(context, text):
@@ -122,8 +144,8 @@ async def log(context, text):
                 context.bot.send_message(chat_id=LOG_CHANNEL, text=text),
                 timeout=3
             )
-        except:
-            pass
+        except Exception as e:
+            logger.warning("Log send failed: %s", e)
 
     asyncio.create_task(_send())
 
@@ -140,6 +162,26 @@ def fast_search_contains(query, limit=10):
             if len(out) >= limit:
                 break
     return out
+
+
+def init_search_index():
+    """Bootstrap search index from DB if empty (e.g. after first deploy)."""
+    global story_index, search_index, last_scan_count
+    if search_index:
+        return
+    db = load_db()
+    if not db:
+        return
+    names = []
+    for s in db.values():
+        n = s.get("text") or s.get("name", "")
+        if n and n not in names:
+            names.append(n)
+    if names:
+        story_index = names
+        build_search_index(story_index)
+        save_story_index(story_index)
+        last_scan_count = len(story_index)
 
 
 # -----------------------
@@ -245,6 +287,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 <u>/start</u> → Start the bot
 <u>/request</u> → Request a story
 <u>/scan</u> → Refresh story database [only for admins]
+<u>/info</u> → Story details
+<u>/stats</u> → Bot statistics [admins]
 
 <b>You can also simply send a story name to search.</b>
 """
@@ -265,6 +309,48 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(_delete_later())
 
 
+async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show story details: /info <title>"""
+    if not context.args:
+        await update.message.reply_text("Usage: /info <story name>")
+        return
+    query = " ".join(context.args).strip()
+    results = fast_search(query) or fast_search_contains(query, limit=1)
+    if not results:
+        await update.message.reply_text("Story not found.")
+        return
+    result = get_story(clean_story(results[0]).lower())
+    if not result:
+        await update.message.reply_text("Story not found.")
+        return
+    name = clean_story(result.get("text", result.get("name", "")))
+    link = result.get("link", "")
+    stype = result.get("story_type") or "Not specified"
+    text = f"""<b>📖 {name}</b>
+
+<b>Story Type:</b> {stype}
+<b>Link:</b> {link}"""
+    await update.message.reply_text(text, parse_mode="HTML")
+
+
+async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bot statistics (admin only)."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
+    db = load_db()
+    total_stories = len(db)
+    total_requests = sum(len(v) for v in request_db.values()) if isinstance(request_db, dict) else 0
+    unique_requests = len(request_db)
+    text = f"""<b>📊 Bot Statistics</b>
+
+<b>Stories in DB:</b> {total_stories}
+<b>Indexed titles:</b> {len(story_index)}
+<b>Unique requests:</b> {unique_requests}
+<b>Total request count:</b> {total_requests}"""
+    await update.message.reply_text(text, parse_mode="HTML")
+
+
 # -----------------------
 # /scan premium progress
 # -----------------------
@@ -272,6 +358,10 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     global story_index, last_scan_count
+
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ This command is for admins only.")
+        return
 
     scan_text = (
 "🔎 *Riya Database Scan*\n\n"
@@ -339,6 +429,7 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         story_index = result.get("names", [])
 
         build_search_index(story_index)
+        save_story_index(story_index)
 
         last_scan_count = result.get("stories", len(story_index))
 
@@ -385,24 +476,47 @@ _Your story database is now fully updated._
 # /stories command
 # -----------------------
 
+def _stories_page(page=0):
+    """Build stories list for a given page."""
+    start = page * STORIES_PER_PAGE
+    end = start + STORIES_PER_PAGE
+    chunk = story_index[start:end]
+    lines = []
+    for i, name in enumerate(chunk, start + 1):
+        title = clean_story(name)
+        lines.append(f"{i} {title}")
+    header = "<b>Available stories on this channel 👇🏻</b>\n"
+    text = header + "\n<pre>" + "\n".join(lines) + "</pre>"
+    total = len(story_index)
+    has_next = end < total
+    has_prev = page > 0
+    return text, has_prev, has_next, page
+
+
 async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not story_index:
-        await update.message.reply_text("No stories indexed yet.")
+        await update.message.reply_text("No stories indexed yet. Run /scan first.")
         return
 
-    header = "<b>Available stories on this channel 👇🏻</b>\n"
+    text, has_prev, has_next, page = _stories_page(0)
 
-    lines = []
-    for i, name in enumerate(story_index, 1):
-        title = clean_story(name)
-        lines.append(f"{i} {title}")
-
-    text = header + "\n<pre>" + "\n".join(lines) + "</pre>"
+    keyboard = []
+    nav = []
+    if has_prev:
+        nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"stories_p|{page-1}"))
+    if has_next:
+        nav.append(InlineKeyboardButton("Next ▶", callback_data=f"stories_p|{page+1}"))
+    if nav:
+        keyboard.append(nav)
 
     cmd_msg = update.message
 
-    reply = await update.message.reply_text(text=text, parse_mode="HTML")
+    reply = await update.message.reply_text(
+        text=text,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
+    )
 
     await log(
         context,
@@ -410,17 +524,14 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     async def _delete_later():
-
         await asyncio.sleep(1800)
-
         try:
             await reply.delete()
-        except:
+        except Exception:
             pass
-
         try:
             await cmd_msg.delete()
-        except:
+        except Exception:
             pass
 
     asyncio.create_task(_delete_later())
@@ -552,25 +663,48 @@ If we find it, it will be uploaded soon.</b>
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    query_text = update.message.text.strip()
-
-    # Use only strict in-memory search based on scanned titles.
-    fast_results = fast_search(query_text)
-
-    if not fast_results:
-
-        await log(
-            context,
-            f"SEARCH MISS | user_id={update.effective_user.id} username={update.effective_user.username} query={query_text}"
-        )
-
+    msg = update.message or update.channel_post
+    if not msg or not getattr(msg, "text", None):
         return
 
-    # delete user query immediately on hit (as requested)
-    try:
-        await update.message.delete()
-    except:
-        pass
+    user = update.effective_user
+    if not user:
+        return  # e.g. channel_post without forward info
+
+    query_text = (msg.text or "").strip()
+
+    if not query_text or len(query_text) < 2:
+        return
+
+    # Rate limit
+    now = time.time()
+    last = cooldown_db.get(user.id, 0)
+    if now - last < SEARCH_COOLDOWN:
+        return
+    cooldown_db[user.id] = now
+
+    # Try exact match first, then substring match (only from DB)
+    fast_results = fast_search(query_text)
+    if not fast_results:
+        fast_results = fast_search_contains(query_text, limit=1)
+
+    if not fast_results:
+        await log(
+            context,
+            f"SEARCH MISS | user_id={user.id} username={user.username} query={query_text}"
+        )
+        no_msg = await msg.reply_text(
+            "❌ No story found with that name.\n\n"
+            "Check spelling or use /stories to see available titles."
+        )
+        async def _del_no():
+            await asyncio.sleep(30)
+            try:
+                await no_msg.delete()
+            except Exception:
+                pass
+        asyncio.create_task(_del_no())
+        return
 
     # pick the first match and load full data from DB
     candidate_name = fast_results[0]
@@ -579,7 +713,12 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not result:
         return
 
-    user = update.effective_user
+    # delete user query immediately on hit (as requested)
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+
     mention = user.mention_html()
 
     story_name = clean_story(result["text"])
@@ -592,7 +731,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         story_type = extract_story_type(caption_text)
 
     if not story_type:
-        story_type = "Can't find"
+        story_type = "Not specified"
 
     keyboard = [
 
@@ -622,26 +761,23 @@ Hey {mention} 👋
 <tg-spoiler>This reply will be deleted automatically in 5 minutes.</tg-spoiler>
 """
 
+    chat_id = update.effective_chat.id
+
     if photo:
-
-        msg = await update.message.reply_photo(
-
+        msg = await context.bot.send_photo(
+            chat_id=chat_id,
             photo=photo,
             caption=caption,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard)
-
         )
-
     else:
-
-        msg = await update.message.reply_video(
-
+        msg = await context.bot.send_video(
+            chat_id=chat_id,
             video="https://files.catbox.moe/0cldq9.mp4",
             caption=caption,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard)
-
         )
 
     message_owner[msg.message_id] = user.id
@@ -676,6 +812,32 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
 
     await query.answer()
+
+    if query.data.startswith("stories_p|"):
+        try:
+            page = int(query.data.split("|")[1])
+        except (IndexError, ValueError):
+            await query.answer()
+            return
+        text, has_prev, has_next, _ = _stories_page(page)
+        keyboard = []
+        nav = []
+        if has_prev:
+            nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"stories_p|{page-1}"))
+        if has_next:
+            nav.append(InlineKeyboardButton("Next ▶", callback_data=f"stories_p|{page+1}"))
+        if nav:
+            keyboard.append(nav)
+        try:
+            await query.message.edit_text(
+                text=text,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
+            )
+        except Exception:
+            pass
+        await query.answer()
+        return
 
     if query.data == "delete":
 
@@ -770,6 +932,12 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def chosen_inline_result(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """When user selects inline result - the message is sent to chat; Message handler will reply. Log for debugging."""
+    chosen = update.chosen_inline_result
+    await log(context, f"CHOSEN INLINE | user_id={chosen.from_user.id} result_id={chosen.result_id}")
+
+
 # -----------------------
 # start bot
 # -----------------------
@@ -777,6 +945,8 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def start_bot():
 
     global app
+
+    init_search_index()
 
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -787,8 +957,11 @@ def start_bot():
     app.add_handler(CommandHandler("about", about))
     app.add_handler(CommandHandler("how", how))
     app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("info", info_cmd))
+    app.add_handler(CommandHandler("stats", stats_cmd))
 
     app.add_handler(InlineQueryHandler(inline_search))
+    app.add_handler(ChosenInlineResultHandler(chosen_inline_result))
 
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, search)
