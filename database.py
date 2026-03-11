@@ -1,11 +1,20 @@
 import json
 import os
 
-DB_FILE = "stories_db.json"
-CLAIMS_FILE = "claims_db.json"
-REQUESTS_FILE = "requests_db.json"
-SEARCH_INDEX_FILE = "search_index.json"
-STORY_INDEX_FILE = "story_index.json"
+# Paths - use DATA_DIR from config for VPS (load_dotenv runs when config is imported first)
+def _data_path(name):
+    data_dir = os.getenv("DATA_DIR", ".")
+    path = os.path.join(data_dir, name)
+    dir_path = os.path.dirname(path)
+    if dir_path and not os.path.exists(dir_path):
+        os.makedirs(dir_path, exist_ok=True)
+    return path
+
+DB_FILE = _data_path("stories_db.json")
+CLAIMS_FILE = _data_path("claims_db.json")
+REQUESTS_FILE = _data_path("requests_db.json")
+SEARCH_INDEX_FILE = _data_path("search_index.json")
+STORY_INDEX_FILE = _data_path("story_index.json")
 
 _DB_CACHE = None
 _DB_MTIME = None
@@ -128,3 +137,24 @@ def save_requests(data):
 # -----------------------
 
 def load_search_index():
+    """Load search index: {lowercase_key -> original_name}."""
+    raw = _load_json(SEARCH_INDEX_FILE, {})
+    if isinstance(raw, dict):
+        return raw
+    return {}
+
+
+def save_search_index(data):
+    _save_json(SEARCH_INDEX_FILE, data)
+
+
+def load_story_index():
+    """Load ordered list of story names for /stories pagination."""
+    raw = _load_json(STORY_INDEX_FILE, [])
+    if isinstance(raw, list):
+        return raw
+    return []
+
+
+def save_story_index(data):
+    _save_json(STORY_INDEX_FILE, data)
