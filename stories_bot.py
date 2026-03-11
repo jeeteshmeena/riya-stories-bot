@@ -26,7 +26,7 @@ from telegram.ext import (
     filters
 )
 
-from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP, LOG_CHANNEL, ADMIN_ID, OWNER_ID, AUTO_SCAN
+from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP, LOG_CHANNEL, ADMIN_ID, OWNER_ID, AUTO_SCAN, API_ID, API_HASH, SESSION_STRING
 from scanner_client import scan_channel
 from database import (
     load_db, save_db, add_story, get_story, remove_stories_not_in,
@@ -48,9 +48,12 @@ def start_server():
     port = int(os.environ.get("PORT", 10000))
     handler = http.server.SimpleHTTPRequestHandler
 
-    with socketserver.TCPServer(("", port), handler) as httpd:
-        logger.info(f"Server running {port}")
-        httpd.serve_forever()
+    try:
+        with socketserver.TCPServer(("", port), handler) as httpd:
+            logger.info(f"Server running {port}")
+            httpd.serve_forever()
+    except Exception as e:
+        logger.warning("Dummy HTTP server failed to start on port %s: %s", port, e)
 
 
 # -----------------------
@@ -140,6 +143,9 @@ def is_admin(user_id):
 
 
 async def log(context, text):
+    if not LOG_CHANNEL:
+        return
+
     async def _send():
         try:
             await asyncio.wait_for(
@@ -429,9 +435,13 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         downtime_str = f"{downtime_days}d {downtime_hours}h {downtime_minutes}m"
         bot_status = "🟢 <b>LIVE</b>"
     
-    # Get current date/time
+    # Get current date/time in IST
     from datetime import datetime
-    current_datetime = datetime.now().strftime("%d %B %Y, %I:%M:%S %p")
+    from zoneinfo import ZoneInfo
+
+    ist_now = datetime.now(ZoneInfo("Asia/Kolkata"))
+    current_datetime = ist_now.strftime("%d %B %Y, %I:%M:%S %p IST")
+    last_updated = ist_now.strftime('%Y-%m-%d %H:%M:%S IST')
     
     # Get database stats
     db = load_db()
@@ -462,7 +472,7 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 🔗 <b><i>Bot Link:</i></b> <a href="https://t.me/StoriesFinderBot">Click here to open bot</a>
 
-<tg-spoiler><i>Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i></tg-spoiler>
+<tg-spoiler><i>Last updated: {last_updated}</i></tg-spoiler>
 """
     
     await update.message.reply_text(
@@ -484,8 +494,15 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global scan_in_progress, scan_cancel_requested, scan_user, story_index, last_scan_count
 
+    cmd_msg = update.message
+    if cmd_msg:
+        try:
+            await cmd_msg.delete()
+        except Exception:
+            pass
+
     if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ This command is for admins only.")
+        await update.effective_chat.send_message("⛔ This command is for admins only.")
         return
 
     # Check if scan is already running
@@ -499,7 +516,7 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⏳ <b>Easy there, {user_mention}!</b>\n\n{scan_user_mention} is on a story-hunting mission.\n\n<i>Let them finish before you start your adventure! 🗺️</i>"
         ]
         
-        await update.message.reply_text(
+        await update.effective_chat.send_message(
             text=funny_messages[hash(user_mention) % len(funny_messages)],
             parse_mode="HTML"
         )
@@ -517,10 +534,8 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🆕 *Tap here to cancel scan*"
     )
 
-    cmd_msg = update.message
-
     keyboard = [[InlineKeyboardButton("🛑 Cancel Scan", callback_data="cancel_scan")]]
-    msg = await cmd_msg.reply_text(
+    msg = await update.effective_chat.send_message(
         text=scan_text,
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(keyboard)
@@ -652,15 +667,14 @@ _Your story database is now fully updated._""",
         scan_user = None
         scan_cancel_requested = False
 
-    # delete user's /scan command after short delay, keep progress message
-    async def _delete_cmd_later():
-        await asyncio.sleep(60)
+    async def _delete_scan_reply_later():
+        await asyncio.sleep(1800)
         try:
-            await cmd_msg.delete()
-        except:
+            await msg.delete()
+        except Exception:
             pass
 
-    asyncio.create_task(_delete_cmd_later())
+    asyncio.create_task(_delete_scan_reply_later())
 
 
 # -----------------------
@@ -686,8 +700,15 @@ def _stories_page(page=0):
 
 async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    cmd_msg = update.message
+    if cmd_msg:
+        try:
+            await cmd_msg.delete()
+        except Exception:
+            pass
+
     if not story_index:
-        await update.message.reply_text("No stories indexed yet. Run /scan first.")
+        await update.effective_chat.send_message("No stories indexed yet. Run /scan first.")
         return
 
     text, has_prev, has_next, page = _stories_page(0)
@@ -701,9 +722,7 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if nav:
         keyboard.append(nav)
 
-    cmd_msg = update.message
-
-    reply = await update.message.reply_text(
+    reply = await update.effective_chat.send_message(
         text=text,
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
@@ -718,10 +737,6 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await asyncio.sleep(1800)
         try:
             await reply.delete()
-        except Exception:
-            pass
-        try:
-            await cmd_msg.delete()
         except Exception:
             pass
 
@@ -797,11 +812,11 @@ Please avoid sending duplicate requests.</i>
 
     username = f"@{user.username}" if user.username else "No username"
 
-    await context.bot.send_message(
-
-        chat_id=REQUEST_GROUP,
-
-        text=f"""
+    if REQUEST_GROUP:
+        try:
+            await context.bot.send_message(
+                chat_id=REQUEST_GROUP,
+                text=f"""
 Story Request
 
 Name: {story}
@@ -810,7 +825,11 @@ Username: {username}
 
 Total Requests: {count}
 """
-    )
+            )
+        except Exception as e:
+            logger.warning("Failed to forward request to REQUEST_GROUP: %s", e)
+    else:
+        logger.warning("REQUEST_GROUP is not configured; request is stored locally only")
 
     if count == 1:
 
@@ -1220,10 +1239,31 @@ async def chosen_inline_result(update: Update, context: ContextTypes.DEFAULT_TYP
 # start bot
 # -----------------------
 
+def validate_config():
+    """Fail fast for missing critical deployment configuration."""
+    missing = []
+    if not BOT_TOKEN:
+        missing.append("BOT_TOKEN")
+    if not CHANNEL_ID:
+        missing.append("CHANNEL_ID")
+    if not API_ID:
+        missing.append("API_ID")
+    if not API_HASH:
+        missing.append("API_HASH")
+    if not SESSION_STRING:
+        missing.append("SESSION_STRING")
+
+    if missing:
+        raise RuntimeError(
+            "Missing required environment variables: " + ", ".join(missing)
+        )
+
+
 def start_bot():
 
     global app
 
+    validate_config()
     init_search_index()
 
     async def _post_init(application):
@@ -1289,7 +1329,7 @@ def start_bot():
 
 def main():
 
-    threading.Thread(target=start_server).start()
+    threading.Thread(target=start_server, daemon=True).start()
 
     start_bot()
 

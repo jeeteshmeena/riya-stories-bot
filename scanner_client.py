@@ -9,7 +9,7 @@ from config import API_ID, API_HASH, SESSION_STRING
 from telethon.sessions import StringSession
 
 from parser import parse_story
-from database import add_story, remove_stories_not_in
+from database import add_story, remove_stories_not_in, load_db
 
 logger = logging.getLogger(__name__)
 
@@ -151,21 +151,34 @@ async def scan_channel(channel_id, bot=None, log_channel=None):
             "last_scan_time": time.time()
         })
 
-    # Remove stories that no longer exist in channel (deleted posts)
-    remove_stories_not_in(keys_seen)
+    # Only a full scan can safely detect deleted posts.
+    # Incremental scans only contain new/edited items and must not remove older entries.
+    if not incremental:
+        remove_stories_not_in(keys_seen)
+
+    # Build names from complete DB so search index remains complete after incremental runs.
+    current_db = load_db()
+    all_names = []
+    for story in current_db.values():
+        text = story.get("text")
+        if text:
+            all_names.append(text)
 
     # de-duplicate names and keep stable order
     seen = set()
     unique_names = []
-    for name in names:
+    for name in all_names:
         if name not in seen:
             seen.add(name)
             unique_names.append(name)
 
+    total_stories = len(current_db)
+    total_seen_keys = list(current_db.keys())
+
     return {
         "messages": total_messages,
-        "stories": stories_found,
+        "stories": total_stories,
         "names": unique_names,
-        "keys": list(set(keys_seen)),
+        "keys": total_seen_keys,
         "incremental": incremental
     }
