@@ -1,5 +1,7 @@
 import logging
 import os
+import signal
+import sys
 import threading
 import http.server
 import socketserver
@@ -26,7 +28,20 @@ from telegram.ext import (
     filters
 )
 
-from config import BOT_TOKEN, CHANNEL_ID, COPYRIGHT_CHANNEL, REQUEST_GROUP, LOG_CHANNEL, ADMIN_ID, OWNER_ID, AUTO_SCAN
+from config import (
+    BOT_TOKEN,
+    CHANNEL_ID,
+    COPYRIGHT_CHANNEL,
+    REQUEST_GROUP,
+    LOG_CHANNEL,
+    ADMIN_ID,
+    OWNER_ID,
+    AUTO_SCAN,
+    RUN_HTTP_SERVER,
+    SESSION_STRING,
+    API_ID,
+    API_HASH,
+)
 from scanner_client import scan_channel
 from database import (
     get_story,
@@ -47,16 +62,21 @@ logger = logging.getLogger(__name__)
 
 
 # -----------------------
-# Render dummy server
+# Optional HTTP server (Render needs it for health checks; GCP VPS usually doesn't)
 # -----------------------
 
 def start_server():
+    if not RUN_HTTP_SERVER:
+        logger.info("HTTP server disabled (RUN_HTTP_SERVER=false). Set to 'true' if needed.")
+        return
     port = int(os.environ.get("PORT", 10000))
     handler = http.server.SimpleHTTPRequestHandler
-
-    with socketserver.TCPServer(("", port), handler) as httpd:
-        logger.info(f"Server running {port}")
-        httpd.serve_forever()
+    try:
+        with socketserver.TCPServer(("", port), handler) as httpd:
+            logger.info(f"HTTP server listening on port {port}")
+            httpd.serve_forever()
+    except OSError as e:
+        logger.warning("HTTP server failed to start: %s", e)
 
 
 # -----------------------
@@ -188,6 +208,9 @@ async def auto_scan_loop(bot=None):
     """Periodically rescan channel and refresh search index (runs in background)."""
     global story_index, last_scan_count
     if not CHANNEL_ID or (str(AUTO_SCAN).lower() != "true"):
+        return
+    if not (SESSION_STRING and API_ID and API_HASH):
+        logger.warning("Auto-scan skipped: SESSION_STRING, API_ID, API_HASH required for Telethon")
         return
     while True:
         try:
@@ -385,6 +408,16 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ This command is for admins only.")
+        return
+
+    if not CHANNEL_ID:
+        await update.message.reply_text("⛔ CHANNEL_ID is not configured.")
+        return
+
+    if not (SESSION_STRING and API_ID and API_HASH):
+        await update.message.reply_text(
+            "⛔ Telethon credentials missing. Set SESSION_STRING, API_ID, API_HASH in .env"
+        )
         return
 
     scan_text = (
@@ -966,18 +999,20 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         claims_db[key] = True
         save_claims(claims_db)
 
-        await context.bot.send_message(
-
-            chat_id=COPYRIGHT_CHANNEL,
-
-            text=f"""
+        if COPYRIGHT_CHANNEL:
+            try:
+                await context.bot.send_message(
+                    chat_id=COPYRIGHT_CHANNEL,
+                    text=f"""
 Copyright Claim
 
 Story: {story}
 User: @{user.username if user.username else user.first_name}
 ID: {user.id}
 """
-        )
+                )
+            except Exception as e:
+                logger.warning("Failed to send copyright claim to channel: %s", e)
 
         await query.message.reply_text(
             text="✅ Your copyright claim has been submitted."
@@ -1072,9 +1107,36 @@ def start_bot():
 # main
 # -----------------------
 
-def main():
+def _validate_config():
+    """Fail fast with clear errors if critical config is missing."""
+    if not BOT_TOKEN or BOT_TOKEN == "your_bot_token":
+        logger.error("BOT_TOKEN is not set. Create a .env file or set the environment variable.")
+        sys.exit(1)
+    if CHANNEL_ID == 0:
+        logger.warning("CHANNEL_ID is 0 or unset. /scan and auto-scan will not work.")
+    if REQUEST_GROUP == 0:
+        logger.warning("REQUEST_GROUP is 0 or unset. /request will fail.")
+    logger.info("Config validation OK")
 
-    threading.Thread(target=start_server).start()
+
+def main():
+    _validate_config()
+
+    if RUN_HTTP_SERVER:
+        http_thread = threading.Thread(target=start_server, daemon=True)
+        http_thread.start()
+
+    def shutdown(signum=None, frame=None):
+        logger.info("Shutdown signal received, stopping bot...")
+        if "app" in globals() and app:
+            try:
+                app.updater.stop()
+            except Exception:
+                pass
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, shutdown)
+    signal.signal(signal.SIGINT, shutdown)
 
     start_bot()
 
