@@ -1,5 +1,10 @@
 import os
 
+from dotenv import load_dotenv
+
+# Load .env file (for local/VPS deployment)
+load_dotenv()
+
 # -------------------------------
 # TELEGRAM BOT CONFIG
 # -------------------------------
@@ -34,5 +39,9 @@ API_ID = int(os.getenv("API_ID", 0))
 
 API_HASH = os.getenv("API_HASH")
 
-# Telethon string session (for Render/Koyeb)
-SESSION_STRING = os.getenv("SESSION_STRING")
+# Telethon string session (for Render/Koyeb/VPS)
+SESSION_STRING = os.getenv("SESSION_STRING") or ""
+
+# VPS / Deployment
+RUN_HTTP_SERVER = os.getenv("RUN_HTTP_SERVER", "false").lower() == "true"  # Render needs it; GCP VPS usually doesn't
+DATA_DIR = os.getenv("DATA_DIR", ".")  # Directory for JSON DB files; use absolute path on VPS
