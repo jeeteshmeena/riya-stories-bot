@@ -1236,10 +1236,10 @@ def start_bot():
     app = (Application.builder()
             .token(BOT_TOKEN)
             .post_init(_post_init)
-            .get_updates_connection_timeout(30)
-            .get_updates_read_timeout(30)
-            .get_updates_write_timeout(30)
-            .get_updates_pool_timeout(30)
+            .get_updates_connect_timeout(30)
+.get_updates_read_timeout(30)
+.get_updates_write_timeout(30)
+.get_updates_pool_timeout(30)
             .build())
 
     # Add error handler for all updates
