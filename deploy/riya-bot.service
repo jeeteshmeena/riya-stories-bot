@@ -1,0 +1,23 @@
+[Unit]
+Description=Riya Stories Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/riya-stories-bot
+EnvironmentFile=/opt/riya-stories-bot/.env
+ExecStart=/opt/riya-stories-bot/.venv/bin/python stories_bot.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+# Basic hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=false
+
+[Install]
+WantedBy=multi-user.target
