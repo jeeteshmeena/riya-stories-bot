@@ -1,0 +1,22 @@
+[Unit]
+Description=Riya Stories Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/home/YOUR_USER/riya-stories-bot
+Environment="PATH=/home/YOUR_USER/riya-stories-bot/venv/bin"
+EnvironmentFile=/home/YOUR_USER/riya-stories-bot/.env
+ExecStart=/home/YOUR_USER/riya-stories-bot/venv/bin/python stories_bot.py
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=riya-bot
+
+[Install]
+WantedBy=multi-user.target
