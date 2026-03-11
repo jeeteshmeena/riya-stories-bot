@@ -2,6 +2,7 @@ import asyncio
 import tempfile
 import os
 import logging
+import time
 
 from telethon import TelegramClient
 from config import API_ID, API_HASH, SESSION_STRING
@@ -19,6 +20,8 @@ async def scan_channel(channel_id, bot=None, log_channel=None):
     photo file_ids for stories that have images.
     Returns names (display), keys (DB keys for cleanup), stories count.
     """
+    from database import load_scan_state, save_scan_state
+    
     client = TelegramClient(
         StringSession(SESSION_STRING),
         API_ID,
@@ -34,57 +37,119 @@ async def scan_channel(channel_id, bot=None, log_channel=None):
         logger.error(f"Failed to start Telegram client: {e}")
         raise
 
+    # Load scan state for incremental scanning
+    scan_state = load_scan_state()
+    last_message_id = scan_state.get("last_message_id", 0)
+    incremental = last_message_id > 0
+
     total_messages = 0
     stories_found = 0
     names = []
     keys_seen = []
+    max_message_id = 0
 
     try:
-        async for msg in client.iter_messages(channel_id):
+        # If incremental, only get messages newer than last scan
+        if incremental:
+            logger.info(f"Performing incremental scan from message ID {last_message_id}")
+            async for msg in client.iter_messages(channel_id, min_id=last_message_id):
+                max_message_id = max(max_message_id, msg.id)
+                total_messages += 1
 
-            total_messages += 1
+                story = parse_story(msg)
 
-            story = parse_story(msg)
+                if not story:
+                    continue
 
-            if not story:
-                continue
-
-            # Try to get photo file_id if message has photo and we have bot + log channel
-            if bot and log_channel and msg.photo:
-                try:
-                    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-                        path = tmp.name
-                    await client.download_media(msg.photo, path)
+                # Try to get photo file_id if message has photo and we have bot + log channel
+                if bot and log_channel and msg.photo:
                     try:
-                        with open(path, "rb") as f:
-                            sent = await bot.send_photo(chat_id=log_channel, photo=f)
-                        if sent and sent.photo:
-                            fid = sent.photo[-1].file_id
-                            story["photo"] = fid
+                        # Rate limit photo uploads to prevent 429 errors
+                        await asyncio.sleep(2)  # Increased to 2 seconds between uploads
+                        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                            path = tmp.name
+                        await client.download_media(msg.photo, path)
                         try:
-                            await sent.delete()
-                        except Exception:
-                            pass
-                    finally:
-                        if os.path.exists(path):
-                            os.unlink(path)
-                except Exception:
-                    pass
+                            with open(path, "rb") as f:
+                                sent = await bot.send_photo(chat_id=log_channel, photo=f)
+                            if sent and sent.photo:
+                                fid = sent.photo[-1].file_id
+                                story["photo"] = fid
+                            try:
+                                await sent.delete()
+                            except Exception:
+                                pass
+                        finally:
+                            if os.path.exists(path):
+                                os.unlink(path)
+                    except Exception:
+                        pass
 
-            add_story(story)
-            names.append(story["text"])
-            keys_seen.append(story["name"])
-            stories_found += 1
+                add_story(story)
+                names.append(story["text"])
+                keys_seen.append(story["name"])
+                stories_found += 1
 
-            # Yield to event loop every 50 messages so bot stays responsive
-            if stories_found % 50 == 0:
-                await asyncio.sleep(0)
+                # Yield to event loop every 50 messages so bot stays responsive
+                if stories_found % 50 == 0:
+                    await asyncio.sleep(0)
+        else:
+            # Full scan for first time
+            logger.info("Performing full scan")
+            async for msg in client.iter_messages(channel_id):
+                max_message_id = max(max_message_id, msg.id)
+                total_messages += 1
+
+                story = parse_story(msg)
+
+                if not story:
+                    continue
+
+                # Try to get photo file_id if message has photo and we have bot + log channel
+                if bot and log_channel and msg.photo:
+                    try:
+                        # Rate limit photo uploads to prevent 429 errors
+                        await asyncio.sleep(2)  # Increased to 2 seconds between uploads
+                        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                            path = tmp.name
+                        await client.download_media(msg.photo, path)
+                        try:
+                            with open(path, "rb") as f:
+                                sent = await bot.send_photo(chat_id=log_channel, photo=f)
+                            if sent and sent.photo:
+                                fid = sent.photo[-1].file_id
+                                story["photo"] = fid
+                            try:
+                                await sent.delete()
+                            except Exception:
+                                pass
+                        finally:
+                            if os.path.exists(path):
+                                os.unlink(path)
+                    except Exception:
+                        pass
+
+                add_story(story)
+                names.append(story["text"])
+                keys_seen.append(story["name"])
+                stories_found += 1
+
+                # Yield to event loop every 50 messages so bot stays responsive
+                if stories_found % 50 == 0:
+                    await asyncio.sleep(0)
 
     except Exception as e:
         logger.error(f"Error during channel scan: {e}")
         raise
     finally:
         await client.disconnect()
+
+    # Save scan state for next incremental scan
+    if max_message_id > 0:
+        save_scan_state({
+            "last_message_id": max_message_id,
+            "last_scan_time": time.time()
+        })
 
     # Remove stories that no longer exist in channel (deleted posts)
     remove_stories_not_in(keys_seen)
@@ -101,5 +166,6 @@ async def scan_channel(channel_id, bot=None, log_channel=None):
         "messages": total_messages,
         "stories": stories_found,
         "names": unique_names,
-        "keys": list(set(keys_seen))
+        "keys": list(set(keys_seen)),
+        "incremental": incremental
     }
