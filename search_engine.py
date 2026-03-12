@@ -1,60 +1,84 @@
 from rapidfuzz import fuzz
 from database import load_db
-import re
 
 
 def fuzzy_search(query):
-    """Improved fuzzy search with stricter matching."""
+    """
+    Search for stories with more accurate matching.
+    Uses higher threshold and multiple matching strategies.
+    """
     db = load_db()
-    if not db:
+    
+    if not query or len(query.strip()) < 2:
         return None
         
     query = query.lower().strip()
-    if len(query) < 3:
-        return None
-    
-    # First try exact match
-    if query in db:
-        return db[query]
-    
-    # Try exact match on cleaned titles
-    for name, data in db.items():
-        title = data.get("text", "").lower().strip()
-        if query == title:
-            return data
-    
-    # Fuzzy matching with higher threshold
     best = None
-    score = 0
+    best_score = 0
     
     for name, data in db.items():
-        # Check both DB key and text field
-        text_field = data.get("text", "").lower().strip()
+        # Get the display text for comparison
+        display_text = data.get("text", name).lower().strip()
         
-        # Calculate scores for both fields
-        name_score = fuzz.partial_ratio(query, name)
-        text_score = fuzz.partial_ratio(query, text_field)
+        # Multiple matching strategies
+        scores = []
         
-        # Take the higher score
-        current_score = max(name_score, text_score)
+        # 1. Exact match (highest priority)
+        if query == display_text:
+            scores.append(100)
+        # 2. Contains match
+        elif query in display_text or display_text in query:
+            scores.append(85)
+        # 3. Startswith match
+        elif display_text.startswith(query) or query.startswith(display_text):
+            scores.append(75)
+        # 4. Fuzzy matching with higher threshold
+        else:
+            # Use both partial ratio and token set ratio
+            partial_score = fuzz.partial_ratio(query, display_text)
+            token_score = fuzz.token_set_ratio(query, display_text)
+            
+            # Only consider if both scores are reasonably high
+            if partial_score >= 70 and token_score >= 70:
+                scores.append((partial_score + token_score) / 2)
+            elif partial_score >= 85:
+                scores.append(partial_score)
+                
+        # Use the best score for this item
+        if scores:
+            item_score = max(scores)
+            if item_score > best_score:
+                best_score = item_score
+                best = data
+                
+    # Higher threshold for returning results
+    if best_score < 70:
+        return None
         
-        # Additional check: ensure at least 50% of query words are present
-        query_words = set(query.split())
-        name_words = set(name.split())
-        text_words = set(text_field.split())
-        
-        word_match_ratio = len(query_words & name_words) / len(query_words) if query_words else 0
-        text_word_match_ratio = len(query_words & text_words) / len(query_words) if query_words else 0
-        
-        # Require both high fuzzy score AND word overlap
-        if (current_score > score and 
-            current_score >= 70 and  # Higher threshold
-            max(word_match_ratio, text_word_match_ratio) >= 0.5):  # At least 50% word overlap
-            score = current_score
-            best = data
+    return best
+
+
+def fuzzy_search_contains(query, limit=10):
+    """
+    Search for stories containing the query (for suggestions).
+    Uses stricter matching to avoid unrelated results.
+    """
+    db = load_db()
     
-    # Only return if we have a good match
-    if score >= 70 and best:
-        return best
+    if not query or len(query.strip()) < 2:
+        return []
         
-    return None
+    query = query.lower().strip()
+    results = []
+    
+    for name, data in db.items():
+        display_text = data.get("text", name).lower().strip()
+        
+        # Only include if there's a meaningful match
+        if (query in display_text or display_text in query or
+            fuzz.partial_ratio(query, display_text) >= 75):
+            results.append(data.get("text", name))
+            
+    # Sort by relevance and limit
+    results.sort(key=lambda x: fuzz.partial_ratio(query, x.lower()), reverse=True)
+    return results[:limit]
