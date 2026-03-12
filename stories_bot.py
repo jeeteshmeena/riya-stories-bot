@@ -9,6 +9,7 @@ import asyncio
 import re
 import time
 import json
+import html
 from datetime import datetime, timedelta, timezone
 
 from telegram import (
@@ -116,8 +117,8 @@ IS_SCANNING = False
 cooldowns_db = load_cooldowns()  # user_id(str) -> {'until': ts, 'reason': str}
 COPYRIGHT_DEFAULT_COOLDOWN_MIN = 1440  # 24h
 chat_languages = load_languages()  # chat_id(str) -> 'en'/'hi'
-link_flags = load_link_flags()  # story_key -> {'broken': bool, 'link': str, 'voters': [int], 'chats': [int]}
-active_link_votes = {}  # vote_id -> {'story_key', 'chat_id', 'message_id', 'voters': set()}
+link_flags = load_link_flags()  # story_key -> {'broken': bool, 'link': str, 'voters': [{'id','name'}], 'chats': [int]}
+active_link_votes = {}  # vote_id -> {'story_key', 'chat_id', 'message_id', 'voters': {user_id: name}, 'link', 'story_name'}
 bot_config = load_config()
 
 # Rate limit: min seconds between searches per user
@@ -218,7 +219,8 @@ def set_chat_lang(chat_id: int, lang: str):
 
 
 def _user_mention_by_id(user_id: int, fallback: str = "User") -> str:
-    return f'<a href="tg://user?id={user_id}">{fallback}</a>' if user_id else fallback
+    safe = html.escape(fallback or str(user_id))
+    return f'<a href="tg://user?id={user_id}">{safe}</a>' if user_id else safe
 
 
 def _normalize_story_query(text: str) -> str:
@@ -394,6 +396,96 @@ async def auto_scan_loop(bot=None):
                 logger.warning("Auto scan returned no stories, keeping existing index")
         except Exception as e:
             logger.error("Auto scan error: %s", e)
+
+
+async def _is_link_alive(url: str) -> bool:
+    """Best-effort HTTP check to see if a t.me link is reachable."""
+    try:
+        import httpx  # uses dependency from python-telegram-bot
+    except ImportError:
+        return True  # fall back to assuming OK if httpx not available
+
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
+            resp = await client.get(url)
+        # Telegram often returns 200 for valid links
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+async def link_check_loop(bot=None):
+    """Background loop that periodically verifies stored links and clears/restores flags."""
+    while True:
+        try:
+            await asyncio.sleep(3600)
+            db = load_db()
+            if not db:
+                continue
+            changed = False
+            for key, story in list(db.items()):
+                link = story.get("link")
+                if not link:
+                    continue
+                alive = await _is_link_alive(link)
+                lf = link_flags.get(key) or {}
+                was_broken = lf.get("broken", False)
+                # mark newly broken
+                if not alive and not was_broken:
+                    lf.update(
+                        {
+                            "broken": True,
+                            "link": link,
+                            "voters": lf.get("voters") or [],
+                            "chats": lf.get("chats") or [],
+                        }
+                    )
+                    link_flags[key] = lf
+                    changed = True
+                # restore if link is back
+                elif alive and was_broken:
+                    voters = lf.get("voters") or []
+                    chats = lf.get("chats") or []
+                    title = clean_story(story.get("text", key))
+                    for chat_id in chats:
+                        lang = get_chat_lang(chat_id)
+                        mentions = " ".join(
+                            _user_mention_by_id(v.get("id"), v.get("name", str(v.get("id")))) for v in voters
+                        )
+                        if lang == "hi":
+                            text = (
+                                f"<b>✅ लिंक फिर से काम कर रहा है</b>\n\n"
+                                f"{mentions}\n\n"
+                                f"<i>{title}</i>\n"
+                                f"<b>Link:</b> {link}"
+                            )
+                        else:
+                            text = (
+                                f"<b>✅ Link is working again</b>\n\n"
+                                f"{mentions}\n\n"
+                                f"<i>{title}</i>\n"
+                                f"<b>Link:</b> {link}"
+                            )
+                        try:
+                            sent = await bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
+                        except Exception:
+                            sent = None
+                        if sent:
+                            async def _del_later(m):
+                                await asyncio.sleep(86400)
+                                try:
+                                    await m.delete()
+                                except Exception:
+                                    pass
+                            asyncio.create_task(_del_later(sent))
+                    # clear flag
+                    link_flags.pop(key, None)
+                    changed = True
+
+            if changed:
+                save_link_flags(link_flags)
+        except Exception as e:
+            logger.error("Link check loop error: %s", e)
 
 
 # -----------------------
@@ -1635,8 +1727,27 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # -----------------------
 
     if query.data.startswith("lnw|"):
-        # initial "Link Not Working?" click – ask for confirmation
+        # initial "Link Not Working?" click – only requester can start
         story_key = query.data.split("|", 1)[1]
+        owner = message_owner.get(query.message.message_id)
+        if owner is not None and owner != user.id:
+            lang = get_chat_lang(query.message.chat.id)
+            if lang == "hi":
+                warn_text = "<b>केवल वही यूज़र लिंक रिपोर्ट कर सकता है, जिसने स्टोरी सर्च की हो।</b>"
+            else:
+                warn_text = "<b>Only the original requester can report this link.</b>"
+            warn = await query.message.reply_text(warn_text, parse_mode="HTML")
+
+            async def _del_warn():
+                await asyncio.sleep(15)
+                try:
+                    await warn.delete()
+                except Exception:
+                    pass
+
+            asyncio.create_task(_del_warn())
+            return
+
         story = get_story(story_key)
         if not story:
             await query.answer("Story not found.", show_alert=True)
@@ -1660,11 +1771,13 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             confirm_label = "✅ Confirm Report"
             cancel_label = "❌ Cancel"
 
+        reporter_id = owner or user.id
+
         kb = InlineKeyboardMarkup(
             [
                 [
-                    InlineKeyboardButton(confirm_label, callback_data=f"lnw_confirm|{story_key}"),
-                    InlineKeyboardButton(cancel_label, callback_data="lnw_cancel"),
+                    InlineKeyboardButton(confirm_label, callback_data=f"lnw_confirm|{story_key}|{reporter_id}"),
+                    InlineKeyboardButton(cancel_label, callback_data=f"lnw_cancel|{reporter_id}"),
                 ]
             ]
         )
@@ -1680,7 +1793,28 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(_del_conf())
         return
 
-    if query.data == "lnw_cancel":
+    if query.data.startswith("lnw_cancel|"):
+        try:
+            _, reporter_raw = query.data.split("|", 1)
+            reporter_id = int(reporter_raw)
+        except Exception:
+            reporter_id = None
+
+        if reporter_id is not None and reporter_id != user.id:
+            lang = get_chat_lang(query.message.chat.id)
+            txt = "<b>Only the requester can cancel this report.</b>" if lang != "hi" else "<b>केवल requester ही इस रिपोर्ट को कैंसल कर सकता है।</b>"
+            warn = await query.message.reply_text(txt, parse_mode="HTML")
+
+            async def _del_warn():
+                await asyncio.sleep(15)
+                try:
+                    await warn.delete()
+                except Exception:
+                    pass
+
+            asyncio.create_task(_del_warn())
+            return
+
         try:
             await query.message.delete()
         except Exception:
@@ -1688,13 +1822,41 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if query.data.startswith("lnw_confirm|"):
-        story_key = query.data.split("|", 1)[1]
+        try:
+            _, rest = query.data.split("|", 1)
+            story_key, reporter_raw = rest.split("|", 1)
+            reporter_id = int(reporter_raw)
+        except Exception:
+            story_key = query.data.split("|", 1)[1]
+            reporter_id = None
+
         story = get_story(story_key)
         if not story:
             await query.answer("Story not found.", show_alert=True)
             return
         chat_id = query.message.chat.id
         user_id = user.id
+
+        if reporter_id is not None and reporter_id != user_id:
+            lang = get_chat_lang(chat_id)
+            txt = "<b>Only the requester can confirm this report.</b>" if lang != "hi" else "<b>केवल requester ही इस रिपोर्ट को कन्फर्म कर सकता है।</b>"
+            warn = await query.message.reply_text(txt, parse_mode="HTML")
+
+            async def _del_warn():
+                await asyncio.sleep(15)
+                try:
+                    await warn.delete()
+                except Exception:
+                    pass
+
+            asyncio.create_task(_del_warn())
+            return
+
+        # delete confirmation panel immediately after confirm
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
         story_name = clean_story(story.get("text", story.get("name", "")))
         link = story.get("link", "")
 
@@ -1705,12 +1867,13 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "story_key": story_key,
                 "chat_id": chat_id,
                 "message_id": None,
-                "voters": set(),
+                "voters": {},  # user_id -> display_name
                 "link": link,
                 "story_name": story_name,
             }
             active_link_votes[vote_id] = vote
-        vote["voters"].add(user_id)
+        display_name = user.full_name or user.first_name or str(user_id)
+        vote["voters"][user_id] = display_name
 
         current = len(vote["voters"])
         required = 3
@@ -1783,12 +1946,12 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         story_name = vote["story_name"]
         link = vote["link"]
 
-        # update voters
+        # update voters (one vote per user; they can switch between broken/ok)
         if action == "lnwv_broken":
-            vote["voters"].add(user.id)
+            display_name = user.full_name or user.first_name or str(user.id)
+            vote["voters"][user.id] = display_name
         elif action == "lnwv_ok":
-            # if they vote "working", remove them from broken voter set
-            vote["voters"].discard(user.id)
+            vote["voters"].pop(user.id, None)
 
         current = len(vote["voters"])
         required = 3
@@ -1831,8 +1994,8 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # check threshold
         if current >= required:
-            voters = list(vote["voters"])
-            mentions = " ".join(_user_mention_by_id(uid, fallback=str(uid)) for uid in voters)
+            voter_items = list(vote["voters"].items())
+            mentions = " ".join(_user_mention_by_id(uid, name) for uid, name in voter_items)
             if lang == "hi":
                 final_text = (
                     f"<b>✅ लिंक टूटा हुआ कन्फर्म हो गया</b>\n\n"
@@ -1854,11 +2017,16 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # persist flag
             lf = link_flags.get(story_key) or {}
+            existing_voters = {v.get("id") for v in (lf.get("voters") or [])}
+            voter_objs = lf.get("voters") or []
+            for uid, name in voter_items:
+                if uid not in existing_voters:
+                    voter_objs.append({"id": uid, "name": name})
             lf.update(
                 {
                     "broken": True,
                     "link": link,
-                    "voters": voters,
+                    "voters": voter_objs,
                     "chats": list(set((lf.get("chats") or []) + [chat_id])),
                 }
             )
@@ -2202,6 +2370,8 @@ def start_bot():
     async def _post_init(application):
         if str(AUTO_SCAN).lower() == "true" and CHANNEL_ID:
             asyncio.create_task(auto_scan_loop(application.bot))
+        # background link verification
+        asyncio.create_task(link_check_loop(application.bot))
 
     app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
