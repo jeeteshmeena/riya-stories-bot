@@ -8,6 +8,7 @@ import socketserver
 import asyncio
 import re
 import time
+import json
 from datetime import datetime, timedelta, timezone
 
 from telegram import (
@@ -66,6 +67,7 @@ from database import (
     save_link_flags,
     load_config,
     save_config,
+    remove_stories_not_in,
 )
 
 
@@ -860,6 +862,8 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         all_keys = set()
         total_stories_found = 0
 
+        formats_by_channel = bot_config.get("formats", {})
+
         for idx, cid in enumerate(sources):
             result = await scan_channel(
                 cid,
@@ -867,6 +871,7 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 log_channel=LOG_CHANNEL,
                 progress_cb=_progress_cb if idx == 0 else None,
                 cleanup=False,
+                formats_by_channel=formats_by_channel,
             )
             all_names.extend(result.get("names", []))
             all_keys.update(result.get("keys", []))
@@ -1663,7 +1668,16 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ]
             ]
         )
-        await query.message.reply_text(text=text, parse_mode="HTML", reply_markup=kb)
+        conf = await query.message.reply_text(text=text, parse_mode="HTML", reply_markup=kb)
+
+        async def _del_conf():
+            await asyncio.sleep(3600)
+            try:
+                await conf.delete()
+            except Exception:
+                pass
+
+        asyncio.create_task(_del_conf())
         return
 
     if query.data == "lnw_cancel":
@@ -1743,6 +1757,19 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent.message_id, disable_notification=True)
             except Exception:
                 pass
+            # auto-unpin and delete vote after 24h if not resolved
+            async def _cleanup_vote(m_id, v_id, c_id):
+                await asyncio.sleep(86400)
+                v = active_link_votes.pop(v_id, None)
+                try:
+                    await context.bot.unpin_chat_message(chat_id=c_id, message_id=m_id)
+                except Exception:
+                    pass
+                try:
+                    await context.bot.delete_message(chat_id=c_id, message_id=m_id)
+                except Exception:
+                    pass
+            asyncio.create_task(_cleanup_vote(sent.message_id, vote_id, chat_id))
         return
 
     if query.data.startswith("lnwv_"):
@@ -1805,7 +1832,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # check threshold
         if current >= required:
             voters = list(vote["voters"])
-            mentions = " ".join(_user_mention_by_id(uid) for uid in voters)
+            mentions = " ".join(_user_mention_by_id(uid, fallback=str(uid)) for uid in voters)
             if lang == "hi":
                 final_text = (
                     f"<b>✅ लिंक टूटा हुआ कन्फर्म हो गया</b>\n\n"
@@ -1840,7 +1867,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # notify admin/copyright channel
             if COPYRIGHT_CHANNEL:
-                voters_txt = "\n".join([f"- {_user_mention_by_id(uid)} (id: {uid})" for uid in voters])
+                voters_txt = "\n".join([f"- {_user_mention_by_id(uid, fallback=str(uid))} (id: {uid})" for uid in voters])
                 report = (
                     f"⚠ Link Broken Report\n\n"
                     f"Story: {story_name}\n"

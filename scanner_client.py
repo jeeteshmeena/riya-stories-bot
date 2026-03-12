@@ -10,7 +10,47 @@ from parser import parse_story
 from database import add_story, remove_stories_not_in
 
 
-async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None, cleanup=True):
+def _parse_with_formats(channel_id, message, formats_by_channel):
+    """Try custom regex formats for a channel when default parser fails."""
+    if not formats_by_channel:
+        return None
+    fmts = formats_by_channel.get(str(channel_id)) or []
+    if not fmts:
+        return None
+    from parser import get_text  # avoid circular import issues at top level
+    text = get_text(message)
+    if not text:
+        return None
+    for fmt in fmts:
+        name_re = fmt.get("name_re")
+        link_re = fmt.get("link_re")
+        if not name_re and not link_re:
+            continue
+        name = None
+        link = None
+        if name_re:
+            m = re.search(name_re, text, re.IGNORECASE | re.MULTILINE)
+            if m:
+                name = m.group(1).strip() if m.groups() else m.group(0).strip()
+        if link_re:
+            m2 = re.search(link_re, text, re.IGNORECASE | re.MULTILINE)
+            if m2:
+                link = m2.group(1).strip() if m2.groups() else m2.group(0).strip()
+        if not name or not link:
+            continue
+        key = re.sub(r"\s+", " ", name).strip().lower()
+        return {
+            "name": key,
+            "text": name,
+            "link": link,
+            "message_id": message.id,
+            "caption": text,
+            "story_type": None,
+        }
+    return None
+
+
+async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None, cleanup=True, formats_by_channel=None):
     """
     Scan channel for stories. If bot and log_channel are provided, extract and store
     photo file_ids for stories that have images.
@@ -36,6 +76,10 @@ async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None,
         total_messages += 1
 
         story = parse_story(msg)
+
+        # fallback to custom formats if default parser fails
+        if not story:
+            story = _parse_with_formats(channel_id, msg, formats_by_channel)
 
         if not story:
             continue
