@@ -16,6 +16,7 @@ REQUESTS_FILE = _data_path("requests_db.json")
 SEARCH_INDEX_FILE = _data_path("search_index.json")
 STORY_INDEX_FILE = _data_path("story_index.json")
 LANG_FILE = _data_path("languages_db.json")
+COOLDOWN_FILE = _data_path("cooldowns_db.json")
 
 _DB_CACHE = None
 _DB_MTIME = None
@@ -173,3 +174,17 @@ def load_languages():
 
 def save_languages(data):
     _save_json(LANG_FILE, data)
+
+
+# -----------------------
+# Persistent cooldowns (copyright, etc.)
+# -----------------------
+
+def load_cooldowns():
+    """Return mapping user_id(str) -> {'until': float, 'reason': str}."""
+    raw = _load_json(COOLDOWN_FILE, {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def save_cooldowns(data):
+    _save_json(COOLDOWN_FILE, data)

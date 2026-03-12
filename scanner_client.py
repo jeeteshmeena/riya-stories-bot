@@ -10,7 +10,7 @@ from parser import parse_story
 from database import add_story, remove_stories_not_in
 
 
-async def scan_channel(channel_id, bot=None, log_channel=None):
+async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None):
     """
     Scan channel for stories. If bot and log_channel are provided, extract and store
     photo file_ids for stories that have images.
@@ -28,6 +28,8 @@ async def scan_channel(channel_id, bot=None, log_channel=None):
     stories_found = 0
     names = []
     keys_seen = []
+
+    scan_start = asyncio.get_event_loop().time()
 
     async for msg in client.iter_messages(channel_id):
 
@@ -64,6 +66,20 @@ async def scan_channel(channel_id, bot=None, log_channel=None):
         names.append(story["text"])
         keys_seen.append(story["name"])
         stories_found += 1
+
+        if progress_cb:
+            try:
+                elapsed = asyncio.get_event_loop().time() - scan_start
+                await progress_cb(
+                    {
+                        "stories_found": stories_found,
+                        "total_messages": total_messages,
+                        "last_story": story.get("text") or "",
+                        "elapsed_s": elapsed,
+                    }
+                )
+            except Exception:
+                pass
 
         # Yield to event loop every 50 messages so bot stays responsive
         if stories_found % 50 == 0:
