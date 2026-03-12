@@ -8,6 +8,7 @@ import socketserver
 import asyncio
 import re
 import time
+from datetime import datetime, timedelta, timezone
 
 from telegram import (
     Update,
@@ -25,7 +26,8 @@ from telegram.ext import (
     CallbackQueryHandler,
     InlineQueryHandler,
     ChosenInlineResultHandler,
-    filters
+    ChatMemberHandler,
+    filters,
 )
 
 from config import (
@@ -43,6 +45,8 @@ from config import (
     API_HASH,
 )
 from scanner_client import scan_channel
+from search_engine import fuzzy_search
+from filters_text import is_valid_query
 from database import (
     get_story,
     load_db,
@@ -54,6 +58,8 @@ from database import (
     save_search_index,
     load_story_index,
     save_story_index,
+    load_languages,
+    save_languages,
 )
 
 
@@ -96,6 +102,13 @@ story_index = load_story_index()
 search_index = load_search_index()
 
 last_scan_count = len(story_index)
+
+# runtime state
+BOT_START_TS = time.time()
+IS_SCANNING = False
+COPYRIGHT_COOLDOWNS = {}  # user_id -> until_ts
+COPYRIGHT_DEFAULT_COOLDOWN_MIN = 1440  # 24h
+chat_languages = load_languages()  # chat_id(str) -> 'en'/'hi'
 
 # Rate limit: min seconds between searches per user
 SEARCH_COOLDOWN = 2
@@ -184,6 +197,16 @@ def fast_search_contains(query, limit=10):
     return out
 
 
+def get_chat_lang(chat_id: int) -> str:
+    """Return 'en' or 'hi' for this chat."""
+    return chat_languages.get(str(chat_id), "en")
+
+
+def set_chat_lang(chat_id: int, lang: str):
+    chat_languages[str(chat_id)] = lang
+    save_languages(chat_languages)
+
+
 def init_search_index():
     """Bootstrap search index from DB if empty (e.g. after first deploy)."""
     global story_index, search_index, last_scan_count
@@ -239,8 +262,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     u = update.effective_user
     user = u.mention_html()
+    chat = update.effective_chat
+    lang = get_chat_lang(chat.id)
 
-    text = f"""
+    if lang == "hi":
+        text = f"""
+<b>♡ नमस्ते, स्वागत है</b>, {user}
+
+<blockquote>@StoriesFinderBot</blockquote>
+
+Commands: / टाइप करें और मेनू से विकल्प चुनें – खोजें, रिक्वेस्ट करें या कहानियाँ एक्सप्लोर करें।
+
+<blockquote><i>Disclaimer 📌
+हम केवल Telegram फ़ाइलों को इंडेक्स करते हैं, हम कोई कंटेंट होस्ट नहीं करते।</i></blockquote>
+
+<u>अपनी कहानी का नाम भेजकर शुरू करें!</u>
+
+<b>By</b> @MeJeetX
+"""
+    else:
+        text = f"""
 <b>♡ Hey Welcome</b>, {user}
 
 <blockquote>@StoriesFinderBot</blockquote>
@@ -268,31 +309,66 @@ We only index Telegram files. We do not host content.</i></blockquote>
 
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    text = """
-<b>📌 About Riya</b>
+    chat = update.effective_chat
+    lang = get_chat_lang(chat.id)
 
-<i>Riya is a smart Telegram story finder that helps users discover stories shared across Stories channels.</i>
+    if lang == "hi":
+        text = """
+<b>📚 Riya Bot के बारे में</b>
 
-<b>Fast search • Instant results • Story requests • Auto notifications</b>
+<blockquote><i>Riya एक समझदार Telegram स्टोरी डिस्कवरी बॉट है जो आपको कई Telegram चैनलों में शेयर की गई कहानियाँ तुरंत ढूंढने में मदद करता है।</i></blockquote>
 
-<b>Developer:</b> @MeJeetX
-<b>Version:</b> Riya v10
+<u>✨ Riya क्या कर सकती है</u>
+
+• तेज़ स्टोरी सर्च
+• तुरंत डेटाबेस रिज़ल्ट
+• स्टोरी रिक्वेस्ट सिस्टम
+• स्टोरी अपलोड होने पर ऑटो नोटिफ़िकेशन
+
+<b>👨‍💻 Developer:</b>
+@MeJeetX
+
+<b>⚙ Version:</b>
+Riya Pie v11
+"""
+    else:
+        text = """
+<b>📚 About Riya Bot</b>
+
+<blockquote><i>Riya is an intelligent Telegram story discovery bot that helps users find stories shared across multiple Telegram channels instantly.</i></blockquote>
+
+<u>✨ What Riya Can Do</u>
+
+• Fast Story Search
+• Instant Database Results
+• Story Request System
+• Auto Notification when story is uploaded
+
+<b>👨‍💻 Developer:</b>
+@MeJeetX
+
+<b>⚙ Version:</b>
+Riya Pie v11
 """
 
-    msg = await update.message.reply_text(text=text, parse_mode="HTML")
+    reply = await update.message.reply_text(text=text, parse_mode="HTML")
 
-    async def _delete_later():
-        await asyncio.sleep(1800)
-        try:
-            await msg.delete()
-        except:
-            pass
+    async def _delete_cmd():
+        await asyncio.sleep(300)
         try:
             await update.message.delete()
-        except:
+        except Exception:
             pass
 
-    asyncio.create_task(_delete_later())
+    async def _delete_reply():
+        await asyncio.sleep(1800)
+        try:
+            await reply.delete()
+        except Exception:
+            pass
+
+    asyncio.create_task(_delete_cmd())
+    asyncio.create_task(_delete_reply())
 
 
 async def how(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -326,7 +402,25 @@ When the story gets uploaded, you will be notified automatically.
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    text = """
+    chat = update.effective_chat
+    lang = get_chat_lang(chat.id)
+
+    if lang == "hi":
+        text = """
+<b>🆘 हेल्प सेंटर</b>
+
+<i>इन कमांड्स से आप बॉट के साथ इंटरैक्ट कर सकते हैं:</i>
+
+<u>/start</u> → बॉट शुरू करें
+<u>/request</u> → स्टोरी रिक्वेस्ट करें
+<u>/scan</u> → स्टोरी डेटाबेस रिफ्रेश करें [सिर्फ़ एडमिन]
+<u>/info</u> → स्टोरी डिटेल्स
+<u>/stats</u> → बॉट स्टैटिस्टिक्स [एडमिन]
+
+<b>आप सीधे स्टोरी का नाम भेजकर भी सर्च कर सकते हैं।</b>
+"""
+    else:
+        text = """
 <b>🆘 Help Center</b>
 
 <i>Use these commands to interact with the bot:</i>
@@ -398,13 +492,74 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="HTML")
 
 
+async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show bot uptime and basic stats in IST, auto-delete after delays."""
+    user = update.effective_user
+    chat = update.effective_chat
+    cmd_msg = update.message
+
+    # compute uptime
+    now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+    ist = now_utc.astimezone(timezone(timedelta(hours=5, minutes=30)))
+    uptime_seconds = int(time.time() - BOT_START_TS)
+    days, rem = divmod(uptime_seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, _ = divmod(rem, 60)
+
+    uptime_parts = []
+    if days:
+        uptime_parts.append(f"{days}d")
+    if hours or days:
+        uptime_parts.append(f"{hours}h")
+    uptime_parts.append(f"{minutes}m")
+    uptime_str = " ".join(uptime_parts)
+
+    db = load_db()
+    total_stories = len(db)
+
+    mention = user.mention_html() if user else "User"
+
+    text = (
+        f"<b>📊 Riya Status</b>\n\n"
+        f"{mention}, here is the current status:\n\n"
+        f"<b>⏱ Uptime:</b> <i>{uptime_str}</i>\n"
+        f"<b>🕒 Local Time (IST):</b> <code>{ist.strftime('%d-%m-%Y %H:%M:%S')} IST</code>\n"
+        f"<b>📚 Stories in database:</b> <i>{total_stories}</i>\n"
+    )
+
+    # include first page of stories header with total count
+    if story_index:
+        header_text, _, _, _ = _stories_page(0)
+        text += f"\n{header_text}"
+
+    reply = await chat.send_message(text=text, parse_mode="HTML")
+
+    # delete command message after 5 minutes, reply after 24 hours
+    async def _delete_cmd():
+        await asyncio.sleep(300)
+        try:
+            await cmd_msg.delete()
+        except Exception:
+            pass
+
+    async def _delete_reply():
+        await asyncio.sleep(86400)
+        try:
+            await reply.delete()
+        except Exception:
+            pass
+
+    asyncio.create_task(_delete_cmd())
+    asyncio.create_task(_delete_reply())
+
+
 # -----------------------
 # /scan premium progress
 # -----------------------
 
 async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    global story_index, last_scan_count
+    global story_index, last_scan_count, IS_SCANNING
 
     if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ This command is for admins only.")
@@ -419,6 +574,12 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⛔ Telethon credentials missing. Set SESSION_STRING, API_ID, API_HASH in .env"
         )
         return
+
+    if IS_SCANNING:
+        await update.message.reply_text("A scan is already in progress.")
+        return
+
+    IS_SCANNING = True
 
     scan_text = (
 "🔎 *Riya Database Scan*\n\n"
@@ -517,6 +678,8 @@ _Your story database is now fully updated._
             context,
             f"SCAN ERROR | {e}"
         )
+    finally:
+        IS_SCANNING = False
 
     # delete user's /scan command after short delay, keep progress message
     async def _delete_cmd_later():
@@ -541,10 +704,11 @@ def _stories_page(page=0):
     lines = []
     for i, name in enumerate(chunk, start + 1):
         title = clean_story(name)
-        lines.append(f"{i} {title}")
-    header = "<b>Available stories on this channel 👇🏻</b>\n"
-    text = header + "\n<pre>" + "\n".join(lines) + "</pre>"
+        # per‑story monospace so each can be copied individually
+        lines.append(f"<code>{i} {title}</code>")
     total = len(story_index)
+    header = f"<b>Available stories on this channel ({total}) 👇🏻</b>\n"
+    text = header + "\n" + "\n".join(lines)
     has_next = end < total
     has_prev = page > 0
     return text, has_prev, has_next, page
@@ -602,8 +766,21 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
 
-        warn_text = """
+        chat = update.effective_chat
+        lang = get_chat_lang(chat.id)
+
+        if lang == "hi":
+            warn_text = """
+🎬 कृपया स्टोरी/सीरीज़ का नाम लिखें
+
+📝 उदाहरण:
+/request Vashikaran
+/request Saaya
+"""
+        else:
+            warn_text = """
 🎬 Please provide the name of Story/Series
+
 📝 Examples:
 /request Vashikaran
 /request Saaya
@@ -630,6 +807,27 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     story = " ".join(context.args).lower()
+
+    # if story already exists in DB, no need to request
+    existing = get_story(story)
+    if existing:
+        link = existing.get("link", "")
+        user = update.effective_user
+        mention = user.mention_html() if user else ""
+        text = f"""
+<b>{mention}</b>
+
+<b>No need to request this story.</b>
+<i>It already exists in our database.</i>
+
+<b>Link:</b> <tg-spoiler>{link}</tg-spoiler>
+"""
+        await update.effective_chat.send_message(text=text, parse_mode="HTML")
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+        return
 
     user = update.effective_user
     mention = user.mention_html()
@@ -728,9 +926,35 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         return  # e.g. channel_post without forward info
 
-    query_text = (msg.text or "").strip()
+    raw_text = (msg.text or "").strip()
 
-    if not query_text or len(query_text) < 2:
+    if not raw_text or len(raw_text) < 2:
+        return
+
+    # ignore obvious small talk / random messages
+    if not is_valid_query(raw_text):
+        return
+
+    query_text = raw_text
+
+    # If a scan is running, tell user to wait
+    if IS_SCANNING:
+        notice = await msg.reply_text(
+            "<b>⏳ Please wait</b>\n\n"
+            "<i>Riya is currently fetching and updating stories from the database.</i>\n"
+            "Try again after some time.\n\n"
+            f"<code>{datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S')} UTC</code>",
+            parse_mode="HTML",
+        )
+
+        async def _delete_notice():
+            await asyncio.sleep(86400)
+            try:
+                await notice.delete()
+            except Exception:
+                pass
+
+        asyncio.create_task(_delete_notice())
         return
 
     # Rate limit
@@ -745,14 +969,27 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not fast_results:
         fast_results = fast_search_contains(query_text, limit=1)
 
-    if not fast_results:
+    result = None
+    if fast_results:
+        candidate_name = fast_results[0]
+        result = get_story(clean_story(candidate_name).lower())
+    else:
+        # fuzzy search with safeguards: allow small typos but avoid unrelated matches
+        fuzzy = fuzzy_search(query_text)
+        if fuzzy:
+            name_tokens = set(clean_story(fuzzy.get("name", fuzzy.get("text", ""))).lower().split())
+            query_tokens = set(clean_story(query_text).lower().split())
+            stop = {"se", "ke", "ki", "the", "a", "an", "pls", "please", "anyone", "episode"}
+            if name_tokens and query_tokens and (name_tokens - stop) & (query_tokens - stop):
+                result = fuzzy
+
+    if not result:
         await log(
             context,
             f"SEARCH MISS | user_id={user.id} username={user.username} query={query_text}"
         )
         suggestions = fast_search_contains(query_text, limit=5)
         if len(suggestions) >= 2:
-            # "Did you mean?" with buttons
             keyboard = []
             for s in suggestions:
                 key = clean_story(s).lower()
@@ -775,10 +1012,6 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         asyncio.create_task(_del_no())
         return
-
-    # pick the first match and load full data from DB
-    candidate_name = fast_results[0]
-    result = get_story(clean_story(candidate_name).lower())
 
     if not result:
         return
@@ -870,6 +1103,22 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
 
     await query.answer()
+
+    if query.data.startswith("lang|"):
+        lang = query.data.split("|", 1)[1]
+        if lang not in ("en", "hi"):
+            return
+        chat_id = query.message.chat.id
+        set_chat_lang(chat_id, lang)
+        if lang == "hi":
+            text = "✅ इस ग्रुप में Riya अब हिन्दी में जवाब देगी।"
+        else:
+            text = "✅ Riya will now respond in English in this chat."
+        try:
+            await query.message.edit_text(text=text)
+        except Exception:
+            await query.message.reply_text(text)
+        return
 
     if query.data.startswith("srch|"):
         # "Did you mean?" button clicked - send story reply
@@ -988,6 +1237,22 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         key = f"{user.id}:{story}"
 
+        # cooldown check
+        now = time.time()
+        until = COPYRIGHT_COOLDOWNS.get(user.id)
+        if until and now < until:
+            remaining = int(until - now)
+            mins = remaining // 60
+            await query.message.reply_text(
+                text=(
+                    f"<b>Cooldown active</b>\n\n"
+                    f"{user.mention_html()}, you are currently on cooldown for copyright claims.\n"
+                    f"<i>Please wait approximately {mins} minutes before trying again.</i>"
+                ),
+                parse_mode="HTML",
+            )
+            return
+
         if key in claims_db:
 
             await query.answer(
@@ -1015,7 +1280,12 @@ ID: {user.id}
                 logger.warning("Failed to send copyright claim to channel: %s", e)
 
         await query.message.reply_text(
-            text="✅ Your copyright claim has been submitted."
+            text=(
+                f"✅ <b>Copyright claim received</b>\n\n"
+                f"{user.mention_html()}, your claim has been submitted.\n"
+                f"<i>If you believe there is a copyright issue, our team will review it and take appropriate action.</i>"
+            ),
+            parse_mode="HTML",
         )
 
 
@@ -1062,6 +1332,103 @@ async def chosen_inline_result(update: Update, context: ContextTypes.DEFAULT_TYP
     await log(context, f"CHOSEN INLINE | user_id={chosen.from_user.id} result_id={chosen.result_id}")
 
 
+async def chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle when the bot is added to a group: set default language + show permissions + language buttons."""
+    chat_member = update.my_chat_member
+    if not chat_member:
+        return
+
+    chat = chat_member.chat
+    new_status = chat_member.new_chat_member.status
+    old_status = chat_member.old_chat_member.status
+
+    # bot added to a chat
+    if old_status in ("left", "kicked") and new_status in ("member", "administrator"):
+        # default language English
+        set_chat_lang(chat.id, "en")
+
+        text = (
+            "<b>👋 Thanks for adding Riya Bot</b>\n\n"
+            "<i>To work properly, Riya needs:</i>\n"
+            "• Permission to read messages\n"
+            "• Permission to send messages\n"
+            "• (Optional) Permission to delete messages for auto-cleanup\n\n"
+            "<b>Select bot language for this chat:</b>"
+        )
+
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("English", callback_data="lang|en"),
+                    InlineKeyboardButton("हिन्दी", callback_data="lang|hi"),
+                ]
+            ]
+        )
+
+        await context.bot.send_message(
+            chat_id=chat.id,
+            text=text,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+
+
+# -----------------------
+# admin commands: announce & copyright mute
+# -----------------------
+
+async def announce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: send announcement text to main group (GROUP_ID)."""
+    from config import GROUP_ID  # local import to avoid circular surprises
+
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
+
+    if GROUP_ID == 0:
+        await update.message.reply_text("Group ID is not configured.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage: /announce <message>")
+        return
+
+    text = " ".join(context.args)
+    await context.bot.send_message(chat_id=GROUP_ID, text=text)
+    await update.message.reply_text("✅ Announcement sent.")
+
+
+async def copyright_mute_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: put a user on cooldown for copyright claims."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Usage: /copyright_mute <user_id> [minutes]")
+        return
+
+    try:
+        target_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("First argument must be a user id.")
+        return
+
+    minutes = COPYRIGHT_DEFAULT_COOLDOWN_MIN
+    if len(context.args) >= 2:
+        try:
+            minutes = int(context.args[1])
+        except ValueError:
+            pass
+
+    until = time.time() + minutes * 60
+    COPYRIGHT_COOLDOWNS[target_id] = until
+
+    await update.message.reply_text(
+        f"✅ User {target_id} is on copyright cooldown for {minutes} minutes."
+    )
+
+
 # -----------------------
 # start bot
 # -----------------------
@@ -1087,6 +1454,14 @@ def start_bot():
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("info", info_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(CommandHandler("status", status_cmd))
+
+    # admin-only utility commands
+    app.add_handler(CommandHandler("announce", announce_cmd))
+    app.add_handler(CommandHandler("copyright_mute", copyright_mute_cmd))
+
+    # react when bot is added/removed
+    app.add_handler(ChatMemberHandler(chat_member_update))
 
     app.add_handler(InlineQueryHandler(inline_search))
     app.add_handler(ChosenInlineResultHandler(chosen_inline_result))

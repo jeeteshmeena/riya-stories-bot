@@ -15,6 +15,7 @@ CLAIMS_FILE = _data_path("claims_db.json")
 REQUESTS_FILE = _data_path("requests_db.json")
 SEARCH_INDEX_FILE = _data_path("search_index.json")
 STORY_INDEX_FILE = _data_path("story_index.json")
+LANG_FILE = _data_path("languages_db.json")
 
 _DB_CACHE = None
 _DB_MTIME = None
@@ -158,3 +159,17 @@ def load_story_index():
 
 def save_story_index(data):
     _save_json(STORY_INDEX_FILE, data)
+
+
+# -----------------------
+# Per-chat language settings
+# -----------------------
+
+def load_languages():
+    """Return mapping chat_id(str) -> language code ('en' or 'hi')."""
+    raw = _load_json(LANG_FILE, {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def save_languages(data):
+    _save_json(LANG_FILE, data)
