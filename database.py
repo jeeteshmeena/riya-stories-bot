@@ -17,6 +17,8 @@ SEARCH_INDEX_FILE = _data_path("search_index.json")
 STORY_INDEX_FILE = _data_path("story_index.json")
 LANG_FILE = _data_path("languages_db.json")
 COOLDOWN_FILE = _data_path("cooldowns_db.json")
+LINK_FLAGS_FILE = _data_path("link_flags.json")
+CONFIG_FILE = _data_path("config_db.json")
 
 _DB_CACHE = None
 _DB_MTIME = None
@@ -116,22 +118,48 @@ def save_claims(data):
 
 
 def load_requests():
+    """
+    Load requests.
+    Legacy format:
+      {"requests": {"story": [user_ids]}, "chats": {"story": chat_id}}
+    New format:
+      {"requests": {"story": {"chat_id": [user_ids], ...}}}
+    """
     raw = _load_json(REQUESTS_FILE, {"requests": {}, "chats": {}})
     requests_raw = raw.get("requests", {})
-    chats = raw.get("chats", {})
+    chats_raw = raw.get("chats", {})
     requests = {}
-    for k, v in requests_raw.items():
-        requests[k] = set(v) if isinstance(v, list) else set()
-    return {"requests": requests, "chats": chats}
+
+    for story, value in requests_raw.items():
+        if isinstance(value, list):
+            # legacy: single chat per story
+            chat_id = chats_raw.get(story)
+            if chat_id is None:
+                continue
+            requests[story] = {str(chat_id): set(value)}
+        elif isinstance(value, dict):
+            inner = {}
+            for chat_id, users in value.items():
+                inner[str(chat_id)] = set(users) if isinstance(users, list) else set()
+            if inner:
+                requests[story] = inner
+
+    return {"requests": requests}
 
 
 def save_requests(data):
+    """
+    Save requests in new format:
+      {"requests": {"story": {"chat_id": [user_ids], ...}}}
+    """
     requests = data.get("requests", {})
-    # Convert sets to lists for JSON
     serializable = {}
-    for k, v in requests.items():
-        serializable[k] = list(v) if isinstance(v, set) else v
-    _save_json(REQUESTS_FILE, {"requests": serializable, "chats": data.get("chats", {})})
+    for story, chats in requests.items():
+        ser_chats = {}
+        for chat_id, users in chats.items():
+            ser_chats[str(chat_id)] = list(users) if isinstance(users, set) else list(users or [])
+        serializable[story] = ser_chats
+    _save_json(REQUESTS_FILE, {"requests": serializable})
 
 
 # -----------------------
@@ -188,3 +216,52 @@ def load_cooldowns():
 
 def save_cooldowns(data):
     _save_json(COOLDOWN_FILE, data)
+
+
+# -----------------------
+# Link flags (broken reports, etc.)
+# -----------------------
+
+def load_link_flags():
+    """Return mapping story_key -> {'broken': bool, 'link': str, 'voters': [int], 'chats': [int]}."""
+    raw = _load_json(LINK_FLAGS_FILE, {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def save_link_flags(data):
+    _save_json(LINK_FLAGS_FILE, data)
+
+
+# -----------------------
+# Bot config (sources, panel settings, etc.)
+# -----------------------
+
+def load_config():
+    """
+    Load high-level bot configuration.
+    Keys:
+      start_text: str
+      force_sub_channels: list
+      moderators: list
+      auto_delete: dict
+      sources: list of extra channel ids
+      formats: dict channel_id -> list of format dicts
+    """
+    default = {
+        "start_text": "",
+        "force_sub_channels": [],
+        "moderators": [],
+        "auto_delete": {},
+        "sources": [],
+        "formats": {},
+    }
+    raw = _load_json(CONFIG_FILE, default)
+    if not isinstance(raw, dict):
+        return default
+    for k, v in default.items():
+        raw.setdefault(k, v)
+    return raw
+
+
+def save_config(data):
+    _save_json(CONFIG_FILE, data)

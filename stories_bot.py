@@ -62,6 +62,10 @@ from database import (
     save_languages,
     load_cooldowns,
     save_cooldowns,
+    load_link_flags,
+    save_link_flags,
+    load_config,
+    save_config,
 )
 
 
@@ -97,7 +101,6 @@ message_owner = {}
 
 _requests_state = load_requests()
 request_db = _requests_state.get("requests", {})
-request_chat = _requests_state.get("chats", {})
 
 # Load persisted indexes so search works immediately after restart
 story_index = load_story_index()
@@ -111,6 +114,9 @@ IS_SCANNING = False
 cooldowns_db = load_cooldowns()  # user_id(str) -> {'until': ts, 'reason': str}
 COPYRIGHT_DEFAULT_COOLDOWN_MIN = 1440  # 24h
 chat_languages = load_languages()  # chat_id(str) -> 'en'/'hi'
+link_flags = load_link_flags()  # story_key -> {'broken': bool, 'link': str, 'voters': [int], 'chats': [int]}
+active_link_votes = {}  # vote_id -> {'story_key', 'chat_id', 'message_id', 'voters': set()}
+bot_config = load_config()
 
 # Rate limit: min seconds between searches per user
 SEARCH_COOLDOWN = 2
@@ -837,12 +843,48 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
             )
 
-        result = await scan_channel(
-            CHANNEL_ID,
-            bot=context.bot,
-            log_channel=LOG_CHANNEL,
-            progress_cb=_progress_cb,
-        )
+        # build source channel list: primary + extra from config
+        sources = []
+        if CHANNEL_ID:
+            sources.append(CHANNEL_ID)
+        extra_sources = bot_config.get("sources", [])
+        for cid in extra_sources:
+            try:
+                c_int = int(cid)
+            except Exception:
+                continue
+            if c_int and c_int not in sources:
+                sources.append(c_int)
+
+        all_names = []
+        all_keys = set()
+        total_stories_found = 0
+
+        for idx, cid in enumerate(sources):
+            result = await scan_channel(
+                cid,
+                bot=context.bot,
+                log_channel=LOG_CHANNEL,
+                progress_cb=_progress_cb if idx == 0 else None,
+                cleanup=False,
+            )
+            all_names.extend(result.get("names", []))
+            all_keys.update(result.get("keys", []))
+            total_stories_found += result.get("stories", 0)
+
+        # Cleanup once using union of all keys
+        if all_keys:
+            remove_stories_not_in(all_keys)
+
+        # de-duplicate names preserving order
+        seen_names = set()
+        uniq_names = []
+        for n in all_names:
+            if n not in seen_names:
+                seen_names.add(n)
+                uniq_names.append(n)
+
+        story_index = uniq_names
 
         await msg.edit_text(
             text="""
@@ -863,6 +905,18 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_story_index(story_index)
 
         last_scan_count = result.get("stories", len(story_index))
+
+        # clear link flags for stories whose link has been updated/confirmed again
+        db = load_db()
+        changed = False
+        for key, flag in list(link_flags.items()):
+            if key in db:
+                new_link = db[key].get("link", "")
+                if flag.get("link") and new_link and new_link != flag["link"]:
+                    link_flags.pop(key, None)
+                    changed = True
+        if changed:
+            save_link_flags(link_flags)
 
         # Notify requesters for stories that are now available
         try:
@@ -1081,11 +1135,14 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         pass
 
-    if story not in request_db:
-        request_db[story] = set()
-        request_chat[story] = update.effective_chat.id
+    chat_id = str(update.effective_chat.id)
 
-    if user.id in request_db[story]:
+    if story not in request_db:
+        request_db[story] = {}
+    if chat_id not in request_db[story]:
+        request_db[story][chat_id] = set()
+
+    if user.id in request_db[story][chat_id]:
 
         lang = get_chat_lang(update.effective_chat.id)
         if lang == "hi":
@@ -1106,9 +1163,10 @@ Please avoid sending duplicate requests.</i>
 
         return
 
-    request_db[story].add(user.id)
+    request_db[story][chat_id].add(user.id)
 
-    count = len(request_db[story])
+    # total count across all chats
+    count = sum(len(uids) for uids in request_db[story].values())
 
     username = f"@{user.username}" if user.username else "No username"
 
@@ -1175,7 +1233,7 @@ If we find it, it will be uploaded soon.</b>
     )
 
     # persist requests state
-    save_requests({"requests": request_db, "chats": request_chat})
+    save_requests({"requests": request_db})
 
     await log(
         context,
@@ -1185,7 +1243,7 @@ If we find it, it will be uploaded soon.</b>
 
 async def _notify_fulfilled_requests(context: ContextTypes.DEFAULT_TYPE):
     """After a scan, notify chats where stories were requested if now available."""
-    global request_db, request_chat
+    global request_db
 
     if not isinstance(request_db, dict) or not request_db:
         return
@@ -1194,65 +1252,56 @@ async def _notify_fulfilled_requests(context: ContextTypes.DEFAULT_TYPE):
     if not db:
         return
 
-    fulfilled = []
-    for story_key, user_ids in list(request_db.items()):
-        if story_key in db:
-            fulfilled.append(story_key)
-
-    if not fulfilled:
-        return
-
-    for story_key in fulfilled:
+    # story_key -> per-chat user sets
+    for story_key, chats in list(request_db.items()):
+        if story_key not in db or not isinstance(chats, dict):
+            continue
         story = db.get(story_key) or {}
         link = story.get("link", "")
-        chat_id = request_chat.get(story_key)
-        user_ids = list(request_db.get(story_key) or [])
-        if not chat_id or not user_ids:
-            # cleanup anyway
-            request_db.pop(story_key, None)
-            request_chat.pop(story_key, None)
-            continue
-
-        mentions = " ".join([_user_mention_by_id(uid) for uid in user_ids])
         title = clean_story(story.get("text", story_key))
-        # language based on the target chat
-        lang = get_chat_lang(int(chat_id))
-        if lang == "hi":
-            text = (
-                f"<b>✅ स्टोरी अब उपलब्ध है</b>\n\n"
-                f"{mentions}\n\n"
-                f"<b>{title}</b>\n"
-                f"<b>Link:</b> {link}\n\n"
-                f"<tg-spoiler>यह संदेश 24 घंटे बाद अपने आप डिलीट हो जाएगा।</tg-spoiler>"
-            )
-        else:
-            text = (
-                f"<b>✅ Story available now</b>\n\n"
-                f"{mentions}\n\n"
-                f"<b>{title}</b>\n"
-                f"<b>Link:</b> {link}\n\n"
-                f"<tg-spoiler>This message will be deleted automatically in 24 hours.</tg-spoiler>"
-            )
 
-        try:
-            sent = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
-        except Exception:
-            sent = None
+        # notify each chat separately
+        for chat_id_str, users in list(chats.items()):
+            if not users:
+                continue
+            chat_id = int(chat_id_str)
+            mentions = " ".join([_user_mention_by_id(uid) for uid in users])
+            lang = get_chat_lang(chat_id)
+            if lang == "hi":
+                text = (
+                    f"<b>✅ {mentions}</b>\n\n"
+                    f"<i>{title}</i>\n\n"
+                    f"<b>यहाँ पढ़ें:</b> {link}"
+                )
+            else:
+                text = (
+                    f"<b>✅ {mentions}</b>\n\n"
+                    f"<i>{title}</i>\n\n"
+                    f"<b>Read here:</b> {link}"
+                )
 
-        if sent:
-            async def _del_later(m):
-                await asyncio.sleep(86400)
-                try:
-                    await m.delete()
-                except Exception:
-                    pass
-            asyncio.create_task(_del_later(sent))
+            try:
+                sent = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
+            except Exception:
+                sent = None
 
-        # remove fulfilled request
-        request_db.pop(story_key, None)
-        request_chat.pop(story_key, None)
+            if sent:
+                async def _del_later(m):
+                    await asyncio.sleep(86400)
+                    try:
+                        await m.delete()
+                    except Exception:
+                        pass
+                asyncio.create_task(_del_later(sent))
 
-    save_requests({"requests": request_db, "chats": request_chat})
+            # clear this chat's users for this story
+            request_db[story_key][chat_id_str] = set()
+
+        # drop story entry if all chats cleared
+        if not any(request_db[story_key].values()):
+            request_db.pop(story_key, None)
+
+    save_requests({"requests": request_db})
 
 
 # -----------------------
@@ -1361,6 +1410,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mention = user.mention_html()
 
     story_name = clean_story(result["text"])
+    story_key = result.get("name") or clean_story(result["text"]).lower()
 
     # Prefer pre‑computed story_type from the scanner, fallback to regex
     story_type = result.get("story_type")
@@ -1374,7 +1424,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [InlineKeyboardButton("OPEN STORY", url=result["link"])],
-        [InlineKeyboardButton("Got Copyright ?", callback_data=f"copyright|{story_name}")],
+        [InlineKeyboardButton("⚠ Link Not Working?", callback_data=f"lnw|{story_key}")],
         [InlineKeyboardButton("Delete", callback_data="delete")]
     ]
 
@@ -1443,6 +1493,10 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await _enforce_cooldown(update, context):
         return
 
+    if query.data.startswith("cfg|"):
+        await _handle_config_callback(query, context)
+        return
+
     if query.data.startswith("lang|"):
         lang = query.data.split("|", 1)[1]
         if lang not in ("en", "hi"):
@@ -1473,6 +1527,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user = query.from_user
         mention = user.mention_html()
         story_name = clean_story(result.get("text", result.get("name", "")))
+        story_key = result.get("name") or story_name.lower()
         story_type = result.get("story_type") or extract_story_type(result.get("caption", "")) or "Not specified"
         story_type_line = f"\n<b>Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
         caption = f"""Hey {mention} 👋
@@ -1484,7 +1539,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """
         keyboard = [
             [InlineKeyboardButton("OPEN STORY", url=result["link"])],
-            [InlineKeyboardButton("Got Copyright ?", callback_data=f"copyright|{story_name}")],
+            [InlineKeyboardButton("⚠ Link Not Working?", callback_data=f"lnw|{story_key}")],
             [InlineKeyboardButton("Delete", callback_data="delete")]
         ]
         photo = result.get("photo") or result.get("image")
@@ -1570,55 +1625,243 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    if query.data.startswith("copyright"):
+    # -----------------------
+    # Link-not-working voting flow
+    # -----------------------
 
-        story = query.data.split("|")[1]
-
-        key = f"{user.id}:{story}"
-
-        # If user abuses claims, admin can apply cooldown via /copyright_mute.
-        # (Cooldown is enforced globally by _enforce_cooldown above.)
-
-        if key in claims_db:
-
-            await query.answer(
-                text="You already claimed this story",
-                show_alert=True
-            )
+    if query.data.startswith("lnw|"):
+        # initial "Link Not Working?" click – ask for confirmation
+        story_key = query.data.split("|", 1)[1]
+        story = get_story(story_key)
+        if not story:
+            await query.answer("Story not found.", show_alert=True)
             return
-
-        claims_db[key] = True
-        save_claims(claims_db)
-
-        if COPYRIGHT_CHANNEL:
-            try:
-                await context.bot.send_message(
-                    chat_id=COPYRIGHT_CHANNEL,
-                    text=f"""
-Copyright Claim
-
-Story: {story}
-User: @{user.username if user.username else user.first_name}
-ID: {user.id}
-"""
-                )
-            except Exception as e:
-                logger.warning("Failed to send copyright claim to channel: %s", e)
-
+        story_name = clean_story(story.get("text", story.get("name", "")))
         lang = get_chat_lang(query.message.chat.id)
         if lang == "hi":
             text = (
-                f"✅ <b>कॉपीराइट क्लेम प्राप्त हुआ</b>\n\n"
-                f"{user.mention_html()}, आपका क्लेम सबमिट हो गया है।\n"
-                f"<i>अगर आपको लगता है कि कॉपीराइट समस्या है, हमारी टीम जांच करके उचित कार्रवाई करेगी।</i>"
+                f"<b>⚠ लिंक रिपोर्त करना चाहते हैं?</b>\n\n"
+                f"<i>{story_name}</i>\n\n"
+                "अगर यह स्टोरी लिंक सच में काम नहीं कर रहा है, तो नीचे कन्फर्म करें।"
             )
+            confirm_label = "✅ कन्फर्म रिपोर्ट"
+            cancel_label = "❌ कैंसल"
         else:
             text = (
-                f"✅ <b>Copyright claim received</b>\n\n"
-                f"{user.mention_html()}, your claim has been submitted.\n"
-                f"<i>If you believe there is a copyright issue, our team will review it and take appropriate action.</i>"
+                f"<b>⚠ Report link not working?</b>\n\n"
+                f"<i>{story_name}</i>\n\n"
+                "If this story link is really broken, please confirm below."
             )
-        await query.message.reply_text(text=text, parse_mode="HTML")
+            confirm_label = "✅ Confirm Report"
+            cancel_label = "❌ Cancel"
+
+        kb = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(confirm_label, callback_data=f"lnw_confirm|{story_key}"),
+                    InlineKeyboardButton(cancel_label, callback_data="lnw_cancel"),
+                ]
+            ]
+        )
+        await query.message.reply_text(text=text, parse_mode="HTML", reply_markup=kb)
+        return
+
+    if query.data == "lnw_cancel":
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        return
+
+    if query.data.startswith("lnw_confirm|"):
+        story_key = query.data.split("|", 1)[1]
+        story = get_story(story_key)
+        if not story:
+            await query.answer("Story not found.", show_alert=True)
+            return
+        chat_id = query.message.chat.id
+        user_id = user.id
+        story_name = clean_story(story.get("text", story.get("name", "")))
+        link = story.get("link", "")
+
+        vote_id = f"{chat_id}:{story_key}"
+        vote = active_link_votes.get(vote_id)
+        if not vote:
+            vote = {
+                "story_key": story_key,
+                "chat_id": chat_id,
+                "message_id": None,
+                "voters": set(),
+                "link": link,
+                "story_name": story_name,
+            }
+            active_link_votes[vote_id] = vote
+        vote["voters"].add(user_id)
+
+        current = len(vote["voters"])
+        required = 3
+
+        lang = get_chat_lang(chat_id)
+        if lang == "hi":
+            title = "<b>⚠ लिंक वेरीफिकेशन वोट</b>"
+            body = f"<i>{story_name}</i>\n\n"
+            votes_line = f"Votes: {current} / {required}"
+            broken_label = "❌ लिंक नहीं चल रहा"
+            ok_label = "✅ लिंक सही है"
+        else:
+            title = "<b>⚠ Link verification vote</b>"
+            body = f"<i>{story_name}</i>\n\n"
+            votes_line = f"Votes: {current} / {required}"
+            broken_label = "❌ Link Broken"
+            ok_label = "✅ Link Working"
+
+        text = f"{title}\n\n{body}{votes_line}"
+        kb = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(broken_label, callback_data=f"lnwv_broken|{vote_id}"),
+                    InlineKeyboardButton(ok_label, callback_data=f"lnwv_ok|{vote_id}"),
+                ]
+            ]
+        )
+
+        if vote["message_id"]:
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=vote["message_id"],
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=kb,
+                )
+            except Exception:
+                pass
+        else:
+            sent = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", reply_markup=kb)
+            vote["message_id"] = sent.message_id
+            try:
+                await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent.message_id, disable_notification=True)
+            except Exception:
+                pass
+        return
+
+    if query.data.startswith("lnwv_"):
+        action, vote_id = query.data.split("|", 1)
+        vote = active_link_votes.get(vote_id)
+        if not vote:
+            await query.answer()
+            return
+        chat_id = vote["chat_id"]
+        story_key = vote["story_key"]
+        story_name = vote["story_name"]
+        link = vote["link"]
+
+        # update voters
+        if action == "lnwv_broken":
+            vote["voters"].add(user.id)
+        elif action == "lnwv_ok":
+            # if they vote "working", remove them from broken voter set
+            vote["voters"].discard(user.id)
+
+        current = len(vote["voters"])
+        required = 3
+
+        lang = get_chat_lang(chat_id)
+        if lang == "hi":
+            title = "<b>⚠ लिंक वेरीफिकेशन वोट</b>"
+            body = f"<i>{story_name}</i>\n\n"
+            votes_line = f"Votes: {current} / {required}"
+            broken_label = "❌ लिंक नहीं चल रहा"
+            ok_label = "✅ लिंक सही है"
+        else:
+            title = "<b>⚠ Link verification vote</b>"
+            body = f"<i>{story_name}</i>\n\n"
+            votes_line = f"Votes: {current} / {required}"
+            broken_label = "❌ Link Broken"
+            ok_label = "✅ Link Working"
+
+        text = f"{title}\n\n{body}{votes_line}"
+        kb = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(broken_label, callback_data=f"lnwv_broken|{vote_id}"),
+                    InlineKeyboardButton(ok_label, callback_data=f"lnwv_ok|{vote_id}"),
+                ]
+            ]
+        )
+
+        # update vote message
+        try:
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=vote["message_id"],
+                text=text,
+                parse_mode="HTML",
+                reply_markup=kb,
+            )
+        except Exception:
+            pass
+
+        # check threshold
+        if current >= required:
+            voters = list(vote["voters"])
+            mentions = " ".join(_user_mention_by_id(uid) for uid in voters)
+            if lang == "hi":
+                final_text = (
+                    f"<b>✅ लिंक टूटा हुआ कन्फर्म हो गया</b>\n\n"
+                    f"{mentions}\n\n"
+                    f"<i>{story_name}</i>\n"
+                    f"<b>Link:</b> {link}"
+                )
+            else:
+                final_text = (
+                    f"<b>✅ Link confirmed broken</b>\n\n"
+                    f"{mentions}\n\n"
+                    f"<i>{story_name}</i>\n"
+                    f"<b>Link:</b> {link}"
+                )
+            try:
+                await context.bot.send_message(chat_id=chat_id, text=final_text, parse_mode="HTML")
+            except Exception:
+                pass
+
+            # persist flag
+            lf = link_flags.get(story_key) or {}
+            lf.update(
+                {
+                    "broken": True,
+                    "link": link,
+                    "voters": voters,
+                    "chats": list(set((lf.get("chats") or []) + [chat_id])),
+                }
+            )
+            link_flags[story_key] = lf
+            save_link_flags(link_flags)
+
+            # notify admin/copyright channel
+            if COPYRIGHT_CHANNEL:
+                voters_txt = "\n".join([f"- {_user_mention_by_id(uid)} (id: {uid})" for uid in voters])
+                report = (
+                    f"⚠ Link Broken Report\n\n"
+                    f"Story: {story_name}\n"
+                    f"Story key: {story_key}\n"
+                    f"Link: {link}\n"
+                    f"Chat ID: {chat_id}\n\n"
+                    f"Voters:\n{voters_txt}"
+                )
+                try:
+                    await context.bot.send_message(chat_id=COPYRIGHT_CHANNEL, text=report, parse_mode="HTML")
+                except Exception as e:
+                    logger.warning("Failed to send link broken report: %s", e)
+
+            # clean up vote and unpin
+            try:
+                await context.bot.unpin_chat_message(chat_id=chat_id, message_id=vote["message_id"])
+            except Exception:
+                pass
+            active_link_votes.pop(vote_id, None)
+
+        return
 
 
 # -----------------------
@@ -1786,6 +2029,140 @@ async def copyright_mute_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 # -----------------------
+# admin config panel (/config) and source management
+# -----------------------
+
+async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entry point for admin config panel."""
+    if not is_admin(update.effective_user.id):
+        lang = get_chat_lang(update.effective_chat.id)
+        await update.message.reply_text("⛔ Admin only." if lang != "hi" else "⛔ केवल एडमिन।")
+        return
+
+    lang = get_chat_lang(update.effective_chat.id)
+    if lang == "hi":
+        text = (
+            "<b>⚙ Riya Config Panel</b>\n\n"
+            "<i>नीचे दिए गए सेक्शन्स से बॉट की सेटिंग्स मैनेज करें:</i>\n"
+        )
+        buttons = [
+            [InlineKeyboardButton("📜 Start Message", callback_data="cfg|start")],
+            [InlineKeyboardButton("📡 Force Subscription", callback_data="cfg|fs")],
+            [InlineKeyboardButton("🛡 Moderators", callback_data="cfg|mods")],
+            [InlineKeyboardButton("📚 Source Channels & Formats", callback_data="cfg|sources")],
+            [InlineKeyboardButton("⏱ Auto Delete Timers", callback_data="cfg|timers")],
+            [InlineKeyboardButton("🌐 Language", callback_data="cfg|lang")],
+        ]
+    else:
+        text = (
+            "<b>⚙ Riya Config Panel</b>\n\n"
+            "<i>Use the sections below to manage bot settings:</i>\n"
+        )
+        buttons = [
+            [InlineKeyboardButton("📜 Start Message", callback_data="cfg|start")],
+            [InlineKeyboardButton("📡 Force Subscription", callback_data="cfg|fs")],
+            [InlineKeyboardButton("🛡 Moderators", callback_data="cfg|mods")],
+            [InlineKeyboardButton("📚 Source Channels & Formats", callback_data="cfg|sources")],
+            [InlineKeyboardButton("⏱ Auto Delete Timers", callback_data="cfg|timers")],
+            [InlineKeyboardButton("🌐 Language", callback_data="cfg|lang")],
+        ]
+
+    await update.message.reply_text(text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
+    """Handle cfg| callbacks for the simple config panel."""
+    data = query.data
+    _, section = data.split("|", 1)
+    chat_id = query.message.chat.id
+    lang = get_chat_lang(chat_id)
+
+    if section == "sources":
+        sources = bot_config.get("sources", [])
+        if lang == "hi":
+            header = "<b>📚 सोर्स चैनल</b>\n\n"
+            if sources:
+                body = "<i>अभी जो चैनल स्कैन हो रहे हैं:</i>\n" + "\n".join(f"- <code>{cid}</code>" for cid in sources)
+            else:
+                body = "<i>अभी कोई extra सोर्स चैनल सेट नहीं है।</i>"
+            footer = "\n\n<code>/addsource &lt;channel_id&gt;</code>\n<code>/removesource &lt;channel_id&gt;</code>"
+        else:
+            header = "<b>📚 Source Channels</b>\n\n"
+            if sources:
+                body = "<i>Currently scanned extra channels:</i>\n" + "\n".join(f"- <code>{cid}</code>" for cid in sources)
+            else:
+                body = "<i>No extra source channels configured yet.</i>"
+            footer = "\n\n<code>/addsource &lt;channel_id&gt;</code>\n<code>/removesource &lt;channel_id&gt;</code>"
+        await query.message.edit_text(header + body + footer, parse_mode="HTML")
+        return
+
+    if section == "lang":
+        kb = InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("English", callback_data="lang|en"),
+                 InlineKeyboardButton("हिन्दी", callback_data="lang|hi")]
+            ]
+        )
+        if lang == "hi":
+            text = "<b>🌐 भाषा सेटिंग</b>\n\n<i>इस चैट के लिए भाषा चुनें:</i>"
+        else:
+            text = "<b>🌐 Language Setting</b>\n\n<i>Select language for this chat:</i>"
+        await query.message.edit_text(text=text, parse_mode="HTML", reply_markup=kb)
+        return
+
+    # For now other sections just show info + related commands
+    if section == "start":
+        start_text = bot_config.get("start_text") or "(default hardcoded message)"
+        if lang == "hi":
+            text = (
+                "<b>📜 Start Message</b>\n\n"
+                f"<i>Current:</i>\n{start_text}\n\n"
+                "<code>/setstart &lt;text&gt;</code> से नया start मैसेज सेट करें।"
+            )
+        else:
+            text = (
+                "<b>📜 Start Message</b>\n\n"
+                f"<i>Current:</i>\n{start_text}\n\n"
+                "<code>/setstart &lt;text&gt;</code> to set a new start message."
+            )
+        await query.message.edit_text(text=text, parse_mode="HTML")
+        return
+
+    if section == "fs":
+        channels = bot_config.get("force_sub_channels", [])
+        if lang == "hi":
+            body = "<i>फोर्स सब्सक्रिप्शन चैनल्स:</i>\n" + ("\n".join(channels) if channels else "(कोई नहीं)")
+            footer = "\n\n<code>/addfs &lt;username_or_id&gt;</code>\n<code>/removefs &lt;username_or_id&gt;</code>"
+        else:
+            body = "<i>Force subscription channels:</i>\n" + ("\n".join(channels) if channels else "(none)")
+            footer = "\n\n<code>/addfs &lt;username_or_id&gt;</code>\n<code>/removefs &lt;username_or_id&gt;</code>"
+        await query.message.edit_text("<b>📡 Force Subscription</b>\n\n" + body + footer, parse_mode="HTML")
+        return
+
+    if section == "mods":
+        mods = bot_config.get("moderators", [])
+        if lang == "hi":
+            body = "<i>Moderators (user IDs):</i>\n" + ("\n".join(str(m) for m in mods) if mods else "(कोई नहीं)")
+            footer = "\n\n<code>/addmod &lt;user_id&gt;</code>\n<code>/removemod &lt;user_id&gt;</code>"
+        else:
+            body = "<i>Moderators (user IDs):</i>\n" + ("\n".join(str(m) for m in mods) if mods else "(none)")
+            footer = "\n\n<code>/addmod &lt;user_id&gt;</code>\n<code>/removemod &lt;user_id&gt;</code>"
+        await query.message.edit_text("<b>🛡 Moderators</b>\n\n" + body + footer, parse_mode="HTML")
+        return
+
+    if section == "timers":
+        timers = bot_config.get("auto_delete", {})
+        if lang == "hi":
+            body = "<i>Auto delete टाइमर्स (सेकंड में या मिनट/घंटा में):</i>\n" + json.dumps(timers, indent=2, ensure_ascii=False)
+            footer = "\n\n<code>/settimer &lt;key&gt; &lt;seconds&gt;</code>"
+        else:
+            body = "<i>Auto delete timers (in seconds/minutes/hours):</i>\n" + json.dumps(timers, indent=2)
+            footer = "\n\n<code>/settimer &lt;key&gt; &lt;seconds&gt;</code>"
+        await query.message.edit_text("<b>⏱ Auto Delete Timers</b>\n\n" + body + footer, parse_mode="HTML")
+        return
+
+
+# -----------------------
 # start bot
 # -----------------------
 
@@ -1811,6 +2188,7 @@ def start_bot():
     app.add_handler(CommandHandler("info", info_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
+    app.add_handler(CommandHandler("config", config_cmd))
 
     # admin-only utility commands
     app.add_handler(CommandHandler("announce", announce_cmd))

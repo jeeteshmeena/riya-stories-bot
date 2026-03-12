@@ -10,7 +10,7 @@ from parser import parse_story
 from database import add_story, remove_stories_not_in
 
 
-async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None):
+async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None, cleanup=True):
     """
     Scan channel for stories. If bot and log_channel are provided, extract and store
     photo file_ids for stories that have images.
@@ -88,7 +88,8 @@ async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None)
     await client.disconnect()
 
     # Remove stories that no longer exist in channel (deleted posts)
-    remove_stories_not_in(keys_seen)
+    if cleanup:
+        remove_stories_not_in(keys_seen)
 
     # de-duplicate names and keep stable order
     seen = set()
