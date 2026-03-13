@@ -130,8 +130,24 @@ class BackgroundLinkChecker:
     async def _check_link_validity(self, link, message_id, story_key, story, link_flags):
         """Check if a specific link is valid"""
         try:
+            # Try to get the channel entity from the link
+            entity = None
+            if "/c/" in link:
+                parts = link.split("/c/")
+                if len(parts) > 1:
+                    channel_id = parts[1].split("/")[0]
+                    entity = int("-100" + channel_id)
+            else:
+                parts = link.split("/")
+                if len(parts) > 1 and not parts[-2] == "t.me":
+                    entity = parts[-2]
+            
+            if not entity:
+                # If we couldn't parse the entity, we can't check
+                return
+                
             # Try to get the message
-            message = await self.client.get_messages(link, ids=message_id)
+            message = await self.client.get_messages(entity, ids=message_id)
             
             if message is None:
                 # Message deleted or inaccessible
@@ -172,11 +188,12 @@ class BackgroundLinkChecker:
                 try:
                     await self.client.send_message(
                         LOG_CHANNEL,
-                        f"⚠ **Automated Link Detection**\\n\\n"
-                        f"📖 Story: {story.get('text', 'N/A')}\\n"
-                        f"🔗 Link: {story.get('link')}\\n"
-                        f"❌ Reason: {reason}\\n"
-                        f"⏰ Detected: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                        f"⚠ **Automated Link Detection**\n\n"
+                        f"📖 Story: {story.get('text', 'N/A')}\n"
+                        f"🔗 Link: {story.get('link')}\n"
+                        f"❌ Reason: {reason}\n"
+                        f"⏰ Detected: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                        parse_mode="Markdown"
                     )
                 except Exception as e:
                     logger.error(f"Failed to send automated detection notification: {e}")
@@ -189,17 +206,17 @@ class BackgroundLinkChecker:
             chats = link_flags[story_key].get("chats", [])
             
             notification_text = (
-                f"✅ **Link Fixed**\\n\\n"
-                f"📖 Story: {story.get('text', 'N/A')}\\n"
-                f"🔗 Link: {story.get('link')}\\n"
-                f"⏰ Fixed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\\n\\n"
+                f"✅ **Link Fixed**\n\n"
+                f"📖 Story: {story.get('text', 'N/A')}\n"
+                f"🔗 Link: {story.get('link')}\n"
+                f"⏰ Fixed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                 f"The link is now working again!"
             )
             
             # Send notifications to chats where the vote occurred
             for chat_id in chats:
                 try:
-                    await self.client.send_message(chat_id, notification_text)
+                    await self.client.send_message(chat_id, notification_text, parse_mode="Markdown")
                 except Exception as e:
                     logger.error(f"Failed to send fix notification to chat {chat_id}: {e}")
                     
@@ -216,11 +233,12 @@ class BackgroundLinkChecker:
                         
                     await self.client.send_message(
                         LOG_CHANNEL,
-                        f"✅ **Link Automatically Fixed**\\n\\n"
-                        f"📖 Story: {story.get('text', 'N/A')}\\n"
-                        f"🔗 Link: {story.get('link')}\\n"
-                        f"⏰ Fixed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\\n"
-                        f"👥 Notified: {voter_mentions}"
+                        f"✅ **Link Automatically Fixed**\n\n"
+                        f"📖 Story: {story.get('text', 'N/A')}\n"
+                        f"🔗 Link: {story.get('link')}\n"
+                        f"⏰ Fixed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"👥 Notified: {voter_mentions}",
+                        parse_mode="Markdown"
                     )
                 except Exception as e:
                     logger.error(f"Failed to send fix notification to admin channel: {e}")

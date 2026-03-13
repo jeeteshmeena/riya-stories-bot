@@ -19,6 +19,9 @@ LANG_FILE = _data_path("languages_db.json")
 COOLDOWN_FILE = _data_path("cooldowns_db.json")
 LINK_FLAGS_FILE = _data_path("link_flags.json")
 CONFIG_FILE = _data_path("config_db.json")
+FAVORITES_FILE = _data_path("favorites_db.json")
+STATS_FILE = _data_path("stats_db.json")
+SUBS_FILE = _data_path("subs_db.json")
 
 _DB_CACHE = None
 _DB_MTIME = None
@@ -34,21 +37,9 @@ def _load_json(path, default):
         return default
 
 
-import threading
-
 def _save_json(path, data):
-    try:
-        serialized = json.dumps(data, indent=2, ensure_ascii=False)
-    except Exception:
-        # Fallback if json conversion fails or data is weird
-        return
-    def _write(p, s):
-        try:
-            with open(p, "w", encoding="utf-8") as f:
-                f.write(s)
-        except Exception:
-            pass
-    threading.Thread(target=_write, args=(path, serialized), daemon=True).start()
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
 
 
 def load_db():
@@ -278,38 +269,27 @@ def load_config():
 def save_config(data):
     _save_json(CONFIG_FILE, data)
 
-
 # -----------------------
-# User Settings & Features
+# New Features Databases
 # -----------------------
 
-USER_SETTINGS_FILE = _data_path("user_settings.json")
-LIBRARY_FILE = _data_path("library_db.json")
-SUBSCRIPTIONS_FILE = _data_path("subscriptions_db.json")
-TRENDING_FILE = _data_path("trending_db.json")
+def load_favorites():
+    raw = _load_json(FAVORITES_FILE, {})
+    return raw if isinstance(raw, dict) else {}
 
-def load_user_settings():
-    return _load_json(USER_SETTINGS_FILE, {})
+def save_favorites(data):
+    _save_json(FAVORITES_FILE, data)
 
-def save_user_settings(data):
-    _save_json(USER_SETTINGS_FILE, data)
+def load_stats():
+    raw = _load_json(STATS_FILE, {"searches": {}, "users": {}, "trending": {}})
+    return raw if isinstance(raw, dict) else {"searches": {}, "users": {}, "trending": {}}
 
-def load_library():
-    return _load_json(LIBRARY_FILE, {})
+def save_stats(data):
+    _save_json(STATS_FILE, data)
 
-def save_library(data):
-    _save_json(LIBRARY_FILE, data)
+def load_subs():
+    raw = _load_json(SUBS_FILE, [])
+    return raw if isinstance(raw, list) else []
 
-def load_subscriptions():
-    return _load_json(SUBSCRIPTIONS_FILE, {})
-
-def save_subscriptions(data):
-    _save_json(SUBSCRIPTIONS_FILE, data)
-
-def load_trending():
-    # mapping of story_key -> hits
-    return _load_json(TRENDING_FILE, {})
-
-def save_trending(data):
-    _save_json(TRENDING_FILE, data)
-
+def save_subs(data):
+    _save_json(SUBS_FILE, data)

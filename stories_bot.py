@@ -45,6 +45,7 @@ from config import (
     SESSION_STRING,
     API_ID,
     API_HASH,
+    GROUP_ID,
 )
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
@@ -70,17 +71,10 @@ from database import (
     load_config,
     save_config,
     remove_stories_not_in,
-    load_user_settings,
-    save_user_settings,
-    load_library,
-    save_library,
-    load_subscriptions,
-    save_subscriptions,
-    load_trending,
-    save_trending,
+    load_favorites, save_favorites,
+    load_stats, save_stats,
+    load_subs, save_subs,
 )
-
-app = None
 
 
 logging.basicConfig(level=logging.INFO)
@@ -131,6 +125,9 @@ chat_languages = load_languages()  # chat_id(str) -> 'en'/'hi'
 link_flags = load_link_flags()  # story_key -> {'broken': bool, 'link': str, 'voters': [{'id','name'}], 'chats': [int]}
 active_link_votes = {}  # vote_id -> {'story_key', 'chat_id', 'message_id', 'voters': {user_id: name}, 'link', 'story_name'}
 bot_config = load_config()
+stats_db = load_stats()  # {"searches": {}, "users": {}, "trending": {}}
+favorites_db = load_favorites()  # { user_id_str: [story_key1, ...] }
+subs_db = load_subs()  # [ user_id1_str, ... ]
 
 # Rate limit: min seconds between searches per user
 SEARCH_COOLDOWN = 2
@@ -189,7 +186,13 @@ def extract_story_type(text):
 def is_admin(user_id):
     if not user_id:
         return False
-    return user_id == OWNER_ID or user_id == ADMIN_ID or (OWNER_ID and user_id == OWNER_ID)
+    # Check OWNER_ID, ADMIN_ID (if non-zero), or moderators list
+    if user_id == OWNER_ID or (ADMIN_ID != 0 and user_id == ADMIN_ID):
+        return True
+    moderators = bot_config.get("moderators", [])
+    if str(user_id) in moderators or user_id in moderators:
+        return True
+    return False
 
 
 async def log(context, text):
@@ -543,9 +546,25 @@ We only index Telegram files. We do not host content.</i></blockquote>
 <b>By</b> @MeJeetX
 """
 
+    keyboard = [
+        [
+            InlineKeyboardButton("📚 Browse Stories", callback_data="cmd|browse"),
+            InlineKeyboardButton("🔍 How it works", callback_data="cmd|how")
+        ],
+        [
+            InlineKeyboardButton("⭐ My Favorites", callback_data="cmd|saved"),
+            InlineKeyboardButton("🆕 New Additions", callback_data="cmd|new")
+        ],
+        [
+            InlineKeyboardButton("ℹ️ About", callback_data="cmd|about"),
+            InlineKeyboardButton("🆘 Help", callback_data="cmd|help")
+        ]
+    ]
+
     await update.message.reply_text(
         text=text,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
     await log(
@@ -606,7 +625,8 @@ Riya v10
 Riya v10
 """
 
-    reply = await update.message.reply_text(text=text, parse_mode="HTML")
+    keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="cmd|start")]]
+    reply = await update.message.reply_text(text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def _delete_cmd():
         await asyncio.sleep(300)
@@ -641,7 +661,8 @@ async def how(update: Update, context: ContextTypes.DEFAULT_TYPE):
 When the story gets uploaded, you will be notified automatically.
 """
 
-    msg = await update.message.reply_text(text=text, parse_mode="HTML")
+    keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="cmd|start")]]
+    msg = await update.message.reply_text(text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def _delete_later():
         await asyncio.sleep(1800)
@@ -693,7 +714,14 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 <b>You can also simply send a story name to search.</b>
 """
 
-    msg = await update.message.reply_text(text=text, parse_mode="HTML")
+    keyboard = [
+        [
+            InlineKeyboardButton("🔥 Trending", callback_data="cmd|trending"),
+            InlineKeyboardButton("🌐 Change Language", callback_data="cmd|lang_menu")
+        ],
+        [InlineKeyboardButton("🔙 Back to Menu", callback_data="cmd|start")]
+    ]
+    msg = await update.message.reply_text(text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def _delete_later():
         await asyncio.sleep(1800)
@@ -1157,14 +1185,6 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"STORIES | user_id={cmd_msg.from_user.id} username={cmd_msg.from_user.username}"
     )
 
-    # Delete command message quickly (after 5 seconds)
-    async def _delete_cmd():
-        await asyncio.sleep(5)
-        try:
-            await cmd_msg.delete()
-        except Exception:
-            pass
-
     # Delete reply later (after 30 minutes)
     async def _delete_reply():
         await asyncio.sleep(1800)
@@ -1439,6 +1459,17 @@ async def _notify_fulfilled_requests(context: ContextTypes.DEFAULT_TYPE):
     save_requests({"requests": request_db})
 
 
+async def _check_force_sub(user_id, context):
+    force_sub = bot_config.get("force_sub_channels", [])
+    if not force_sub: return True
+    for cid in force_sub:
+        try:
+            res = await context.bot.get_chat_member(cid, user_id)
+            if res.status in ["left", "kicked"]: return False
+        except Exception:
+            pass
+    return True
+
 # -----------------------
 # search
 # -----------------------
@@ -1466,6 +1497,25 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query_text = raw_text
 
+    # Force Sub Check
+    if not await _check_force_sub(user.id, context):
+        keyboard = []
+        for cid in bot_config.get("force_sub_channels", []):
+            try:
+                chat_info = await context.bot.get_chat(cid)
+                invite_link = chat_info.invite_link
+                if not invite_link and chat_info.username:
+                    invite_link = f"https://t.me/{chat_info.username}"
+                if invite_link:
+                    title = chat_info.title or "Channel"
+                    keyboard.append([InlineKeyboardButton(f"Join {title}", url=invite_link)])
+            except Exception:
+                pass
+        keyboard.append([InlineKeyboardButton("✅ I've Joined", callback_data="check_sub")])
+        if keyboard:
+            await msg.reply_text("<b>⚠️ Access Denied</b>\n\nPlease join our channels to search stories.", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
     # If a scan is running, tell user to wait
     if IS_SCANNING:
         # Only show busy notice for queries that plausibly refer to an existing story.
@@ -1474,23 +1524,12 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _send_scan_busy_notice(msg, lang)
         return
 
-    # Check for deep linking start
-    if context.args and len(context.args) > 0:
-        deep_link = context.args[0]
-        result = get_story(deep_link.lower())
-        if result:
-            await send_story_result(update, context, result)
-            return
-
     # Rate limit
     now = time.time()
     last = cooldown_db.get(user.id, 0)
     if now - last < SEARCH_COOLDOWN:
         return
     cooldown_db[user.id] = now
-
-    # Log search trending
-    _log_trending(query_text)
 
     # Try exact match first, then substring match (only from DB)
     fast_results = fast_search(query_text)
@@ -1544,25 +1583,40 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(_del_no())
         return
 
-    await send_story_result(update, context, result)
+    if not result:
+        return
 
+    # delete user query immediately on hit (as requested)
+    try:
+        await msg.delete()
+    except Exception:
+        pass
 
-async def send_story_result(update: Update, context: ContextTypes.DEFAULT_TYPE, result):
-    user = update.effective_user
     mention = user.mention_html()
 
-    story_name = clean_story(result.get("text", result.get("name", "")))
-    story_key = result.get("name") or story_name.lower()
+    story_name = clean_story(result["text"])
+    story_key = result.get("name") or clean_story(result["text"]).lower()
 
-    story_type = result.get("story_type") or extract_story_type(result.get("caption", "")) or "Not specified"
+    # Update trending
+    if "trending" not in stats_db: stats_db["trending"] = {}
+    stats_db["trending"][story_key] = stats_db["trending"].get(story_key, 0) + 1
+    save_stats(stats_db)
+
+    # Prefer pre‑computed story_type from the scanner, fallback to regex
+    story_type = result.get("story_type")
+
+    if not story_type:
+        caption_text = result.get("caption", "")
+        story_type = extract_story_type(caption_text)
+
+    if not story_type:
+        story_type = "Not specified"
 
     keyboard = [
-        [InlineKeyboardButton("📖 OPEN STORY", url=result["link"])],
-        [
-            InlineKeyboardButton("⭐️ Bookmark", callback_data=f"lib_add|{story_key}"),
-            InlineKeyboardButton("⚠ Broken?", callback_data=f"lnw|{story_key}")
-        ],
-        [InlineKeyboardButton("🗑 Delete", callback_data="delete")]
+        [InlineKeyboardButton("OPEN STORY", url=result["link"])],
+        [InlineKeyboardButton("⭐ Save to Favorites", callback_data=f"fav|{story_key}")],
+        [InlineKeyboardButton("⚠ Link Not Working?", callback_data=f"lnw|{story_key}")],
+        [InlineKeyboardButton("Delete", callback_data="delete")]
     ]
 
     photo = result.get("photo") or result.get("image")
@@ -1572,61 +1626,48 @@ async def send_story_result(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 <i>Name:-</i> <b>{story_name}</b>{story_type_line}
 
-<tg-spoiler>This reply will be auto-deleted based on your settings.</tg-spoiler>
+<tg-spoiler>This reply will be deleted automatically in 5 minutes.</tg-spoiler>
 """
 
     chat_id = update.effective_chat.id
 
-    try:
-        if photo:
-            msg = await context.bot.send_photo(
-                chat_id=chat_id,
-                photo=photo,
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        else:
-            msg = await context.bot.send_message(
-                chat_id=chat_id,
-                text=caption,
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-    except Exception as e:
-        logger.warning(f"Failed to send search result media: {e}")
-        msg = await context.bot.send_message(
+    if photo:
+        msg = await context.bot.send_photo(
             chat_id=chat_id,
-            text=caption,
+            photo=photo,
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    else:
+        msg = await context.bot.send_video(
+            chat_id=chat_id,
+            video="https://files.catbox.moe/rq7km7.mp4",
+            caption=caption,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
     message_owner[msg.message_id] = user.id
 
+    # delete the reply later without blocking the handler
     async def _delete_later():
-        settings = load_user_settings().get(str(user.id), {})
-        delay = settings.get("auto_delete", 300)
-        if delay > 0:
-            await asyncio.sleep(delay)
-            try:
-                await msg.delete()
-            except Exception:
-                pass
+
+        await asyncio.sleep(300)
+
+        try:
+            await msg.delete()
+        except:
+            pass
+
+        # user message already deleted above
+
     asyncio.create_task(_delete_later())
 
     await log(
         context,
         f"SEARCH HIT | user_id={user.id} username={user.username} title={story_name}"
     )
-
-
-def _log_trending(query):
-    trending = load_trending()
-    key = clean_story(query).lower()
-    trending[key] = trending.get(key, 0) + 1
-    save_trending(trending)
-
 
 
 # -----------------------
@@ -1643,8 +1684,50 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await _enforce_cooldown(update, context):
         return
 
-    if query.data.startswith("cfg|"):
+    if query.data.startswith("cfg_") or query.data.startswith("cfg|"):
         await _handle_config_callback(query, context)
+        return
+
+    if query.data.startswith("cmd|"):
+        # simulate command executions from inline keyboards
+        cmd = query.data.split("|")[1]
+        dummy_update = Update(update_id=update.update_id, message=query.message, callback_query=query)
+        # Note: query.message.from_user is usually the bot, but query.from_user is the correct user
+        dummy_update._effective_user = query.from_user
+        if cmd == "start": await start(dummy_update, context)
+        elif cmd == "help": await help_cmd(dummy_update, context)
+        elif cmd == "about": await about(dummy_update, context)
+        elif cmd == "how": await how(dummy_update, context)
+        elif cmd == "trending": await trending_cmd(dummy_update, context)
+        elif cmd == "saved": await saved_cmd(dummy_update, context)
+        elif cmd == "browse": await browse_cmd(dummy_update, context)
+        elif cmd == "new": await new_cmd(dummy_update, context)
+        elif cmd == "lang_menu":
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🇺🇸 English", callback_data="lang|en"), InlineKeyboardButton("🇮🇳 हिन्दी", callback_data="lang|hi")]])
+            await query.message.edit_text("Select language / अपनी भाषा चुनें:", reply_markup=kb)
+        await query.answer()
+        return
+
+    if query.data.startswith("fav|"):
+        story_key = query.data.split("|")[1]
+        user_id_str = str(user.id)
+        if user_id_str not in favorites_db: favorites_db[user_id_str] = []
+        if story_key in favorites_db[user_id_str]:
+            favorites_db[user_id_str].remove(story_key)
+            await query.answer("Removed from favorites ❌")
+        else:
+            favorites_db[user_id_str].append(story_key)
+            await query.answer("Saved to favorites ⭐")
+        save_favorites(favorites_db)
+        return
+
+    if query.data == "check_sub":
+        if await _check_force_sub(user.id, context):
+            await query.answer("Thanks for joining! You can now use the bot.", show_alert=True)
+            try: await query.message.delete()
+            except: pass
+        else:
+            await query.answer("You haven't joined all channels yet. Please join them first.", show_alert=True)
         return
 
     if query.data.startswith("lang|"):
@@ -1664,6 +1747,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if query.data.startswith("srch|"):
+        # "Did you mean?" button clicked - send story reply
         try:
             key = query.data.split("|", 1)[1].strip()
         except IndexError:
@@ -1673,68 +1757,59 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not result:
             await query.answer("Story not found.", show_alert=True)
             return
+        user = query.from_user
+        mention = user.mention_html()
+        story_name = clean_story(result.get("text", result.get("name", "")))
+        story_key = result.get("name") or story_name.lower()
+        story_type = result.get("story_type") or extract_story_type(result.get("caption", "")) or "Not specified"
+        story_type_line = f"\n<b>Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
+        caption = f"""Hey {mention} 👋
+<b>I found this story</b> 👇
 
-        user_update = Update(message=query.message, effective_user=query.from_user)
+<i>Name:-</i> <b>{story_name}</b>{story_type_line}
+
+<tg-spoiler>This reply will be deleted automatically in 5 minutes.</tg-spoiler>
+"""
+        keyboard = [
+            [InlineKeyboardButton("OPEN STORY", url=result["link"])],
+            [InlineKeyboardButton("⚠ Link Not Working?", callback_data=f"lnw|{story_key}")],
+            [InlineKeyboardButton("Delete", callback_data="delete")]
+        ]
+        photo = result.get("photo") or result.get("image")
         try:
-            await query.message.delete()
-        except Exception:
-            pass
-        await send_story_result(user_update, context, result)
+            if photo:
+                sent = await context.bot.send_photo(
+                    chat_id=query.message.chat.id,
+                    photo=photo,
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            else:
+                sent = await context.bot.send_video(
+                    chat_id=query.message.chat.id,
+                    video="https://files.catbox.moe/rq7km7.mp4",
+                    caption=caption,
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+            message_owner[sent.message_id] = user.id
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+
+            async def _del_later():
+                await asyncio.sleep(300)
+                try:
+                    await sent.delete()
+                except Exception:
+                    pass
+            asyncio.create_task(_del_later())
+        except Exception as e:
+            logger.warning("srch callback failed: %s", e)
         await query.answer()
         return
-
-    if query.data == "set_autodel":
-        settings = load_user_settings()
-        uid = str(user.id)
-        user_set = settings.get(uid, {"auto_delete": 300, "lang": "en"})
-        
-        current = user_set.get("auto_delete", 300)
-        # toggle 300 -> 600 -> 0 -> 60 -> 300
-        if current == 300: nxt = 600
-        elif current == 600: nxt = 0
-        elif current == 0: nxt = 60
-        else: nxt = 300
-            
-        user_set["auto_delete"] = nxt
-        settings[uid] = user_set
-        save_user_settings(settings)
-        
-        await query.answer("Settings updated!")
-        user_update = Update(message=query.message, effective_user=query.from_user, callback_query=query)
-        try:
-            await query.message.delete()
-        except: pass
-        await settings_cmd(user_update, context)
-        return
-
-    if query.data.startswith("lib_add|"):
-        key = query.data.split("|", 1)[1].strip()
-        lib = load_library()
-        uid = str(user.id)
-        if uid not in lib:
-            lib[uid] = []
-        if key not in lib[uid]:
-            lib[uid].append(key)
-            save_library(lib)
-            await query.answer("⭐️ Added to your Library!", show_alert=True)
-        else:
-            await query.answer("Already in your Library.", show_alert=False)
-        return
-        
-    if query.data.startswith("lib_rem|"):
-        key = query.data.split("|", 1)[1].strip()
-        lib = load_library()
-        uid = str(user.id)
-        if uid in lib and key in lib[uid]:
-            lib[uid].remove(key)
-            save_library(lib)
-            await query.answer("Removed from Library.", show_alert=True)
-        else:
-            await query.answer("Not in your Library.", show_alert=False)
-        # Re-render library
-        await library_cmd(Update(message=query.message, effective_user=query.from_user), context, edit=True)
-        return
-
 
     if query.data.startswith("stories_p|"):
         try:
@@ -2220,17 +2295,17 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     articles = []
 
     for story in results:
+        res = get_story(clean_story(story).lower())
+        link = res.get("link") if res else ""
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("OPEN STORY", url=link)]]) if link else None
 
         articles.append(
-
             InlineQueryResultArticle(
-
                 id=clean_story(story).lower(),
                 title=clean_story(story),
-                input_message_content=InputTextMessageContent(clean_story(story))
-
+                input_message_content=InputTextMessageContent(clean_story(story)),
+                reply_markup=keyboard
             )
-
         )
 
     await update.inline_query.answer(articles, cache_time=5)
@@ -2306,9 +2381,18 @@ async def announce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     text = " ".join(context.args)
-    await context.bot.send_message(chat_id=update.effective_chat.id, text=text)
+    chats = set(chat_languages.keys())
+    if GROUP_ID: chats.add(str(GROUP_ID))
+    count = 0
+    for cid in chats:
+        try:
+            await context.bot.send_message(chat_id=int(cid), text=text)
+            count += 1
+            await asyncio.sleep(0.1) # flood control
+        except Exception:
+            pass
     lang = get_chat_lang(update.effective_chat.id)
-    await update.message.reply_text("✅ Announcement sent." if lang != "hi" else "✅ अनाउंसमेंट भेज दिया गया।")
+    await update.message.reply_text(f"✅ Announcement sent to {count} chats." if lang != "hi" else f"✅ अनाउंसमेंट {count} चैट्स को भेज दिया गया।")
 
 
 async def setlang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2372,14 +2456,7 @@ async def copyright_mute_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # admin config panel (/config) and source management
 # -----------------------
 
-async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Professional admin config panel."""
-    if not is_admin(update.effective_user.id):
-        lang = get_chat_lang(update.effective_chat.id)
-        await update.message.reply_text("⛔ Admin only." if lang != "hi" else "⛔ केवल एडमिन।")
-        return
-
-    lang = get_chat_lang(update.effective_chat.id)
+async def _send_config_panel(message, context, lang, edit=False):
     sources = bot_config.get("sources", [])
     formats = bot_config.get("formats", {})
     
@@ -2413,258 +2490,227 @@ async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
     ]
     
-    await update.message.reply_text(
-        text=text,
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    if edit:
+        try:
+            await message.edit_text(text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        except Exception:
+            pass
+    else:
+        await message.reply_text(text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Professional admin config panel."""
+    if not is_admin(update.effective_user.id):
+        lang = get_chat_lang(update.effective_chat.id)
+        await update.message.reply_text("⛔ Admin only." if lang != "hi" else "⛔ केवल एडमिन।")
+        return
+
+    lang = get_chat_lang(update.effective_chat.id)
+    await _send_config_panel(update.message, context, lang, edit=False)
 
 
 async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
     """Handle professional config panel callbacks."""
     data = query.data
     parts = data.split("|")
-    action = parts[1]
+    prefix = parts[0]
+    action = parts[1] if len(parts) > 1 else ""
     chat_id = query.message.chat.id
     lang = get_chat_lang(chat_id)
 
-    if action == "close":
-        try:
-            await query.message.delete()
-        except:
-            pass
-        return
+    if prefix == "cfg_main":
+        if action == "close":
+            try:
+                await query.message.delete()
+            except:
+                pass
+            return
+        if action == "refresh" or action == "back":
+            await _send_config_panel(query.message, context, lang, edit=True)
+            return
 
-    if action == "refresh":
-        await config_cmd(Update(message=query.message, user=query.from_user), context)
-        try:
-            await query.message.delete()
-        except:
-            pass
-        return
-
-    if action == "sources":
-        sources = bot_config.get("sources", [])
-        
-        if lang == "hi":
-            text = f"📚 *सोर्स चैनल प्रबंधन*\n\n"
-            if sources:
-                text += f"वर्तमान चैनल ({len(sources)}):\n"
-                for i, cid in enumerate(sources, 1):
-                    text += f"• `{cid}`\n"
-            else:
-                text += "कोई सोर्स चैनल नहीं है।"
-        else:
-            text = f"📚 *Source Channel Management*\n\n"
-            if sources:
-                text += f"Current channels ({len(sources)}):\n"
-                for i, cid in enumerate(sources, 1):
-                    text += f"• `{cid}`\n"
-            else:
-                text += "No source channels configured."
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("➕ Add Channel", callback_data="cfg_action|add_source"),
-                InlineKeyboardButton("➖ Remove Channel", callback_data="cfg_action|remove_source"),
-            ],
-            [InlineKeyboardButton("🔙 Back", callback_data="cfg_main|back")],
-        ]
-        
-        await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
-
-    if action == "formats":
-        formats = bot_config.get("formats", {})
-        
-        if lang == "hi":
-            text = f"📝 *कस्टम फॉर्मेट प्रबंधन*\n\n"
-            if formats:
-                text += f"वर्तमान फॉर्मेट ({sum(len(fmts) for fmts in formats.values())}):\n"
-                for cid, fmts in formats.items():
-                    text += f"• चैनल `{cid}`: {len(fmts)} फॉर्मेट\n"
-            else:
-                text += "कोई कस्टम फॉर्मेट नहीं है।"
-        else:
-            text = f"📝 *Custom Format Management*\n\n"
-            if formats:
-                text += f"Current formats ({sum(len(fmts) for fmts in formats.values())}):\n"
-                for cid, fmts in formats.items():
-                    text += f"• Channel `{cid}`: {len(fmts)} formats\n"
-            else:
-                text += "No custom formats configured."
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("➕ Add Format", callback_data="cfg_action|add_format"),
-                InlineKeyboardButton("➖ Remove Format", callback_data="cfg_action|remove_format"),
-            ],
-            [InlineKeyboardButton("🔙 Back", callback_data="cfg_main|back")],
-        ]
-        
-        await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
-
-    if action == "timers":
-        timers = bot_config.get("auto_delete", {})
-        
-        if lang == "hi":
-            text = "⏱ *ऑटो डिलीट टाइमर्स*\n\n"
-            if timers:
-                text += "वर्तमान टाइमर्स:\n"
-                for key, value in timers.items():
-                    text += f"• {key}: {value} सेकंड\n"
-                text += f"\n`/settimer <key> <seconds>` का उपयोग करें"
-            else:
-                text += "कोई टाइमर सेट नहीं है।\n\n`/settimer <key> <seconds>` का उपयोग करें"
-        else:
-            text = "⏱ *Auto Delete Timers*\n\n"
-            if timers:
-                text += "Current timers:\n"
-                for key, value in timers.items():
-                    text += f"• {key}: {value} seconds\n"
-                text += f"\nUse `/settimer <key> <seconds>`"
-            else:
-                text += "No timers set.\n\nUse `/settimer <key> <seconds>`"
-        
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|back")]]
-        await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
-
-    if action == "lang":
-        current_lang = get_chat_lang(chat_id)
-        
-        if lang == "hi":
-            text = f"🌐 *भाषा सेटिंग्स*\n\nवर्तमान भाषा: {'हिन्दी' if current_lang == 'hi' else 'English'}\n\nभाषा बदलें:"
-        else:
-            text = f"🌐 *Language Settings*\n\nCurrent language: {'हिन्दी' if current_lang == 'hi' else 'English'}\n\nChange language:"
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("🇺🇸 English", callback_data="cfg_set_lang|en"),
-                InlineKeyboardButton("🇮🇳 हिन्दी", callback_data="cfg_set_lang|hi"),
-            ],
-            [InlineKeyboardButton("🔙 Back", callback_data="cfg_main|back")],
-        ]
-        
-        await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
-
-    if action == "back":
-        await config_cmd(Update(message=query.message, user=query.from_user), context)
-        return
-
-    # Handle actions
-    if action == "add_source":
-        if lang == "hi":
-            text = "➕ *सोर्स चैनल जोड़ें*\n\nचैनल ID भेजें जिसे आप जोड़ना चाहते हैं:\n\nउदाहरण: `-1001234567890`"
-        else:
-            text = "➕ *Add Source Channel*\n\nSend the channel ID you want to add:\n\nExample: `-1001234567890`"
-        
-        context.chat_data["config_state"] = "waiting_source_id"
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|sources")]]
-        await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
-
-    if action == "remove_source":
-        sources = bot_config.get("sources", [])
-        if not sources:
+        if action == "sources":
+            sources = bot_config.get("sources", [])
             if lang == "hi":
-                text = "➖ *सोर्स चैनल हटाएं*\n\nहटाने के लिए कोई चैनल नहीं है।"
+                text = f"📚 *सोर्स चैनल प्रबंधन*\n\n"
+                if sources:
+                    text += f"वर्तमान चैनल ({len(sources)}):\n"
+                    for i, cid in enumerate(sources, 1):
+                        text += f"• `{cid}`\n"
+                else:
+                    text += "कोई सोर्स चैनल नहीं है।"
             else:
-                text = "➖ *Remove Source Channel*\n\nNo channels to remove."
-        else:
-            if lang == "hi":
-                text = "➖ *सोर्स चैनल हटाएं*\n\nहटाने के लिए चैनल चुनें:"
-            else:
-                text = "➖ *Remove Source Channel*\n\nSelect channel to remove:"
-        
-        keyboard = []
-        for cid in sources:
-            keyboard.append([InlineKeyboardButton(f"🗑 {cid}", callback_data=f"cfg_remove|{cid}")])
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="cfg_main|sources")])
-        
-        await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
+                text = f"📚 *Source Channel Management*\n\n"
+                if sources:
+                    text += f"Current channels ({len(sources)}):\n"
+                    for i, cid in enumerate(sources, 1):
+                        text += f"• `{cid}`\n"
+                else:
+                    text += "No source channels configured."
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("➕ Add Channel", callback_data="cfg_action|add_source"),
+                    InlineKeyboardButton("➖ Remove Channel", callback_data="cfg_action|remove_source"),
+                ],
+                [InlineKeyboardButton("🔙 Back", callback_data="cfg_main|back")],
+            ]
+            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
 
-    if action == "add_format":
-        if lang == "hi":
-            text = (
-                "📝 *कस्टम फॉर्मेट जोड़ें*\n\n"
-                "इस फॉर्मेट में भेजें:\n"
-                "`channel_id|name_regex|link_regex`\n\n"
-                "उदाहरण:\n"
-                "`-1001234567890|^Story: (.+)$|https://t\\.me/(+)`"
-            )
-        else:
-            text = (
-                "📝 *Add Custom Format*\n\n"
-                "Send in this format:\n"
-                "`channel_id|name_regex|link_regex`\n\n"
-                "Example:\n"
-                "`-1001234567890|^Story: (.+)$|https://t\\.me/(+)`"
-            )
-        
-        context.chat_data["config_state"] = "waiting_format"
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|formats")]]
-        await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
-
-    if action == "remove_format":
-        formats = bot_config.get("formats", {})
-        if not formats:
+        if action == "formats":
+            formats = bot_config.get("formats", {})
             if lang == "hi":
-                text = "🗑 *कस्टम फॉर्मेट हटाएं*\n\nहटाने के लिए कोई फॉर्मेट नहीं है।"
+                text = f"📝 *कस्टम फॉर्मेट प्रबंधन*\n\n"
+                if formats:
+                    text += f"वर्तमान फॉर्मेट ({sum(len(fmts) for fmts in formats.values())}):\n"
+                    for cid, fmts in formats.items():
+                        text += f"• चैनल `{cid}`: {len(fmts)} फॉर्मेट\n"
+                else:
+                    text += "कोई कस्टम फॉर्मेट नहीं है।"
             else:
-                text = "🗑 *Remove Custom Format*\n\nNo formats to remove."
-        else:
-            if lang == "hi":
-                text = "🗑 *कस्टम फॉर्मेट हटाएं*\n\nहटाने के लिए चैनल चुनें:"
-            else:
-                text = "🗑 *Remove Custom Format*\n\nSelect channel to remove formats from:"
-        
-        keyboard = []
-        for cid in formats.keys():
-            keyboard.append([InlineKeyboardButton(f"🗑 {cid}", callback_data=f"cfg_remove_fmt|{cid}")])
-        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="cfg_main|formats")])
-        
-        await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-        return
+                text = f"📝 *Custom Format Management*\n\n"
+                if formats:
+                    text += f"Current formats ({sum(len(fmts) for fmts in formats.values())}):\n"
+                    for cid, fmts in formats.items():
+                        text += f"• Channel `{cid}`: {len(fmts)} formats\n"
+                else:
+                    text += "No custom formats configured."
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("➕ Add Format", callback_data="cfg_action|add_format"),
+                    InlineKeyboardButton("➖ Remove Format", callback_data="cfg_action|remove_format"),
+                ],
+                [InlineKeyboardButton("🔙 Back", callback_data="cfg_main|back")],
+            ]
+            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
 
-    # Handle removal confirmations
-    if action.startswith("remove|"):
-        channel_id = parts[2]
+        if action == "timers":
+            timers = bot_config.get("auto_delete", {})
+            if lang == "hi":
+                text = "⏱ *ऑटो डिलीट टाइमर्स*\n\n"
+                if timers:
+                    text += "वर्तमान टाइमर्स:\n"
+                    for key, value in timers.items():
+                        text += f"• {key}: {value} सेकंड\n"
+                    text += f"\n`/settimer <key> <seconds>` का उपयोग करें"
+                else:
+                    text += "कोई टाइमर सेट नहीं है।\n\n`/settimer <key> <seconds>` का उपयोग करें"
+            else:
+                text = "⏱ *Auto Delete Timers*\n\n"
+                if timers:
+                    text += "Current timers:\n"
+                    for key, value in timers.items():
+                        text += f"• {key}: {value} seconds\n"
+                    text += f"\nUse `/settimer <key> <seconds>`"
+                else:
+                    text += "No timers set.\n\nUse `/settimer <key> <seconds>`"
+            
+            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|back")]]
+            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+        if action == "lang":
+            current_lang = get_chat_lang(chat_id)
+            if lang == "hi":
+                text = f"🌐 *भाषा सेटिंग्स*\n\nवर्तमान भाषा: {'हिन्दी' if current_lang == 'hi' else 'English'}\n\nभाषा बदलें:"
+            else:
+                text = f"🌐 *Language Settings*\n\nCurrent language: {'हिन्दी' if current_lang == 'hi' else 'English'}\n\nChange language:"
+            
+            keyboard = [
+                [
+                    InlineKeyboardButton("🇺🇸 English", callback_data="cfg_set_lang|en"),
+                    InlineKeyboardButton("🇮🇳 हिन्दी", callback_data="cfg_set_lang|hi"),
+                ],
+                [InlineKeyboardButton("🔙 Back", callback_data="cfg_main|back")],
+            ]
+            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+    elif prefix == "cfg_action":
+        if action == "add_source":
+            if lang == "hi":
+                text = "➕ *सोर्स चैनल जोड़ें*\n\nचैनल ID भेजें जिसे आप जोड़ना चाहते हैं:\n\nउदाहरण: `-1001234567890`"
+            else:
+                text = "➕ *Add Source Channel*\n\nSend the channel ID you want to add:\n\nExample: `-1001234567890`"
+            context.chat_data["config_state"] = "waiting_source_id"
+            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|sources")]]
+            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+        if action == "remove_source":
+            sources = bot_config.get("sources", [])
+            if not sources:
+                text = "➖ *सोर्स चैनल हटाएं*\n\nहटाने के लिए कोई चैनल नहीं है।" if lang == "hi" else "➖ *Remove Source Channel*\n\nNo channels to remove."
+                keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|sources")]]
+                await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+                return
+            
+            text = "➖ *सोर्स चैनल हटाएं*\n\nहटाने के लिए चैनल चुनें:" if lang == "hi" else "➖ *Remove Source Channel*\n\nSelect channel to remove:"
+            keyboard = [[InlineKeyboardButton(f"🗑 {cid}", callback_data=f"cfg_remove|{cid}")] for cid in sources]
+            keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="cfg_main|sources")])
+            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+        if action == "add_format":
+            if lang == "hi":
+                text = "📝 *कस्टम फॉर्मेट जोड़ें*\n\nइस फॉर्मेट में भेजें:\n`channel_id|name_regex|link_regex`\n\nउदाहरण:\n`-1001234567890|^Story: (.+)$|https://t\\.me/(+)`"
+            else:
+                text = "📝 *Add Custom Format*\n\nSend in this format:\n`channel_id|name_regex|link_regex`\n\nExample:\n`-1001234567890|^Story: (.+)$|https://t\\.me/(+)`"
+            context.chat_data["config_state"] = "waiting_format"
+            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|formats")]]
+            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+        if action == "remove_format":
+            formats = bot_config.get("formats", {})
+            if not formats:
+                text = "🗑 *कस्टम फॉर्मेट हटाएं*\n\nहटाने के लिए कोई फॉर्मेट नहीं है।" if lang == "hi" else "🗑 *Remove Custom Format*\n\nNo formats to remove."
+                keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|formats")]]
+                await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+                return
+                
+            text = "🗑 *कस्टम फॉर्मेट हटाएं*\n\nहटाने के लिए चैनल चुनें:" if lang == "hi" else "🗑 *Remove Custom Format*\n\nSelect channel to remove formats from:"
+            keyboard = [[InlineKeyboardButton(f"🗑 {cid}", callback_data=f"cfg_remove_fmt|{cid}")] for cid in formats.keys()]
+            keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="cfg_main|formats")])
+            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
+    elif prefix == "cfg_remove":
+        channel_id = int(action) if action.lstrip('-').isdigit() else action
         sources = bot_config.get("sources", [])
         if channel_id in sources:
             sources.remove(channel_id)
             bot_config["sources"] = sources
             save_config(bot_config)
-            
-            if lang == "hi":
-                text = f"✅ *सफलता*\n\nचैनल `{channel_id}` हटा दिया गया।"
-            else:
-                text = f"✅ *Success*\n\nChannel `{channel_id}` removed."
+            text = f"✅ *सफलता*\n\nचैनल `{channel_id}` हटा दिया गया।" if lang == "hi" else f"✅ *Success*\n\nChannel `{channel_id}` removed."
         else:
-            if lang == "hi":
-                text = "❌ *त्रुटि*\n\nचैनल नहीं मिला।"
-            else:
-                text = "❌ *Error*\n\nChannel not found."
-        
+            text = "❌ *त्रुटि*\n\nचैनल नहीं मिला।" if lang == "hi" else "❌ *Error*\n\nChannel not found."
         keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|sources")]]
         await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    # Handle language setting
-    if action.startswith("set_lang|"):
-        new_lang = parts[2]
-        set_chat_lang(chat_id, new_lang)
-        
-        if new_lang == "hi":
-            text = "✅ *सफलता*\n\nभाषा हिन्दी में बदल दी गई।"
+    elif prefix == "cfg_remove_fmt":
+        channel_id = action
+        formats = bot_config.get("formats", {})
+        if channel_id in formats:
+            formats.pop(channel_id, None)
+            bot_config["formats"] = formats
+            save_config(bot_config)
+            text = f"✅ *सफलता*\n\nकस्टम फॉर्मेट हटा दिए गए।" if lang == "hi" else f"✅ *Success*\n\nCustom formats removed."
         else:
-            text = "✅ *Success*\n\nLanguage changed to English."
-        
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|back")]]
+            text = "❌ *त्रुटि*\n\nनहीं मिला।" if lang == "hi" else "❌ *Error*\n\nNot found."
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|formats")]]
+        await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        return
+
+    elif prefix == "cfg_set_lang":
+        new_lang = action
+        set_chat_lang(chat_id, new_lang)
+        text = "✅ *सफलता*\n\nभाषा हिन्दी में बदल दी गई।" if new_lang == "hi" else "✅ *Success*\n\nLanguage changed to English."
+        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|lang")]]
         await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
@@ -2752,128 +2798,156 @@ async def handle_config_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # -----------------------
-import os
-import sys
-import subprocess
+# start bot
+# -----------------------
 
-async def library_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
-    user = update.effective_user
-    lib = load_library()
-    uid = str(user.id)
-    saved = lib.get(uid, [])
-
-    if not saved:
-        text = "📚 <b>Your Library is empty.</b>\n\nClick the ⭐️ Bookmark button on any story to save it here."
-        if edit:
-            await update.callback_query.message.edit_text(text, parse_mode="HTML")
-        else:
-            await update.message.reply_text(text, parse_mode="HTML")
-        return
-
-    text = "📚 <b>Your Library:</b>\n\n"
-    for i, key in enumerate(saved[:20], 1): # limit to 20 for simplicity
-        story = get_story(key)
-        if story:
-            name = clean_story(story.get("text", key))
-            link = story.get("link", "")
-            text += f"{i}. <a href='{link}'>{name}</a>\n"
-    
-    if len(saved) > 20:
-        text += f"\n<i>... and {len(saved)-20} more.</i>"
-    
-    keyboard = [[InlineKeyboardButton("🔙 Close", callback_data="delete")]]
-    if edit:
-        await update.callback_query.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard), disable_web_page_preview=True)
-    else:
-        await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard), disable_web_page_preview=True)
-
-
-async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    settings = load_user_settings()
-    uid = str(user.id)
-    user_set = settings.get(uid, {"auto_delete": 300, "lang": "en"})
-    
-    delay = user_set["auto_delete"]
-    text = "⚙️ <b>Your Settings</b>\n\nConfigure how the bot behaves for you."
-    
-    keyboard = [
-        [InlineKeyboardButton(f"Auto Delete: {'OFF' if delay == 0 else f'{delay}s'}", callback_data="set_autodel")],
-        [InlineKeyboardButton("🗑 Close", callback_data="delete")]
-    ]
-    
-    await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
-
-
-async def explore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    trending = load_trending()
+async def trending_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    trending = stats_db.get("trending", {})
     if not trending:
-        await update.message.reply_text("📉 No trending data yet.")
+        await update.message.reply_text("No trending stories yet.")
         return
-        
     sorted_trend = sorted(trending.items(), key=lambda x: x[1], reverse=True)[:10]
-    
-    text = "🔥 <b>Top Trending Stories</b>\n\n"
-    for i, (key, count) in enumerate(sorted_trend, 1):
-        story = get_story(key)
-        name = clean_story(story.get("text", key)) if story else key.title()
-        # Add deep link so clicking the trending item sends a search directly
-        deeplink = f"https://t.me/{context.bot.username}?start={key}"
-        text += f"{i}. <a href='{deeplink}'>{name}</a> (<i>{count} hits</i>)\n"
-        
-    await update.message.reply_text(text, parse_mode="HTML", disable_web_page_preview=True)
+    text = "🔥 *Top 10 Trending Stories*\n\n"
+    for story_key, count in sorted_trend:
+        text += f"• `{story_key}` ({count} searches)\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
 
-
-async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+async def saved_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id_str = str(update.effective_user.id)
+    favs = favorites_db.get(user_id_str, [])
+    if not favs:
+        await update.message.reply_text("You have no saved stories. ⭐ Use 'Save to Favorites' when you search stories.")
         return
-    await update.message.reply_text("🔄 Pulling updates from GitHub...")
-    try:
-        # Run git pull
-        result = subprocess.run(["git", "pull"], capture_output=True, text=True, check=True)
-        await update.message.reply_text(f"✅ <b>Update complete!</b>\n\n<code>{result.stdout}</code>\n\nRestarting bot...", parse_mode="HTML")
-        
-        # Gracefully restart process
-        os.execv(sys.executable, ['python'] + sys.argv)
-    except Exception as e:
-        await update.message.reply_text(f"❌ <b>Update failed:</b>\n<code>{e}</code>", parse_mode="HTML")
+    text = "⭐ *Your Saved Stories*\n\n"
+    for story_key in favs:
+        res = get_story(story_key)
+        if res:
+            text += f"• [{story_key}]({res['link']})\n"
+        else:
+            text += f"• `{story_key}` (link unavailable)\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
 
-
-async def realtime_listener_loop(bot):
-
-    if not (SESSION_STRING and API_ID and API_HASH) or not CHANNEL_ID:
+async def browse_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db = load_db()
+    types = set()
+    for s in db.values():
+        val = s.get("story_type")
+        if val: types.add(val)
+    if not types:
+        await update.message.reply_text("No categories available yet.")
         return
+    types = list(types)[:10]
+    keyboard = []
+    for t in types:
+        keyboard.append([InlineKeyboardButton(t.capitalize(), switch_inline_query_current_chat=t)])
+    await update.message.reply_text("📑 *Browse by Category*\n\nSelect a category to search:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def new_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db = load_db()
+    stories = list(db.values())[-10:]
+    if not stories:
+        await update.message.reply_text("No new stories.")
+        return
+    text = "🆕 *Recently Added Stories*\n\n"
+    for s in stories:
+        name = s.get("name") or s.get("text") or "Story"
+        text += f"• [{clean_story(name)}]({s.get('link')})\n"
+    await update.message.reply_text(text, parse_mode="Markdown", disable_web_page_preview=True)
+
+async def myrequests_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    reqs = []
+    for name, req in request_db.items():
+        if str(req.get("user_id")) == user_id:
+            reqs.append(req)
+    if not reqs:
+        await update.message.reply_text("You have no pending requests. Use /request <name>")
+        return
+    text = "📬 *Your Pending Requests*\n\n"
+    for req in reqs:
+        text += f"• `{req['name']}` (Requested on {req.get('timestamp','Unknown')[:10]})\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def requests_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id): return
+    if not request_db:
+        await update.message.reply_text("No pending requests.")
+        return
+    text = "📋 *Pending Requests*\n\n"
+    for name, req in list(request_db.items())[:20]:
+        text += f"• `{name}` ({req.get('count', 1)} requests)\n"
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def userinfo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id): return
+    if not context.args: return await update.message.reply_text("Usage: /userinfo <user_id>")
+    target = context.args[0]
+    favs = len(favorites_db.get(target, []))
+    searches = stats_db.get("users", {}).get(target, 0)
+    reqs = [r for r in request_db.values() if str(r.get("user_id")) == target]
+    text = f"🛡️ *User Info for {target}*\n\nSearches: `{searches}`\nSaved: `{favs}`\nPending Requests: `{len(reqs)}`"
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+async def settimer_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id): return
+    if len(context.args) < 2:
+        return await update.message.reply_text("Usage: /settimer <search|commands> <seconds>")
+    key = context.args[0]
+    try: val = int(context.args[1])
+    except: return await update.message.reply_text("Seconds must be an integer.")
+    bot_config.setdefault("auto_delete", {})
+    bot_config["auto_delete"][key] = val
+    save_config(bot_config)
+    await update.message.reply_text(f"✅ Timer set for '{key}' to {val} seconds.")
+
+async def subscribe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id_str = str(update.effective_user.id)
+    if user_id_str in subs_db:
+        subs_db.remove(user_id_str)
+        save_subs(subs_db)
+        await update.message.reply_text("🔕 You have unregistered from new story notifications.")
+    else:
+        subs_db.append(user_id_str)
+        save_subs(subs_db)
+        await update.message.reply_text("🔔 You are now subscribed to new story notifications!")
+
+async def rescan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id): return
+    if len(context.args) < 1:
+        return await update.message.reply_text("Usage: /rescan <channel_id|username>")
+    target_channel = context.args[0]
+    
+    global IS_SCANNING
+    if IS_SCANNING:
+        return await update.message.reply_text("⏳ A scan is already in progress.")
+        
+    IS_SCANNING = True
+    progress_msg = await update.message.reply_text(f"⏳ Scanning channel `{target_channel}`...")
     
     try:
-        from telethon import TelegramClient, events
-        from telethon.sessions import StringSession
-        from parser import parse_story
-        from database import add_story
+        formats = bot_config.get("formats", {})
+        channel_format = formats.get(str(target_channel), formats.get(int(target_channel) if target_channel.lstrip('-').isdigit() else target_channel))
         
-        client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
-        await client.connect()
-        if not await client.is_user_authorized():
-            return
-            
-        sources = bot_config.get("sources", [])
-        if CHANNEL_ID not in sources:
-            sources.append(CHANNEL_ID)
+        async def _progress_cb(current, total):
+            if current % 100 == 0:
+                try: await progress_msg.edit_text(f"⏳ Scanning `{target_channel}`: {current}/{total} messages processed")
+                except: pass
 
-        @client.on(events.NewMessage(chats=sources))
-        async def handler(event):
-            try:
-                story = parse_story(event.message)
-                if story:
-                    add_story(story)
-                    logger.info(f"Realtime listener added new story: {story['text']}")
-            except Exception as e:
-                logger.error(f"Error in realtime listener: {e}")
-
-        logger.info("Started realtime Telethon listener")
-        await client.run_until_disconnected()
+        count = await scan_channel(target_channel, channel_format, _progress_cb)
+        await progress_msg.edit_text(f"✅ Scanning complete for `{target_channel}`. Indexed {count} stories.")
+        
+        db = load_db()
+        remove_stories_not_in(db, list(db.keys())) # Clean up any local broken entries? Actually, single channel scan shouldn't delete unrelated DB keys.
+        # Well, just load the scanner count
     except Exception as e:
-        logger.error(f"Failed to start realtime listener: {e}")
+        await progress_msg.edit_text(f"❌ Scan failed: {e}")
+    finally:
+        IS_SCANNING = False
 
+async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.chat_data and context.chat_data.get("config_state"):
+        return await handle_config_input(update, context)
+    return await search(update, context)
 
 def start_bot():
 
@@ -2884,7 +2958,6 @@ def start_bot():
     async def _post_init(application):
         if str(AUTO_SCAN).lower() == "true" and CHANNEL_ID:
             asyncio.create_task(auto_scan_loop(application.bot))
-            asyncio.create_task(realtime_listener_loop(application.bot))
         # Start background link checker
         asyncio.create_task(start_link_checker())
 
@@ -2912,23 +2985,11 @@ def start_bot():
     # react when bot is added/removed
     app.add_handler(ChatMemberHandler(chat_member_update))
 
-
-    # Custom new features
-    app.add_handler(CommandHandler("library", library_cmd))
-    app.add_handler(CommandHandler("settings", settings_cmd))
-    app.add_handler(CommandHandler("explore", explore_cmd))
-    app.add_handler(CommandHandler("update", update_cmd))
-
     app.add_handler(InlineQueryHandler(inline_search))
     app.add_handler(ChosenInlineResultHandler(chosen_inline_result))
 
     app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, search)
-    )
-
-    # config input handler
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_config_input)
+        MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler)
     )
 
     app.add_handler(CallbackQueryHandler(buttons))
