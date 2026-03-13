@@ -792,18 +792,23 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     mention = user.mention_html() if user else "User"
 
+    # Load additional statistics
+    requests_data = load_requests()
+    total_requests = len(requests_data.get("requests", {}))
+    
+    link_flags_data = load_link_flags()
+    total_broken_reports = len([flag for flag in link_flags_data.values() if flag.get("broken", False)])
+
     text = (
         f"<b>📊 Riya Status</b>\n\n"
-        f"{mention}, here is the current status:\n\n"
+        f"{mention}, here is the current bot status:\n\n"
         f"<b>⏱ Uptime:</b> <i>{uptime_str}</i>\n"
         f"<b>🕒 Local Time (IST):</b> <code>{ist.strftime('%d-%m-%Y %H:%M:%S')} IST</code>\n"
         f"<b>📚 Stories in database:</b> <i>{total_stories}</i>\n"
+        f"<b>📝 Total story requests:</b> <i>{total_requests}</i>\n"
+        f"<b>⚠️ Broken link reports:</b> <i>{total_broken_reports}</i>\n"
+        f"<b>🤖 Bot status:</b> <i>Running normally</i>\n"
     )
-
-    # include first page of stories header with total count
-    if story_index:
-        header_text, _, _, _ = _stories_page(0)
-        text += f"\n{header_text}"
 
     reply = await chat.send_message(text=text, parse_mode="HTML")
 
