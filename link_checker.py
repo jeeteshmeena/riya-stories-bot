@@ -14,7 +14,7 @@ from telethon.errors import (
 )
 from config import API_ID, API_HASH, SESSION_STRING, LOG_CHANNEL
 from database import load_db, save_link_flags, load_link_flags
-from scanner_client import scan_channel
+from scanner_client import scan_channel, _resolve_entity
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,13 @@ class BackgroundLinkChecker:
         )
         
         await self.client.start()
+        
+        # Populate entity cache for StringSession
+        try:
+            await self.client.get_dialogs()
+            logger.info("Link checker: entity cache populated via get_dialogs()")
+        except Exception as e:
+            logger.warning(f"Link checker: get_dialogs() failed: {e}")
         
         # Run the checker loop
         asyncio.create_task(self._checker_loop())

@@ -993,31 +993,44 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sources.append(CHANNEL_ID)
         extra_sources = bot_config.get("sources", [])
         for cid in extra_sources:
+            # Support both integer IDs and string usernames
             try:
                 c_int = int(cid)
-            except Exception:
-                continue
-            if c_int and c_int not in sources:
-                sources.append(c_int)
+                if c_int and c_int not in sources:
+                    sources.append(c_int)
+            except (ValueError, TypeError):
+                # Could be a username string like "@channelname"
+                if isinstance(cid, str) and cid.strip() and cid not in sources:
+                    sources.append(cid.strip())
 
         all_names = []
         all_keys = set()
         total_stories_found = 0
+        scan_errors = []
 
         formats_by_channel = bot_config.get("formats", {})
 
         for idx, cid in enumerate(sources):
-            result = await scan_channel(
-                cid,
-                bot=context.bot,
-                log_channel=LOG_CHANNEL,
-                progress_cb=_progress_cb if idx == 0 else None,
-                cleanup=False,
-                formats_by_channel=formats_by_channel,
-            )
-            all_names.extend(result.get("names", []))
-            all_keys.update(result.get("keys", []))
-            total_stories_found += result.get("stories", 0)
+            try:
+                logger.info(f"Scanning channel {idx+1}/{len(sources)}: {cid}")
+                result = await scan_channel(
+                    cid,
+                    bot=context.bot,
+                    log_channel=LOG_CHANNEL,
+                    progress_cb=_progress_cb,
+                    cleanup=False,
+                    formats_by_channel=formats_by_channel,
+                )
+                all_names.extend(result.get("names", []))
+                all_keys.update(result.get("keys", []))
+                total_stories_found += result.get("stories", 0)
+                logger.info(f"Channel {cid}: found {result.get('stories', 0)} stories")
+            except Exception as ch_err:
+                error_msg = f"Channel {cid}: {ch_err}"
+                logger.error(f"Scan failed for {error_msg}")
+                scan_errors.append(error_msg)
+                # Continue with remaining channels
+                continue
 
         # Cleanup once using union of all keys
         if all_keys:
@@ -1071,14 +1084,19 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning("Request notification failed: %s", e)
 
+        error_text = ""
+        if scan_errors:
+            error_text = "\n\n⚠️ *Errors:*\n" + "\n".join(f"• {e}" for e in scan_errors)
+
         await msg.edit_text(
             text=f"""
 ✅ *Scan Completed*
 
 📚 *Stories Indexed:* {last_scan_count}  
+📡 *Channels Scanned:* {len(sources) - len(scan_errors)}/{len(sources)}
 ⚡ *Search Engine:* _Optimized_
 
-_Your story database is now fully updated._
+_Your story database is now fully updated._{error_text}
 """,
             parse_mode="Markdown"
         )
@@ -2922,6 +2940,9 @@ async def rescan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 1:
         return await update.message.reply_text("Usage: /rescan <channel_id|username>")
     target_channel = context.args[0]
+    # Convert to int if it's a numeric channel ID
+    if target_channel.lstrip("-").isdigit():
+        target_channel = int(target_channel)
     
     global IS_SCANNING
     if IS_SCANNING:
