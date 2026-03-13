@@ -1091,7 +1091,9 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         error_text = ""
         if scan_errors:
-            error_text = "\n\n⚠️ *Errors:*\n" + "\n".join(f"• {e}" for e in scan_errors)
+            # Strip markdown characters from errors to prevent UI crashes in parse_mode="Markdown"
+            safe_errors = [re.sub(r'[*_`\[\]()~]', '', str(e)) for e in scan_errors]
+            error_text = "\n\n⚠️ *Errors:*\n" + "\n".join(f"• {e}" for e in safe_errors)
 
         await msg.edit_text(
             text=f"""
