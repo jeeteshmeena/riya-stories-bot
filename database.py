@@ -34,9 +34,21 @@ def _load_json(path, default):
         return default
 
 
+import threading
+
 def _save_json(path, data):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    try:
+        serialized = json.dumps(data, indent=2, ensure_ascii=False)
+    except Exception:
+        # Fallback if json conversion fails or data is weird
+        return
+    def _write(p, s):
+        try:
+            with open(p, "w", encoding="utf-8") as f:
+                f.write(s)
+        except Exception:
+            pass
+    threading.Thread(target=_write, args=(path, serialized), daemon=True).start()
 
 
 def load_db():
@@ -265,3 +277,39 @@ def load_config():
 
 def save_config(data):
     _save_json(CONFIG_FILE, data)
+
+
+# -----------------------
+# User Settings & Features
+# -----------------------
+
+USER_SETTINGS_FILE = _data_path("user_settings.json")
+LIBRARY_FILE = _data_path("library_db.json")
+SUBSCRIPTIONS_FILE = _data_path("subscriptions_db.json")
+TRENDING_FILE = _data_path("trending_db.json")
+
+def load_user_settings():
+    return _load_json(USER_SETTINGS_FILE, {})
+
+def save_user_settings(data):
+    _save_json(USER_SETTINGS_FILE, data)
+
+def load_library():
+    return _load_json(LIBRARY_FILE, {})
+
+def save_library(data):
+    _save_json(LIBRARY_FILE, data)
+
+def load_subscriptions():
+    return _load_json(SUBSCRIPTIONS_FILE, {})
+
+def save_subscriptions(data):
+    _save_json(SUBSCRIPTIONS_FILE, data)
+
+def load_trending():
+    # mapping of story_key -> hits
+    return _load_json(TRENDING_FILE, {})
+
+def save_trending(data):
+    _save_json(TRENDING_FILE, data)
+

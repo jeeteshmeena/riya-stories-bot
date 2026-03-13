@@ -70,7 +70,17 @@ from database import (
     load_config,
     save_config,
     remove_stories_not_in,
+    load_user_settings,
+    save_user_settings,
+    load_library,
+    save_library,
+    load_subscriptions,
+    save_subscriptions,
+    load_trending,
+    save_trending,
 )
+
+app = None
 
 
 logging.basicConfig(level=logging.INFO)
@@ -1464,12 +1474,23 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await _send_scan_busy_notice(msg, lang)
         return
 
+    # Check for deep linking start
+    if context.args and len(context.args) > 0:
+        deep_link = context.args[0]
+        result = get_story(deep_link.lower())
+        if result:
+            await send_story_result(update, context, result)
+            return
+
     # Rate limit
     now = time.time()
     last = cooldown_db.get(user.id, 0)
     if now - last < SEARCH_COOLDOWN:
         return
     cooldown_db[user.id] = now
+
+    # Log search trending
+    _log_trending(query_text)
 
     # Try exact match first, then substring match (only from DB)
     fast_results = fast_search(query_text)
@@ -1523,34 +1544,25 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(_del_no())
         return
 
-    if not result:
-        return
+    await send_story_result(update, context, result)
 
-    # delete user query immediately on hit (as requested)
-    try:
-        await msg.delete()
-    except Exception:
-        pass
 
+async def send_story_result(update: Update, context: ContextTypes.DEFAULT_TYPE, result):
+    user = update.effective_user
     mention = user.mention_html()
 
-    story_name = clean_story(result["text"])
-    story_key = result.get("name") or clean_story(result["text"]).lower()
+    story_name = clean_story(result.get("text", result.get("name", "")))
+    story_key = result.get("name") or story_name.lower()
 
-    # Prefer pre‑computed story_type from the scanner, fallback to regex
-    story_type = result.get("story_type")
-
-    if not story_type:
-        caption_text = result.get("caption", "")
-        story_type = extract_story_type(caption_text)
-
-    if not story_type:
-        story_type = "Not specified"
+    story_type = result.get("story_type") or extract_story_type(result.get("caption", "")) or "Not specified"
 
     keyboard = [
-        [InlineKeyboardButton("OPEN STORY", url=result["link"])],
-        [InlineKeyboardButton("⚠ Link Not Working?", callback_data=f"lnw|{story_key}")],
-        [InlineKeyboardButton("Delete", callback_data="delete")]
+        [InlineKeyboardButton("📖 OPEN STORY", url=result["link"])],
+        [
+            InlineKeyboardButton("⭐️ Bookmark", callback_data=f"lib_add|{story_key}"),
+            InlineKeyboardButton("⚠ Broken?", callback_data=f"lnw|{story_key}")
+        ],
+        [InlineKeyboardButton("🗑 Delete", callback_data="delete")]
     ]
 
     photo = result.get("photo") or result.get("image")
@@ -1560,48 +1572,61 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 <i>Name:-</i> <b>{story_name}</b>{story_type_line}
 
-<tg-spoiler>This reply will be deleted automatically in 5 minutes.</tg-spoiler>
+<tg-spoiler>This reply will be auto-deleted based on your settings.</tg-spoiler>
 """
 
     chat_id = update.effective_chat.id
 
-    if photo:
-        msg = await context.bot.send_photo(
+    try:
+        if photo:
+            msg = await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=photo,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text=caption,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+    except Exception as e:
+        logger.warning(f"Failed to send search result media: {e}")
+        msg = await context.bot.send_message(
             chat_id=chat_id,
-            photo=photo,
-            caption=caption,
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    else:
-        msg = await context.bot.send_video(
-            chat_id=chat_id,
-            video="https://files.catbox.moe/rq7km7.mp4",
-            caption=caption,
+            text=caption,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
     message_owner[msg.message_id] = user.id
 
-    # delete the reply later without blocking the handler
     async def _delete_later():
-
-        await asyncio.sleep(300)
-
-        try:
-            await msg.delete()
-        except:
-            pass
-
-        # user message already deleted above
-
+        settings = load_user_settings().get(str(user.id), {})
+        delay = settings.get("auto_delete", 300)
+        if delay > 0:
+            await asyncio.sleep(delay)
+            try:
+                await msg.delete()
+            except Exception:
+                pass
     asyncio.create_task(_delete_later())
 
     await log(
         context,
         f"SEARCH HIT | user_id={user.id} username={user.username} title={story_name}"
     )
+
+
+def _log_trending(query):
+    trending = load_trending()
+    key = clean_story(query).lower()
+    trending[key] = trending.get(key, 0) + 1
+    save_trending(trending)
+
 
 
 # -----------------------
@@ -1639,7 +1664,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if query.data.startswith("srch|"):
-        # "Did you mean?" button clicked - send story reply
         try:
             key = query.data.split("|", 1)[1].strip()
         except IndexError:
@@ -1649,59 +1673,68 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not result:
             await query.answer("Story not found.", show_alert=True)
             return
-        user = query.from_user
-        mention = user.mention_html()
-        story_name = clean_story(result.get("text", result.get("name", "")))
-        story_key = result.get("name") or story_name.lower()
-        story_type = result.get("story_type") or extract_story_type(result.get("caption", "")) or "Not specified"
-        story_type_line = f"\n<b>Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
-        caption = f"""Hey {mention} 👋
-<b>I found this story</b> 👇
 
-<i>Name:-</i> <b>{story_name}</b>{story_type_line}
-
-<tg-spoiler>This reply will be deleted automatically in 5 minutes.</tg-spoiler>
-"""
-        keyboard = [
-            [InlineKeyboardButton("OPEN STORY", url=result["link"])],
-            [InlineKeyboardButton("⚠ Link Not Working?", callback_data=f"lnw|{story_key}")],
-            [InlineKeyboardButton("Delete", callback_data="delete")]
-        ]
-        photo = result.get("photo") or result.get("image")
+        user_update = Update(message=query.message, effective_user=query.from_user)
         try:
-            if photo:
-                sent = await context.bot.send_photo(
-                    chat_id=query.message.chat.id,
-                    photo=photo,
-                    caption=caption,
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-            else:
-                sent = await context.bot.send_video(
-                    chat_id=query.message.chat.id,
-                    video="https://files.catbox.moe/rq7km7.mp4",
-                    caption=caption,
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup(keyboard)
-                )
-            message_owner[sent.message_id] = user.id
-            try:
-                await query.message.delete()
-            except Exception:
-                pass
-
-            async def _del_later():
-                await asyncio.sleep(300)
-                try:
-                    await sent.delete()
-                except Exception:
-                    pass
-            asyncio.create_task(_del_later())
-        except Exception as e:
-            logger.warning("srch callback failed: %s", e)
+            await query.message.delete()
+        except Exception:
+            pass
+        await send_story_result(user_update, context, result)
         await query.answer()
         return
+
+    if query.data == "set_autodel":
+        settings = load_user_settings()
+        uid = str(user.id)
+        user_set = settings.get(uid, {"auto_delete": 300, "lang": "en"})
+        
+        current = user_set.get("auto_delete", 300)
+        # toggle 300 -> 600 -> 0 -> 60 -> 300
+        if current == 300: nxt = 600
+        elif current == 600: nxt = 0
+        elif current == 0: nxt = 60
+        else: nxt = 300
+            
+        user_set["auto_delete"] = nxt
+        settings[uid] = user_set
+        save_user_settings(settings)
+        
+        await query.answer("Settings updated!")
+        user_update = Update(message=query.message, effective_user=query.from_user, callback_query=query)
+        try:
+            await query.message.delete()
+        except: pass
+        await settings_cmd(user_update, context)
+        return
+
+    if query.data.startswith("lib_add|"):
+        key = query.data.split("|", 1)[1].strip()
+        lib = load_library()
+        uid = str(user.id)
+        if uid not in lib:
+            lib[uid] = []
+        if key not in lib[uid]:
+            lib[uid].append(key)
+            save_library(lib)
+            await query.answer("⭐️ Added to your Library!", show_alert=True)
+        else:
+            await query.answer("Already in your Library.", show_alert=False)
+        return
+        
+    if query.data.startswith("lib_rem|"):
+        key = query.data.split("|", 1)[1].strip()
+        lib = load_library()
+        uid = str(user.id)
+        if uid in lib and key in lib[uid]:
+            lib[uid].remove(key)
+            save_library(lib)
+            await query.answer("Removed from Library.", show_alert=True)
+        else:
+            await query.answer("Not in your Library.", show_alert=False)
+        # Re-render library
+        await library_cmd(Update(message=query.message, effective_user=query.from_user), context, edit=True)
+        return
+
 
     if query.data.startswith("stories_p|"):
         try:
@@ -2719,8 +2752,128 @@ async def handle_config_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # -----------------------
-# start bot
-# -----------------------
+import os
+import sys
+import subprocess
+
+async def library_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, edit=False):
+    user = update.effective_user
+    lib = load_library()
+    uid = str(user.id)
+    saved = lib.get(uid, [])
+
+    if not saved:
+        text = "📚 <b>Your Library is empty.</b>\n\nClick the ⭐️ Bookmark button on any story to save it here."
+        if edit:
+            await update.callback_query.message.edit_text(text, parse_mode="HTML")
+        else:
+            await update.message.reply_text(text, parse_mode="HTML")
+        return
+
+    text = "📚 <b>Your Library:</b>\n\n"
+    for i, key in enumerate(saved[:20], 1): # limit to 20 for simplicity
+        story = get_story(key)
+        if story:
+            name = clean_story(story.get("text", key))
+            link = story.get("link", "")
+            text += f"{i}. <a href='{link}'>{name}</a>\n"
+    
+    if len(saved) > 20:
+        text += f"\n<i>... and {len(saved)-20} more.</i>"
+    
+    keyboard = [[InlineKeyboardButton("🔙 Close", callback_data="delete")]]
+    if edit:
+        await update.callback_query.message.edit_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard), disable_web_page_preview=True)
+    else:
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard), disable_web_page_preview=True)
+
+
+async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    settings = load_user_settings()
+    uid = str(user.id)
+    user_set = settings.get(uid, {"auto_delete": 300, "lang": "en"})
+    
+    delay = user_set["auto_delete"]
+    text = "⚙️ <b>Your Settings</b>\n\nConfigure how the bot behaves for you."
+    
+    keyboard = [
+        [InlineKeyboardButton(f"Auto Delete: {'OFF' if delay == 0 else f'{delay}s'}", callback_data="set_autodel")],
+        [InlineKeyboardButton("🗑 Close", callback_data="delete")]
+    ]
+    
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def explore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    trending = load_trending()
+    if not trending:
+        await update.message.reply_text("📉 No trending data yet.")
+        return
+        
+    sorted_trend = sorted(trending.items(), key=lambda x: x[1], reverse=True)[:10]
+    
+    text = "🔥 <b>Top Trending Stories</b>\n\n"
+    for i, (key, count) in enumerate(sorted_trend, 1):
+        story = get_story(key)
+        name = clean_story(story.get("text", key)) if story else key.title()
+        # Add deep link so clicking the trending item sends a search directly
+        deeplink = f"https://t.me/{context.bot.username}?start={key}"
+        text += f"{i}. <a href='{deeplink}'>{name}</a> (<i>{count} hits</i>)\n"
+        
+    await update.message.reply_text(text, parse_mode="HTML", disable_web_page_preview=True)
+
+
+async def update_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return
+    await update.message.reply_text("🔄 Pulling updates from GitHub...")
+    try:
+        # Run git pull
+        result = subprocess.run(["git", "pull"], capture_output=True, text=True, check=True)
+        await update.message.reply_text(f"✅ <b>Update complete!</b>\n\n<code>{result.stdout}</code>\n\nRestarting bot...", parse_mode="HTML")
+        
+        # Gracefully restart process
+        os.execv(sys.executable, ['python'] + sys.argv)
+    except Exception as e:
+        await update.message.reply_text(f"❌ <b>Update failed:</b>\n<code>{e}</code>", parse_mode="HTML")
+
+
+async def realtime_listener_loop(bot):
+
+    if not (SESSION_STRING and API_ID and API_HASH) or not CHANNEL_ID:
+        return
+    
+    try:
+        from telethon import TelegramClient, events
+        from telethon.sessions import StringSession
+        from parser import parse_story
+        from database import add_story
+        
+        client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+        await client.connect()
+        if not await client.is_user_authorized():
+            return
+            
+        sources = bot_config.get("sources", [])
+        if CHANNEL_ID not in sources:
+            sources.append(CHANNEL_ID)
+
+        @client.on(events.NewMessage(chats=sources))
+        async def handler(event):
+            try:
+                story = parse_story(event.message)
+                if story:
+                    add_story(story)
+                    logger.info(f"Realtime listener added new story: {story['text']}")
+            except Exception as e:
+                logger.error(f"Error in realtime listener: {e}")
+
+        logger.info("Started realtime Telethon listener")
+        await client.run_until_disconnected()
+    except Exception as e:
+        logger.error(f"Failed to start realtime listener: {e}")
+
 
 def start_bot():
 
@@ -2731,6 +2884,7 @@ def start_bot():
     async def _post_init(application):
         if str(AUTO_SCAN).lower() == "true" and CHANNEL_ID:
             asyncio.create_task(auto_scan_loop(application.bot))
+            asyncio.create_task(realtime_listener_loop(application.bot))
         # Start background link checker
         asyncio.create_task(start_link_checker())
 
@@ -2757,6 +2911,13 @@ def start_bot():
 
     # react when bot is added/removed
     app.add_handler(ChatMemberHandler(chat_member_update))
+
+
+    # Custom new features
+    app.add_handler(CommandHandler("library", library_cmd))
+    app.add_handler(CommandHandler("settings", settings_cmd))
+    app.add_handler(CommandHandler("explore", explore_cmd))
+    app.add_handler(CommandHandler("update", update_cmd))
 
     app.add_handler(InlineQueryHandler(inline_search))
     app.add_handler(ChosenInlineResultHandler(chosen_inline_result))

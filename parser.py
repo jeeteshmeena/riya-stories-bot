@@ -1,15 +1,15 @@
 import re
 
-# possible fields used in posts - STRICT PATTERNS ONLY
+# possible fields used in posts - relaxed to index more stories
 NAME_PATTERNS = [
     # Bullet format with status: "- Story Title ( Completed )"
     r"^\s*-\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)\s*$",
-    # Name patterns with status requirement
-    r"name\s*[:\-]\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)",
-    r"story\s*[:\-]\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)",
-    r"title\s*[:\-]\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)",
-    r"story name\s*[:\-]\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)",
-    # Strict title with status
+    # Name patterns with or without status
+    r"name\s*[:\-]\s*([^\n\(]+)",
+    r"story\s*[:\-]\s*([^\n\(]+)",
+    r"title\s*[:\-]\s*([^\n\(]+)",
+    r"story name\s*[:\-]\s*([^\n\(]+)",
+    # Strict title with status (fallback)
     r"^\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)\s*$",
 ]
 
