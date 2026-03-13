@@ -2835,263 +2835,443 @@ async def copyright_mute_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # admin config panel (/config) and source management
 # -----------------------
 
-async def _send_config_panel(message, context, lang, edit=False):
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  CONFIG MENU SYSTEM
+#  Premium inline config panel — all navigation edits the same message.
+#  callback_data format: cfg|<section>|<action>|<caller_id>
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CFG_DIV = "━━━━━━━━━━━━━━━━"
+
+
+def _cfg_nav(caller_id: int, back: str = "main") -> list:
+    """Standard config nav row: [⬅ Back][✕ Delete]"""
+    return [
+        InlineKeyboardButton("⬅ Back",    callback_data=f"cfg|{back}||{caller_id}"),
+        InlineKeyboardButton("✕ Delete",  callback_data=f"cfg|close||{caller_id}"),
+    ]
+
+
+def _cfg_main_panel(caller_id: int, lang: str = "en") -> tuple:
     sources = bot_config.get("sources", [])
     formats = bot_config.get("formats", {})
-    
+    timers  = bot_config.get("auto_delete", {})
+    cur_lang = "हिन्दी" if lang == "hi" else "English"
     if lang == "hi":
-        text = (
-            "⚙️ *बॉट कॉन्फिगरेशन पैनल*\n\n"
-            f"📚 *सोर्स चैनल:* `{len(sources)}`\n"
-            f"📝 *कस्टम फॉर्मेट:* `{len(formats)}`\n\n"
-            "नीचे दिए गए विकल्पों से बॉट कॉन्फिगर करें:"
+        header = (
+            "<b>★ Configuration Panel</b>\n"
+            "<i>Bot settings aur system options manage karein.</i>\n"
+            f"{_CFG_DIV}\n\n"
+            f"✦ Sources: <b>{len(sources)}</b>  "
+            f"✦ Formats: <b>{sum(len(v) for v in formats.values()) if isinstance(formats, dict) else 0}</b>  "
+            f"✦ Language: <b>{cur_lang}</b>"
         )
     else:
-        text = (
-            "⚙️ *Bot Configuration Panel*\n\n"
-            f"📚 *Source Channels:* `{len(sources)}`\n"
-            f"📝 *Custom Formats:* `{len(formats)}`\n\n"
-            "Configure bot settings using options below:"
+        header = (
+            "<b>★ Configuration Panel</b>\n"
+            "<i>Manage bot settings and system options.</i>\n"
+            f"{_CFG_DIV}\n\n"
+            f"✦ Sources: <b>{len(sources)}</b>  "
+            f"✦ Formats: <b>{sum(len(v) for v in formats.values()) if isinstance(formats, dict) else 0}</b>  "
+            f"✧ Language: <b>{cur_lang}</b>"
         )
-    
-    keyboard = [
+    markup = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("📚 Source Channels", callback_data="cfg_main|sources"),
-            InlineKeyboardButton("📝 Custom Formats", callback_data="cfg_main|formats"),
+            InlineKeyboardButton("✦ Language",    callback_data=f"cfg|lang||{caller_id}"),
+            InlineKeyboardButton("✦ Timers",       callback_data=f"cfg|timers||{caller_id}"),
         ],
         [
-            InlineKeyboardButton("⏱ Delete Timers", callback_data="cfg_main|timers"),
-            InlineKeyboardButton("🌐 Language", callback_data="cfg_main|lang"),
+            InlineKeyboardButton("✦ Channels",    callback_data=f"cfg|sources||{caller_id}"),
+            InlineKeyboardButton("✦ Formats",      callback_data=f"cfg|formats||{caller_id}"),
         ],
         [
-            InlineKeyboardButton("🔄 Refresh", callback_data="cfg_main|refresh"),
-            InlineKeyboardButton("❌ Close", callback_data="cfg_main|close"),
+            InlineKeyboardButton("✦ System Info", callback_data=f"cfg|sysinfo||{caller_id}"),
+            InlineKeyboardButton("✧ Refresh",      callback_data=f"cfg|main||{caller_id}"),
         ],
-    ]
-    
+        [InlineKeyboardButton("✕ Delete", callback_data=f"cfg|close||{caller_id}")],
+    ])
+    return header, markup
+
+
+def _cfg_lang_panel(caller_id: int, chat_id: int, lang: str = "en") -> tuple:
+    cur = get_chat_lang(chat_id)
+    en_mark = "★" if cur == "en" else "☆"
+    hi_mark  = "★" if cur == "hi" else "☆"
+    text = (
+        "<b>✦ Language Settings</b>\n"
+        "<i>Select the interface language for this chat.</i>\n"
+        f"{_CFG_DIV}\n\n"
+        f"{en_mark} English  |  {hi_mark} हिन्दी\n\n"
+        "<i>Tap a language to activate it.</i>"
+    )
+    markup = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(f"{en_mark} English",  callback_data=f"cfg|setlang|en|{caller_id}"),
+            InlineKeyboardButton(f"{hi_mark} हिन्दी",    callback_data=f"cfg|setlang|hi|{caller_id}"),
+        ],
+        _cfg_nav(caller_id, back="main"),
+    ])
+    return text, markup
+
+
+def _cfg_timers_panel(caller_id: int, lang: str = "en") -> tuple:
+    timers = bot_config.get("auto_delete", {})
+    if timers:
+        lines = "\n".join(f"✦ <b>{k}</b>  →  <code>{v}s</code>" for k, v in timers.items())
+    else:
+        body = "<i>✧ No timers configured.</i>"
+        lines = body
+    text = (
+        "<b>✦ Auto-Delete Timers</b>\n"
+        "<i>Manage message auto-deletion intervals.</i>\n"
+        f"{_CFG_DIV}\n\n"
+        f"{lines}\n\n"
+        "<i>Use /settimer &lt;key&gt; &lt;seconds&gt; to change a timer.</i>"
+    )
+    markup = InlineKeyboardMarkup([_cfg_nav(caller_id, back="main")])
+    return text, markup
+
+
+def _cfg_sources_panel(caller_id: int, lang: str = "en") -> tuple:
+    sources = bot_config.get("sources", [])
+    if sources:
+        lines = "\n".join(f"✦ <code>{c}</code>" for c in sources)
+        body = f"<b>{len(sources)} configured</b>\n\n{lines}"
+    else:
+        body = "<i>✧ No source channels configured.</i>"
+    text = (
+        "<b>✦ Source Channels</b>\n"
+        "<i>Channels the bot scans for stories.</i>\n"
+        f"{_CFG_DIV}\n\n"
+        f"{body}"
+    )
+    markup = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("＋ Add",    callback_data=f"cfg|add_source||{caller_id}"),
+            InlineKeyboardButton("－ Remove", callback_data=f"cfg|rm_source||{caller_id}"),
+        ],
+        _cfg_nav(caller_id, back="main"),
+    ])
+    return text, markup
+
+
+def _cfg_add_source_panel(caller_id: int) -> tuple:
+    text = (
+        "<b>✦ Add Source Channel</b>\n"
+        "<i>Send the channel ID to add it.</i>\n"
+        f"{_CFG_DIV}\n\n"
+        "Send a message with the channel ID:\n"
+        "<code>-1001234567890</code>\n\n"
+        "<i>✧ The bot must be an admin in that channel.</i>"
+    )
+    markup = InlineKeyboardMarkup([_cfg_nav(caller_id, back="sources")])
+    return text, markup
+
+
+def _cfg_rm_source_panel(caller_id: int, lang: str = "en") -> tuple:
+    sources = bot_config.get("sources", [])
+    if not sources:
+        text = (
+            "<b>✦ Remove Channel</b>\n"
+            "<i>No channels to remove.</i>\n"
+            f"{_CFG_DIV}"
+        )
+        markup = InlineKeyboardMarkup([_cfg_nav(caller_id, back="sources")])
+        return text, markup
+    text = (
+        "<b>✦ Remove Channel</b>\n"
+        "<i>Tap a channel to remove it.</i>\n"
+        f"{_CFG_DIV}"
+    )
+    rows = [[InlineKeyboardButton(f"✕ {c}", callback_data=f"cfg|do_rm_src|{c}|{caller_id}")] for c in sources]
+    rows.append(_cfg_nav(caller_id, back="sources"))
+    markup = InlineKeyboardMarkup(rows)
+    return text, markup
+
+
+def _cfg_formats_panel(caller_id: int, lang: str = "en") -> tuple:
+    formats = bot_config.get("formats", {})
+    if formats:
+        lines = "\n".join(
+            f"✦ <code>{cid}</code>  →  <b>{len(fmts)} format(s)</b>"
+            for cid, fmts in formats.items()
+        )
+        body = lines
+    else:
+        body = "<i>✧ No custom formats configured.</i>"
+    text = (
+        "<b>✦ Custom Formats</b>\n"
+        "<i>Per-channel message parsing rules.</i>\n"
+        f"{_CFG_DIV}\n\n"
+        f"{body}"
+    )
+    markup = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("＋ Add",    callback_data=f"cfg|add_fmt||{caller_id}"),
+            InlineKeyboardButton("－ Remove", callback_data=f"cfg|rm_fmt||{caller_id}"),
+        ],
+        _cfg_nav(caller_id, back="main"),
+    ])
+    return text, markup
+
+
+def _cfg_add_fmt_panel(caller_id: int) -> tuple:
+    text = (
+        "<b>✦ Add Custom Format</b>\n"
+        "<i>Send format as: channel_id|name_regex|link_regex</i>\n"
+        f"{_CFG_DIV}\n\n"
+        "Example:\n"
+        "<code>-1001234567890|^Story: (.+)$|https://t.me/(.+)</code>"
+    )
+    markup = InlineKeyboardMarkup([_cfg_nav(caller_id, back="formats")])
+    return text, markup
+
+
+def _cfg_rm_fmt_panel(caller_id: int, lang: str = "en") -> tuple:
+    formats = bot_config.get("formats", {})
+    if not formats:
+        text = (
+            "<b>✦ Remove Format</b>\n"
+            "<i>No formats to remove.</i>\n"
+            f"{_CFG_DIV}"
+        )
+        markup = InlineKeyboardMarkup([_cfg_nav(caller_id, back="formats")])
+        return text, markup
+    text = (
+        "<b>✦ Remove Format</b>\n"
+        "<i>Tap a channel to remove its format rules.</i>\n"
+        f"{_CFG_DIV}"
+    )
+    rows = [[InlineKeyboardButton(f"✕ {cid}", callback_data=f"cfg|do_rm_fmt|{cid}|{caller_id}")] for cid in formats]
+    rows.append(_cfg_nav(caller_id, back="formats"))
+    markup = InlineKeyboardMarkup(rows)
+    return text, markup
+
+
+def _cfg_sysinfo_panel(caller_id: int) -> tuple:
+    import datetime as _dt
+    uptime_s = int(time.time() - BOT_START_TS)
+    hours, rem = divmod(uptime_s, 3600)
+    mins, secs = divmod(rem, 60)
+    uptime_str = f"{hours}h {mins}m {secs}s"
+    story_count = len(story_index)
+    sources = len(bot_config.get("sources", []))
+    req_count = len(request_db)
+    text = (
+        "<b>★ System Information</b>\n"
+        "<i>Current runtime statistics.</i>\n"
+        f"{_CFG_DIV}\n\n"
+        f"✦ <b>Uptime</b>  →  <code>{uptime_str}</code>\n"
+        f"✦ <b>Stories</b>  →  <code>{story_count}</code>\n"
+        f"✦ <b>Sources</b>  →  <code>{sources}</code>\n"
+        f"✧ <b>Requests</b>  →  <code>{req_count}</code>"
+    )
+    markup = InlineKeyboardMarkup([_cfg_nav(caller_id, back="main")])
+    return text, markup
+
+
+async def _edit_cfg(query, text: str, markup, loading: bool = False):
+    """Edit the config message, optionally show a loading state first."""
+    if loading:
+        try:
+            await query.message.edit_text(
+                "<i>⟳ Updating menu…</i>", parse_mode="HTML"
+            )
+        except Exception:
+            pass
+    try:
+        await query.message.edit_text(text=text, parse_mode="HTML", reply_markup=markup)
+    except Exception:
+        pass
+
+
+async def _send_config_panel(message, context, lang, edit=False, caller_id: int = 0):
+    """Send or edit the main config panel."""
+    text, markup = _cfg_main_panel(caller_id, lang)
     if edit:
         try:
-            await message.edit_text(text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await message.edit_text(text=text, parse_mode="HTML", reply_markup=markup)
         except Exception:
             pass
     else:
-        await message.reply_text(text=text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        await message.reply_text(text=text, parse_mode="HTML", reply_markup=markup)
+
 
 async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Professional admin config panel."""
+    """Open the premium inline config panel."""
     if not is_admin(update.effective_user.id):
         lang = get_chat_lang(update.effective_chat.id)
         await update.message.reply_text("⛔ Admin only." if lang != "hi" else "⛔ केवल एडमिन।")
         return
-
+    caller_id = update.effective_user.id
     lang = get_chat_lang(update.effective_chat.id)
-    await _send_config_panel(update.message, context, lang, edit=False)
+    text, markup = _cfg_main_panel(caller_id, lang)
+    sent = await update.message.reply_text(text=text, parse_mode="HTML", reply_markup=markup)
+    # Auto-delete command message
+    cmd_msg = update.message
+    async def _del_cmd():
+        await asyncio.sleep(5)
+        try: await cmd_msg.delete()
+        except: pass
+    asyncio.create_task(_del_cmd())
 
 
 async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
-    """Handle professional config panel callbacks."""
+    """Handle all cfg| callbacks — always edits the same message."""
     data = query.data
     parts = data.split("|")
-    prefix = parts[0]
-    action = parts[1] if len(parts) > 1 else ""
-    chat_id = query.message.chat.id
-    lang = get_chat_lang(chat_id)
+    # Format: cfg|section|action|caller_id
+    section  = parts[1] if len(parts) > 1 else "main"
+    action   = parts[2] if len(parts) > 2 else ""
+    try:
+        caller_id = int(parts[3]) if len(parts) > 3 else 0
+    except ValueError:
+        caller_id = 0
+    user     = query.from_user
+    chat_id  = query.message.chat.id
+    lang     = get_chat_lang(chat_id)
 
-    if prefix == "cfg_main":
-        if action == "close":
-            try:
-                await query.message.delete()
-            except:
-                pass
-            return
-        if action == "refresh" or action == "back":
-            await _send_config_panel(query.message, context, lang, edit=True)
-            return
-
-        if action == "sources":
-            sources = bot_config.get("sources", [])
-            if lang == "hi":
-                text = f"📚 *सोर्स चैनल प्रबंधन*\n\n"
-                if sources:
-                    text += f"वर्तमान चैनल ({len(sources)}):\n"
-                    for i, cid in enumerate(sources, 1):
-                        text += f"• `{cid}`\n"
-                else:
-                    text += "कोई सोर्स चैनल नहीं है।"
-            else:
-                text = f"📚 *Source Channel Management*\n\n"
-                if sources:
-                    text += f"Current channels ({len(sources)}):\n"
-                    for i, cid in enumerate(sources, 1):
-                        text += f"• `{cid}`\n"
-                else:
-                    text += "No source channels configured."
-            
-            keyboard = [
-                [
-                    InlineKeyboardButton("➕ Add Channel", callback_data="cfg_action|add_source"),
-                    InlineKeyboardButton("➖ Remove Channel", callback_data="cfg_action|remove_source"),
-                ],
-                [InlineKeyboardButton("🔙 Back", callback_data="cfg_main|back")],
-            ]
-            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-
-        if action == "formats":
-            formats = bot_config.get("formats", {})
-            if lang == "hi":
-                text = f"📝 *कस्टम फॉर्मेट प्रबंधन*\n\n"
-                if formats:
-                    text += f"वर्तमान फॉर्मेट ({sum(len(fmts) for fmts in formats.values())}):\n"
-                    for cid, fmts in formats.items():
-                        text += f"• चैनल `{cid}`: {len(fmts)} फॉर्मेट\n"
-                else:
-                    text += "कोई कस्टम फॉर्मेट नहीं है।"
-            else:
-                text = f"📝 *Custom Format Management*\n\n"
-                if formats:
-                    text += f"Current formats ({sum(len(fmts) for fmts in formats.values())}):\n"
-                    for cid, fmts in formats.items():
-                        text += f"• Channel `{cid}`: {len(fmts)} formats\n"
-                else:
-                    text += "No custom formats configured."
-            
-            keyboard = [
-                [
-                    InlineKeyboardButton("➕ Add Format", callback_data="cfg_action|add_format"),
-                    InlineKeyboardButton("➖ Remove Format", callback_data="cfg_action|remove_format"),
-                ],
-                [InlineKeyboardButton("🔙 Back", callback_data="cfg_main|back")],
-            ]
-            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-
-        if action == "timers":
-            timers = bot_config.get("auto_delete", {})
-            if lang == "hi":
-                text = "⏱ *ऑटो डिलीट टाइमर्स*\n\n"
-                if timers:
-                    text += "वर्तमान टाइमर्स:\n"
-                    for key, value in timers.items():
-                        text += f"• {key}: {value} सेकंड\n"
-                    text += f"\n`/settimer <key> <seconds>` का उपयोग करें"
-                else:
-                    text += "कोई टाइमर सेट नहीं है।\n\n`/settimer <key> <seconds>` का उपयोग करें"
-            else:
-                text = "⏱ *Auto Delete Timers*\n\n"
-                if timers:
-                    text += "Current timers:\n"
-                    for key, value in timers.items():
-                        text += f"• {key}: {value} seconds\n"
-                    text += f"\nUse `/settimer <key> <seconds>`"
-                else:
-                    text += "No timers set.\n\nUse `/settimer <key> <seconds>`"
-            
-            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|back")]]
-            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-
-        if action == "lang":
-            current_lang = get_chat_lang(chat_id)
-            if lang == "hi":
-                text = f"🌐 *भाषा सेटिंग्स*\n\nवर्तमान भाषा: {'हिन्दी' if current_lang == 'hi' else 'English'}\n\nभाषा बदलें:"
-            else:
-                text = f"🌐 *Language Settings*\n\nCurrent language: {'हिन्दी' if current_lang == 'hi' else 'English'}\n\nChange language:"
-            
-            keyboard = [
-                [
-                    InlineKeyboardButton("🇺🇸 English", callback_data="cfg_set_lang|en"),
-                    InlineKeyboardButton("🇮🇳 हिन्दी", callback_data="cfg_set_lang|hi"),
-                ],
-                [InlineKeyboardButton("🔙 Back", callback_data="cfg_main|back")],
-            ]
-            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-
-    elif prefix == "cfg_action":
-        if action == "add_source":
-            if lang == "hi":
-                text = "➕ *सोर्स चैनल जोड़ें*\n\nचैनल ID भेजें जिसे आप जोड़ना चाहते हैं:\n\nउदाहरण: `-1001234567890`"
-            else:
-                text = "➕ *Add Source Channel*\n\nSend the channel ID you want to add:\n\nExample: `-1001234567890`"
-            context.chat_data["config_state"] = "waiting_source_id"
-            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|sources")]]
-            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-
-        if action == "remove_source":
-            sources = bot_config.get("sources", [])
-            if not sources:
-                text = "➖ *सोर्स चैनल हटाएं*\n\nहटाने के लिए कोई चैनल नहीं है।" if lang == "hi" else "➖ *Remove Source Channel*\n\nNo channels to remove."
-                keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|sources")]]
-                await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-                return
-            
-            text = "➖ *सोर्स चैनल हटाएं*\n\nहटाने के लिए चैनल चुनें:" if lang == "hi" else "➖ *Remove Source Channel*\n\nSelect channel to remove:"
-            keyboard = [[InlineKeyboardButton(f"🗑 {cid}", callback_data=f"cfg_remove|{cid}")] for cid in sources]
-            keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="cfg_main|sources")])
-            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-
-        if action == "add_format":
-            if lang == "hi":
-                text = "📝 *कस्टम फॉर्मेट जोड़ें*\n\nइस फॉर्मेट में भेजें:\n`channel_id|name_regex|link_regex`\n\nउदाहरण:\n`-1001234567890|^Story: (.+)$|https://t\\.me/(+)`"
-            else:
-                text = "📝 *Add Custom Format*\n\nSend in this format:\n`channel_id|name_regex|link_regex`\n\nExample:\n`-1001234567890|^Story: (.+)$|https://t\\.me/(+)`"
-            context.chat_data["config_state"] = "waiting_format"
-            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|formats")]]
-            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-
-        if action == "remove_format":
-            formats = bot_config.get("formats", {})
-            if not formats:
-                text = "🗑 *कस्टम फॉर्मेट हटाएं*\n\nहटाने के लिए कोई फॉर्मेट नहीं है।" if lang == "hi" else "🗑 *Remove Custom Format*\n\nNo formats to remove."
-                keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|formats")]]
-                await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-                return
-                
-            text = "🗑 *कस्टम फॉर्मेट हटाएं*\n\nहटाने के लिए चैनल चुनें:" if lang == "hi" else "🗑 *Remove Custom Format*\n\nSelect channel to remove formats from:"
-            keyboard = [[InlineKeyboardButton(f"🗑 {cid}", callback_data=f"cfg_remove_fmt|{cid}")] for cid in formats.keys()]
-            keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="cfg_main|formats")])
-            await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-            return
-
-    elif prefix == "cfg_remove":
-        channel_id = int(action) if action.lstrip('-').isdigit() else action
-        sources = bot_config.get("sources", [])
-        if channel_id in sources:
-            sources.remove(channel_id)
-            bot_config["sources"] = sources
-            save_config(bot_config)
-            text = f"✅ *सफलता*\n\nचैनल `{channel_id}` हटा दिया गया।" if lang == "hi" else f"✅ *Success*\n\nChannel `{channel_id}` removed."
+    # ── Close / delete ──────────────────────────────────────────────────────
+    if section == "close":
+        if user.id == caller_id or is_admin(user.id):
+            try: await query.message.delete()
+            except: await query.answer("✧ Could not delete.", show_alert=True)
         else:
-            text = "❌ *त्रुटि*\n\nचैनल नहीं मिला।" if lang == "hi" else "❌ *Error*\n\nChannel not found."
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|sources")]]
-        await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.answer("⛔ Only the admin who opened this menu can close it.", show_alert=True)
         return
 
-    elif prefix == "cfg_remove_fmt":
-        channel_id = action
-        formats = bot_config.get("formats", {})
-        if channel_id in formats:
-            formats.pop(channel_id, None)
-            bot_config["formats"] = formats
-            save_config(bot_config)
-            text = f"✅ *सफलता*\n\nकस्टम फॉर्मेट हटा दिए गए।" if lang == "hi" else f"✅ *Success*\n\nCustom formats removed."
-        else:
-            text = "❌ *त्रुटि*\n\nनहीं मिला।" if lang == "hi" else "❌ *Error*\n\nNot found."
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|formats")]]
-        await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    # ── Permission guard ────────────────────────────────────────────────────
+    if not is_admin(user.id):
+        await query.answer("⛔ Admin only.", show_alert=True)
         return
 
-    elif prefix == "cfg_set_lang":
+    # ── Main panel ──────────────────────────────────────────────────────────
+    if section == "main":
+        text, markup = _cfg_main_panel(caller_id, lang)
+        await _edit_cfg(query, text, markup)
+        await query.answer()
+        return
+
+    # ── Language ────────────────────────────────────────────────────────────
+    if section == "lang":
+        text, markup = _cfg_lang_panel(caller_id, chat_id, lang)
+        await _edit_cfg(query, text, markup)
+        await query.answer()
+        return
+
+    if section == "setlang":
         new_lang = action
         set_chat_lang(chat_id, new_lang)
-        text = "✅ *सफलता*\n\nभाषा हिन्दी में बदल दी गई।" if new_lang == "hi" else "✅ *Success*\n\nLanguage changed to English."
-        keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="cfg_main|lang")]]
-        await query.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        lang = new_lang
+        label = "English" if new_lang == "en" else "हिन्दी"
+        await query.answer(f"★ Language set to {label}", show_alert=False)
+        text, markup = _cfg_lang_panel(caller_id, chat_id, lang)
+        await _edit_cfg(query, text, markup)
         return
+
+    # ── Timers ───────────────────────────────────────────────────────────────
+    if section == "timers":
+        text, markup = _cfg_timers_panel(caller_id, lang)
+        await _edit_cfg(query, text, markup)
+        await query.answer()
+        return
+
+    # ── Source channels ──────────────────────────────────────────────────────
+    if section == "sources":
+        text, markup = _cfg_sources_panel(caller_id, lang)
+        await _edit_cfg(query, text, markup)
+        await query.answer()
+        return
+
+    if section == "add_source":
+        text, markup = _cfg_add_source_panel(caller_id)
+        context.chat_data["config_state"] = "waiting_source_id"
+        context.chat_data["config_caller_id"] = caller_id
+        await _edit_cfg(query, text, markup)
+        await query.answer()
+        return
+
+    if section == "rm_source":
+        text, markup = _cfg_rm_source_panel(caller_id, lang)
+        await _edit_cfg(query, text, markup)
+        await query.answer()
+        return
+
+    if section == "do_rm_src":
+        raw = action
+        try:
+            cid = int(raw) if raw.lstrip("-").isdigit() else raw
+        except Exception:
+            cid = raw
+        sources = bot_config.get("sources", [])
+        if cid in sources:
+            sources.remove(cid)
+            bot_config["sources"] = sources
+            save_config(bot_config)
+            await query.answer("✦ Channel removed.", show_alert=False)
+        else:
+            await query.answer("✧ Channel not found.", show_alert=True)
+        text, markup = _cfg_sources_panel(caller_id, lang)
+        await _edit_cfg(query, text, markup, loading=True)
+        return
+
+    # ── Custom formats ────────────────────────────────────────────────────────
+    if section == "formats":
+        text, markup = _cfg_formats_panel(caller_id, lang)
+        await _edit_cfg(query, text, markup)
+        await query.answer()
+        return
+
+    if section == "add_fmt":
+        text, markup = _cfg_add_fmt_panel(caller_id)
+        context.chat_data["config_state"] = "waiting_format"
+        context.chat_data["config_caller_id"] = caller_id
+        await _edit_cfg(query, text, markup)
+        await query.answer()
+        return
+
+    if section == "rm_fmt":
+        text, markup = _cfg_rm_fmt_panel(caller_id, lang)
+        await _edit_cfg(query, text, markup)
+        await query.answer()
+        return
+
+    if section == "do_rm_fmt":
+        cid_str = action
+        formats = bot_config.get("formats", {})
+        if cid_str in formats:
+            formats.pop(cid_str, None)
+            bot_config["formats"] = formats
+            save_config(bot_config)
+            await query.answer("✦ Formats removed.", show_alert=False)
+        else:
+            # Try int key
+            try:
+                cid_int = int(cid_str)
+                if cid_int in formats:
+                    formats.pop(cid_int, None)
+                    bot_config["formats"] = formats
+                    save_config(bot_config)
+                    await query.answer("✦ Formats removed.", show_alert=False)
+                else:
+                    await query.answer("✧ Not found.", show_alert=True)
+            except (ValueError, TypeError):
+                await query.answer("✧ Not found.", show_alert=True)
+        text, markup = _cfg_formats_panel(caller_id, lang)
+        await _edit_cfg(query, text, markup, loading=True)
+        return
+
+    # ── System info ──────────────────────────────────────────────────────────
+    if section == "sysinfo":
+        text, markup = _cfg_sysinfo_panel(caller_id)
+        await _edit_cfg(query, text, markup, loading=True)
+        await query.answer()
+        return
+
+    # ── Legacy cfg_main|* compat ──────────────────────────────────────────────
+    await query.answer()
+
 
 
 async def handle_config_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
