@@ -541,20 +541,16 @@ def _menu_main(caller_id: int, lang: str = "en") -> tuple:
         )
     markup = InlineKeyboardMarkup([
         [
+            InlineKeyboardButton("★ Favourites",  callback_data=f"menu|saved|{caller_id}"),
+            InlineKeyboardButton("✦ New Series",   callback_data=f"menu|new|{caller_id}"),
+        ],
+        [
             InlineKeyboardButton("🔥 Trending",    callback_data=f"menu|trending|{caller_id}"),
-            InlineKeyboardButton("🆕 New",          callback_data=f"menu|new|{caller_id}"),
-        ],
-        [
-            InlineKeyboardButton("⭐ Saved",        callback_data=f"menu|saved|{caller_id}"),
-            InlineKeyboardButton("📑 Browse",       callback_data=f"menu|browse|{caller_id}"),
-        ],
-        [
-            InlineKeyboardButton("❓ How It Works", callback_data=f"menu|how|{caller_id}"),
             InlineKeyboardButton("ℹ️ About",        callback_data=f"menu|about|{caller_id}"),
         ],
         [
-            InlineKeyboardButton("🌐 Language",     callback_data=f"menu|lang|{caller_id}"),
-            InlineKeyboardButton("🆘 Help",         callback_data=f"menu|help|{caller_id}"),
+            InlineKeyboardButton("🌐 Language",    callback_data=f"menu|lang|{caller_id}"),
+            InlineKeyboardButton("🚧 Help",         callback_data=f"menu|help|{caller_id}"),
         ],
         [InlineKeyboardButton("✕ Close", callback_data=f"menu|close|{caller_id}")],
     ])
@@ -591,14 +587,14 @@ def _menu_new(caller_id: int) -> tuple:
             name = clean_story(s.get("name") or s.get("text") or "Story")
             link = s.get("link", "")
             if link:
-                lines.append(f'• <a href="{link}">{name}</a>')
+                lines.append(f'✦ <a href="{link}">{name}</a>')
             else:
-                lines.append(f"• {name}")
+                lines.append(f"✦ {name}")
         body = "\n".join(lines)
     else:
-        body = "<i>No stories in the database yet.</i>"
+        body = "<i>No new series in the database yet.</i>"
     text = (
-        "<b>🆕 Recently Added</b>\n"
+        "<b>✦ New Series</b>\n"
         "<i>The latest stories added to the database.</i>\n"
         f"{_DIVIDER}\n\n"
         f"{body}"
@@ -616,17 +612,17 @@ def _menu_saved(caller_id: int) -> tuple:
             res = get_story(story_key)
             name = clean_story(story_key)
             if res and res.get("link"):
-                lines.append(f'• <a href="{res["link"]}">{name}</a>')
+                lines.append(f'★ <a href="{res["link"]}">{name}</a>')
             else:
-                lines.append(f"• {name} <i>(link unavailable)</i>")
+                lines.append(f"★ {name} <i>(link unavailable)</i>")
         body = "\n".join(lines)
         if len(favs) > 15:
             body += f"\n<i>…and {len(favs) - 15} more.</i>"
     else:
-        body = "<i>No saved stories yet.\nTap ⭐ on any search result to save it.</i>"
+        body = "<i>☆ No favourites yet.\nTap ★ on any search result to save it.</i>"
     text = (
-        "<b>⭐ My Saved Stories</b>\n"
-        "<i>Your personal favorites list.</i>\n"
+        "<b>★ My Favourites</b>\n"
+        "<i>Your personal saved stories.</i>\n"
         f"{_DIVIDER}\n\n"
         f"{body}"
     )
@@ -665,30 +661,8 @@ def _menu_browse(caller_id: int) -> tuple:
 
 
 def _menu_how(caller_id: int, lang: str = "en") -> tuple:
-    if lang == "hi":
-        body = (
-            "1️⃣  <b>स्टोरी का नाम भेजें</b>\n"
-            "2️⃣  <b>बॉट डेटाबेस में खोजता है</b>\n"
-            "3️⃣  <b>मिली → लिंक मिलता है</b>\n"
-            "4️⃣  <b>नहीं मिली → /request करें</b>\n\n"
-            "<i>जब स्टोरी आएगी, आपको नोटिफिकेशन मिलेगा।</i>"
-        )
-    else:
-        body = (
-            "1️⃣  <b>Send a story name</b>\n"
-            "2️⃣  <b>Bot searches the database</b>\n"
-            "3️⃣  <b>Found → you get the link</b>\n"
-            "4️⃣  <b>Not found → use /request</b>\n\n"
-            "<i>When the story is uploaded, you will be notified automatically.</i>"
-        )
-    text = (
-        "<b>⚙️ How It Works</b>\n"
-        "<i>Simple steps to find your story.</i>\n"
-        f"{_DIVIDER}\n\n"
-        f"{body}"
-    )
-    markup = InlineKeyboardMarkup([_nav_row(caller_id, back="home")])
-    return text, markup
+    # "How It Works" is now merged into Help
+    return _menu_help(caller_id, lang)
 
 
 def _menu_about(caller_id: int, lang: str = "en") -> tuple:
@@ -696,11 +670,11 @@ def _menu_about(caller_id: int, lang: str = "en") -> tuple:
         body = (
             "<blockquote><i>Riya एक स्मार्ट Telegram स्टोरी खोज बॉट है।</i></blockquote>\n\n"
             "<u>✨ Features</u>\n"
-            "• AI फ़जी सर्च\n"
-            "• इनलाइन मेनू\n"
-            "• JSON डेटाबेस\n"
-            "• एडमिन /scan\n"
-            "• फेवरेट सिस्टम\n\n"
+            "✦ AI फ़जी सर्च\n"
+            "✦ इनलाइन मेनू नेविगेशन\n"
+            "✦ JSON डेटाबेस\n"
+            "✦ एडमिन /scan\n"
+            "✦ फेवरेट सिस्टम\n\n"
             "<b>👨‍💻 Developer:</b> @MeJeetX\n"
             "<b>⚙ Version:</b> Riya v10"
         )
@@ -708,11 +682,11 @@ def _menu_about(caller_id: int, lang: str = "en") -> tuple:
         body = (
             "<blockquote><i>Riya is an intelligent Telegram story finder bot.</i></blockquote>\n\n"
             "<u>✨ Features</u>\n"
-            "• AI fuzzy search\n"
-            "• Inline menu navigation\n"
-            "• JSON database\n"
-            "• Admin /scan command\n"
-            "• Favorites system\n\n"
+            "✦ AI fuzzy search\n"
+            "✦ Inline menu navigation\n"
+            "✦ JSON database\n"
+            "✦ Admin /scan command\n"
+            "✦ Favourites system\n\n"
             "<b>👨‍💻 Developer:</b> @MeJeetX\n"
             "<b>⚙ Version:</b> Riya v10"
         )
@@ -729,7 +703,13 @@ def _menu_about(caller_id: int, lang: str = "en") -> tuple:
 def _menu_help(caller_id: int, lang: str = "en") -> tuple:
     if lang == "hi":
         body = (
-            "<u>उपयोगकर्ता Commands</u>\n"
+            "<u>✦ Bot कैसे काम करता है?</u>\n"
+            "1️⃣  स्टोरी का नाम भेजें\n"
+            "2️⃣  बॉट डेटाबेस में खोजता है\n"
+            "3️⃣  मिली → लिंक मिलता है\n"
+            "4️⃣  नहीं मिली → /request करें\n\n"
+            "<i>जब स्टोरी आएगी, आपको नोटिफिकेशन मिलेगा।</i>\n\n"
+            "<u>✦ Commands</u>\n"
             "/start — बॉट शुरू करें\n"
             "/request — स्टोरी रिक्वेस्ट\n"
             "/info — स्टोरी डिटेल्स\n"
@@ -740,18 +720,24 @@ def _menu_help(caller_id: int, lang: str = "en") -> tuple:
         )
     else:
         body = (
-            "<u>User Commands</u>\n"
+            "<u>✦ How It Works</u>\n"
+            "1️⃣  Send a story name\n"
+            "2️⃣  Bot searches the database\n"
+            "3️⃣  Found → you get the link\n"
+            "4️⃣  Not found → use /request\n\n"
+            "<i>When the story is uploaded, you will be notified automatically.</i>\n\n"
+            "<u>✦ Commands</u>\n"
             "/start — Open the menu\n"
             "/request — Request a story\n"
             "/info — Story details\n"
-            "/saved — Your favorites\n"
+            "/saved — Your favourites\n"
             "/trending — Trending stories\n"
             "/subscribe — Get notifications\n\n"
             "<i>You can also just send a story name to search.</i>"
         )
     text = (
-        "<b>🆘 Help Center</b>\n"
-        "<i>All available commands and tips.</i>\n"
+        "<b>🚧 Help &amp; How It Works</b>\n"
+        "<i>Everything you need to use this bot.</i>\n"
         f"{_DIVIDER}\n\n"
         f"{body}"
     )
@@ -1409,8 +1395,12 @@ def _stories_page(page=0):
         # per‑story monospace so each can be copied individually
         lines.append(f"<code>{i} {title}</code>")
     total = len(story_index)
-    header = f"<b>Available stories on this channel ({total}) 👇🏻</b>\n"
-    text = header + "\n" + "\n".join(lines)
+    header = (
+        f"<b>✦ Story List  ·  {total} titles</b>\n"
+        f"<i>Page {page + 1}  ·  #{start + 1}–#{min(end, total)}</i>\n"
+        "━━━━━━━━━━━━━━━━\n"
+    )
+    text = header + "\n".join(lines)
     has_next = end < total
     has_prev = page > 0
     return text, has_prev, has_next, page
@@ -1432,33 +1422,24 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    caller_id = update.effective_user.id
     text, has_prev, has_next, page = _stories_page(0)
 
-    keyboard = []
+    total_pages = (len(story_index) + STORIES_PER_PAGE - 1) // STORIES_PER_PAGE
     nav = []
     if has_prev:
-        nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"stories_p|{page-1}"))
+        nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"stories_p|{page-1}|{caller_id}"))
+    nav.append(InlineKeyboardButton(f"1/{total_pages}", callback_data="noop"))
     if has_next:
-        nav.append(InlineKeyboardButton("Next ▶", callback_data=f"stories_p|{page+1}"))
-    if nav:
-        keyboard.append(nav)
+        nav.append(InlineKeyboardButton("Next ▶", callback_data=f"stories_p|{page+1}|{caller_id}"))
+    keyboard = [nav, [InlineKeyboardButton("✕ Delete", callback_data=f"story_delete|{caller_id}")]]
 
     cmd_msg = update.message
-
-    # Delete command message after 5 seconds
-    async def _delete_cmd():
-        await asyncio.sleep(5)
-        try:
-            await cmd_msg.delete()
-        except Exception:
-            pass
-    
-    asyncio.create_task(_delete_cmd())
 
     reply = await update.message.reply_text(
         text=text,
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
     await log(
@@ -1466,7 +1447,14 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"STORIES | user_id={cmd_msg.from_user.id} username={cmd_msg.from_user.username}"
     )
 
-    # Delete reply later (after 30 minutes)
+    # Delete /stories command message after 5s, reply after 30 min
+    async def _delete_cmd():
+        await asyncio.sleep(5)
+        try:
+            await cmd_msg.delete()
+        except Exception:
+            pass
+
     async def _delete_reply():
         await asyncio.sleep(1800)
         try:
@@ -1894,10 +1882,12 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         story_type = "Not specified"
 
     keyboard = [
-        [InlineKeyboardButton("OPEN STORY", url=result["link"])],
-        [InlineKeyboardButton("⭐ Save to Favorites", callback_data=f"fav|{story_key}")],
-        [InlineKeyboardButton("⚠ Link Not Working?", callback_data=f"lnw|{story_key}")],
-        [InlineKeyboardButton("Delete", callback_data="delete")]
+        [InlineKeyboardButton("✦ Open Story", url=result["link"])],
+        [
+            InlineKeyboardButton("★ Favourites", callback_data=f"fav|{story_key}"),
+            InlineKeyboardButton("⚠ Link Broken?", callback_data=f"lnw|{story_key}"),
+        ],
+        [InlineKeyboardButton("✕ Delete", callback_data="delete")]
     ]
 
     photo = result.get("photo") or result.get("image")
@@ -2076,10 +2066,10 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id_str not in favorites_db: favorites_db[user_id_str] = []
         if story_key in favorites_db[user_id_str]:
             favorites_db[user_id_str].remove(story_key)
-            await query.answer("Removed from favorites ❌")
+            await query.answer("☆ Removed from Favourites", show_alert=False)
         else:
             favorites_db[user_id_str].append(story_key)
-            await query.answer("Saved to favorites ⭐")
+            await query.answer("★ Added to Favourites!", show_alert=False)
         save_favorites(favorites_db)
         return
 
@@ -2189,26 +2179,46 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         return
 
-    if query.data.startswith("stories_p|"):
+    if query.data == "noop":
+        await query.answer()
+        return
+
+    if query.data.startswith("story_delete|"):
         try:
-            page = int(query.data.split("|")[1])
+            cid = int(query.data.split("|")[1])
+        except (IndexError, ValueError):
+            cid = 0
+        if user.id == cid or is_admin(user.id):
+            try:
+                await query.message.delete()
+            except Exception:
+                await query.answer("✧ Could not delete.", show_alert=True)
+        else:
+            await query.answer("⛔ Only the user who opened /stories (or an admin) can delete this.", show_alert=True)
+        return
+
+    if query.data.startswith("stories_p|"):
+        parts = query.data.split("|")
+        try:
+            page = int(parts[1])
+            caller_id = int(parts[2]) if len(parts) > 2 else 0
         except (IndexError, ValueError):
             await query.answer()
             return
         text, has_prev, has_next, _ = _stories_page(page)
-        keyboard = []
+        total_pages = (len(story_index) + STORIES_PER_PAGE - 1) // STORIES_PER_PAGE
         nav = []
         if has_prev:
-            nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"stories_p|{page-1}"))
+            nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"stories_p|{page-1}|{caller_id}"))
+        nav.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"))
         if has_next:
-            nav.append(InlineKeyboardButton("Next ▶", callback_data=f"stories_p|{page+1}"))
-        if nav:
-            keyboard.append(nav)
+            nav.append(InlineKeyboardButton("Next ▶", callback_data=f"stories_p|{page+1}|{caller_id}"))
+        rows = [nav, [InlineKeyboardButton("✕ Delete", callback_data=f"story_delete|{caller_id}")]]
         try:
             await query.message.edit_text(
                 text=text,
                 parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(keyboard) if keyboard else None
+                reply_markup=InlineKeyboardMarkup(rows)
             )
         except Exception:
             pass
@@ -2249,17 +2259,8 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if lang == "hi":
                 warn_text = "<b>केवल वही यूज़र लिंक रिपोर्ट कर सकता है, जिसने स्टोरी सर्च की हो।</b>"
             else:
-                warn_text = "<b>Only the original requester can report this link.</b>"
-            warn = await query.message.reply_text(warn_text, parse_mode="HTML")
-
-            async def _del_warn():
-                await asyncio.sleep(15)
-                try:
-                    await warn.delete()
-                except Exception:
-                    pass
-
-            asyncio.create_task(_del_warn())
+                warn_text = "⛔ Only the user who searched for this story can report the link."
+            await query.answer(warn_text, show_alert=True)
             return
 
         story = get_story(story_key)
