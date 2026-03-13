@@ -974,18 +974,23 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             eta_text = f"`~{eta_s//60:02d}:{eta_s%60:02d}`" if eta_s else "`--:--`"
 
             # premium-ish live UI: show last story and counts
-            safe_story = (last_story_name[:60] + "…") if len(last_story_name) > 60 else last_story_name
-            await msg.edit_text(
-                text=(
-                    "🔎 *Riya Database Scan*\n\n"
-                    f"*Status:* _Scanning & adding stories..._\n\n"
-                    f"*Last Added:* _{safe_story}_\n"
-                    f"*Stories Found:* *{last_found}*\n"
-                    f"*Estimated Remaining:* {eta_text}\n\n"
-                    "_Please wait until the database is fully updated._"
-                ),
-                parse_mode="Markdown",
-            )
+            # Strip markdown characters that crash parse_mode="Markdown"
+            safe_story = re.sub(r'[*_`\[\]()~]', '', last_story_name)
+            safe_story = (safe_story[:60] + "…") if len(safe_story) > 60 else safe_story
+            try:
+                await msg.edit_text(
+                    text=(
+                        "🔎 *Riya Database Scan*\n\n"
+                        f"*Status:* _Scanning & adding stories..._\n\n"
+                        f"*Last Added:* _{safe_story}_\n"
+                        f"*Stories Found:* *{last_found}*\n"
+                        f"*Estimated Remaining:* {eta_text}\n\n"
+                        "_Please wait until the database is fully updated._"
+                    ),
+                    parse_mode="Markdown",
+                )
+            except Exception as parse_err:
+                logger.warning(f"Failed to update scan UI: {parse_err}")
 
         # build source channel list: primary + extra from config
         sources = []
@@ -3007,7 +3012,21 @@ def start_bot():
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CommandHandler("config", config_cmd))
 
-    # admin-only utility commands
+    # Premium feature commands
+    app.add_handler(CommandHandler("trending", trending_cmd))
+    app.add_handler(CommandHandler("saved", saved_cmd))
+    app.add_handler(CommandHandler("browse", browse_cmd))
+    app.add_handler(CommandHandler("new", new_cmd))
+    app.add_handler(CommandHandler("subscribe", subscribe_cmd))
+    
+    # User / requests commands
+    app.add_handler(CommandHandler("myrequests", myrequests_cmd))
+
+    # Admin-only utility commands
+    app.add_handler(CommandHandler("settimer", settimer_cmd))
+    app.add_handler(CommandHandler("requests", requests_cmd))
+    app.add_handler(CommandHandler("userinfo", userinfo_cmd))
+    app.add_handler(CommandHandler("rescan", rescan_cmd))
     app.add_handler(CommandHandler("announce", announce_cmd))
     app.add_handler(CommandHandler("copyright_mute", copyright_mute_cmd))
     app.add_handler(CommandHandler("setlang", setlang_cmd))
