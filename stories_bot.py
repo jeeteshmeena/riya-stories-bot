@@ -506,71 +506,318 @@ async def link_check_loop(bot=None):
 # Welcome message
 # -----------------------
 
+# ═══════════════════════════════════════════════
+#  INLINE MENU SYSTEM
+#  All builder functions return (text, markup).
+#  Navigation always uses query.message.edit_text
+#  so the same message is always edited in-place.
+# ═══════════════════════════════════════════════
+
+_DIVIDER = "━━━━━━━━━━━━━━━━"
+
+
+def _nav_row(caller_id: int, back: str | None = None) -> list:
+    """Standard bottom navigation row: [Back] [✕ Close]"""
+    row = []
+    if back:
+        row.append(InlineKeyboardButton("⬅ Back", callback_data=f"menu|{back}|{caller_id}"))
+    row.append(InlineKeyboardButton("✕ Close", callback_data=f"menu|close|{caller_id}"))
+    return row
+
+
+def _menu_main(caller_id: int, lang: str = "en") -> tuple:
+    """Main / Home menu."""
+    if lang == "hi":
+        text = (
+            "<b>📚 Riya — Main Menu</b>\n"
+            "<i>स्टोरी खोजें, एक्सप्लोर करें, और ज़्यादा।</i>\n"
+            f"{_DIVIDER}"
+        )
+    else:
+        text = (
+            "<b>📚 Riya — Main Menu</b>\n"
+            "<i>Search stories, explore, and more.</i>\n"
+            f"{_DIVIDER}"
+        )
+    markup = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🔥 Trending",    callback_data=f"menu|trending|{caller_id}"),
+            InlineKeyboardButton("🆕 New",          callback_data=f"menu|new|{caller_id}"),
+        ],
+        [
+            InlineKeyboardButton("⭐ Saved",        callback_data=f"menu|saved|{caller_id}"),
+            InlineKeyboardButton("📑 Browse",       callback_data=f"menu|browse|{caller_id}"),
+        ],
+        [
+            InlineKeyboardButton("❓ How It Works", callback_data=f"menu|how|{caller_id}"),
+            InlineKeyboardButton("ℹ️ About",        callback_data=f"menu|about|{caller_id}"),
+        ],
+        [
+            InlineKeyboardButton("🌐 Language",     callback_data=f"menu|lang|{caller_id}"),
+            InlineKeyboardButton("🆘 Help",         callback_data=f"menu|help|{caller_id}"),
+        ],
+        [InlineKeyboardButton("✕ Close", callback_data=f"menu|close|{caller_id}")],
+    ])
+    return text, markup
+
+
+def _menu_trending(caller_id: int) -> tuple:
+    trending = stats_db.get("trending", {})
+    sorted_trend = sorted(trending.items(), key=lambda x: x[1], reverse=True)[:10]
+    if sorted_trend:
+        lines = "\n".join(
+            f"<b>{i}.</b> {k}  <i>({v})</i>"
+            for i, (k, v) in enumerate(sorted_trend, 1)
+        )
+        body = lines
+    else:
+        body = "<i>No trending stories yet. Start searching!</i>"
+    text = (
+        "<b>🔥 Trending Stories</b>\n"
+        "<i>Top searched stories right now.</i>\n"
+        f"{_DIVIDER}\n\n"
+        f"{body}"
+    )
+    markup = InlineKeyboardMarkup([_nav_row(caller_id, back="home")])
+    return text, markup
+
+
+def _menu_new(caller_id: int) -> tuple:
+    db = load_db()
+    stories = list(db.values())[-10:]
+    if stories:
+        lines = []
+        for s in stories:
+            name = clean_story(s.get("name") or s.get("text") or "Story")
+            link = s.get("link", "")
+            if link:
+                lines.append(f'• <a href="{link}">{name}</a>')
+            else:
+                lines.append(f"• {name}")
+        body = "\n".join(lines)
+    else:
+        body = "<i>No stories in the database yet.</i>"
+    text = (
+        "<b>🆕 Recently Added</b>\n"
+        "<i>The latest stories added to the database.</i>\n"
+        f"{_DIVIDER}\n\n"
+        f"{body}"
+    )
+    markup = InlineKeyboardMarkup([_nav_row(caller_id, back="home")])
+    return text, markup
+
+
+def _menu_saved(caller_id: int) -> tuple:
+    user_id_str = str(caller_id)
+    favs = favorites_db.get(user_id_str, [])
+    if favs:
+        lines = []
+        for story_key in favs[:15]:
+            res = get_story(story_key)
+            name = clean_story(story_key)
+            if res and res.get("link"):
+                lines.append(f'• <a href="{res["link"]}">{name}</a>')
+            else:
+                lines.append(f"• {name} <i>(link unavailable)</i>")
+        body = "\n".join(lines)
+        if len(favs) > 15:
+            body += f"\n<i>…and {len(favs) - 15} more.</i>"
+    else:
+        body = "<i>No saved stories yet.\nTap ⭐ on any search result to save it.</i>"
+    text = (
+        "<b>⭐ My Saved Stories</b>\n"
+        "<i>Your personal favorites list.</i>\n"
+        f"{_DIVIDER}\n\n"
+        f"{body}"
+    )
+    markup = InlineKeyboardMarkup([_nav_row(caller_id, back="home")])
+    return text, markup
+
+
+def _menu_browse(caller_id: int) -> tuple:
+    db = load_db()
+    types = sorted({s.get("story_type") for s in db.values() if s.get("story_type")})[:12]
+    if types:
+        # build 2-per-row grid
+        rows = []
+        for i in range(0, len(types), 2):
+            row = []
+            for t in types[i:i+2]:
+                label = t.capitalize()[:14]
+                row.append(InlineKeyboardButton(
+                    label,
+                    switch_inline_query_current_chat=t
+                ))
+            rows.append(row)
+        rows.append(_nav_row(caller_id, back="home"))
+        body = "<i>Tap a category to search inline.</i>"
+    else:
+        rows = [_nav_row(caller_id, back="home")]
+        body = "<i>No categories available yet. Run /scan first.</i>"
+    text = (
+        "<b>📑 Browse by Category</b>\n"
+        "<i>Explore stories by type.</i>\n"
+        f"{_DIVIDER}\n\n"
+        f"{body}"
+    )
+    markup = InlineKeyboardMarkup(rows)
+    return text, markup
+
+
+def _menu_how(caller_id: int, lang: str = "en") -> tuple:
+    if lang == "hi":
+        body = (
+            "1️⃣  <b>स्टोरी का नाम भेजें</b>\n"
+            "2️⃣  <b>बॉट डेटाबेस में खोजता है</b>\n"
+            "3️⃣  <b>मिली → लिंक मिलता है</b>\n"
+            "4️⃣  <b>नहीं मिली → /request करें</b>\n\n"
+            "<i>जब स्टोरी आएगी, आपको नोटिफिकेशन मिलेगा।</i>"
+        )
+    else:
+        body = (
+            "1️⃣  <b>Send a story name</b>\n"
+            "2️⃣  <b>Bot searches the database</b>\n"
+            "3️⃣  <b>Found → you get the link</b>\n"
+            "4️⃣  <b>Not found → use /request</b>\n\n"
+            "<i>When the story is uploaded, you will be notified automatically.</i>"
+        )
+    text = (
+        "<b>⚙️ How It Works</b>\n"
+        "<i>Simple steps to find your story.</i>\n"
+        f"{_DIVIDER}\n\n"
+        f"{body}"
+    )
+    markup = InlineKeyboardMarkup([_nav_row(caller_id, back="home")])
+    return text, markup
+
+
+def _menu_about(caller_id: int, lang: str = "en") -> tuple:
+    if lang == "hi":
+        body = (
+            "<blockquote><i>Riya एक स्मार्ट Telegram स्टोरी खोज बॉट है।</i></blockquote>\n\n"
+            "<u>✨ Features</u>\n"
+            "• AI फ़जी सर्च\n"
+            "• इनलाइन मेनू\n"
+            "• JSON डेटाबेस\n"
+            "• एडमिन /scan\n"
+            "• फेवरेट सिस्टम\n\n"
+            "<b>👨‍💻 Developer:</b> @MeJeetX\n"
+            "<b>⚙ Version:</b> Riya v10"
+        )
+    else:
+        body = (
+            "<blockquote><i>Riya is an intelligent Telegram story finder bot.</i></blockquote>\n\n"
+            "<u>✨ Features</u>\n"
+            "• AI fuzzy search\n"
+            "• Inline menu navigation\n"
+            "• JSON database\n"
+            "• Admin /scan command\n"
+            "• Favorites system\n\n"
+            "<b>👨‍💻 Developer:</b> @MeJeetX\n"
+            "<b>⚙ Version:</b> Riya v10"
+        )
+    text = (
+        "<b>📚 About Riya Bot</b>\n"
+        "<i>Everything you need to know.</i>\n"
+        f"{_DIVIDER}\n\n"
+        f"{body}"
+    )
+    markup = InlineKeyboardMarkup([_nav_row(caller_id, back="home")])
+    return text, markup
+
+
+def _menu_help(caller_id: int, lang: str = "en") -> tuple:
+    if lang == "hi":
+        body = (
+            "<u>उपयोगकर्ता Commands</u>\n"
+            "/start — बॉट शुरू करें\n"
+            "/request — स्टोरी रिक्वेस्ट\n"
+            "/info — स्टोरी डिटेल्स\n"
+            "/saved — फेवरेट देखें\n"
+            "/trending — ट्रेंडिंग\n"
+            "/subscribe — नोटिफिकेशन\n\n"
+            "<i>स्टोरी का नाम भेजकर सीधे खोजें।</i>"
+        )
+    else:
+        body = (
+            "<u>User Commands</u>\n"
+            "/start — Open the menu\n"
+            "/request — Request a story\n"
+            "/info — Story details\n"
+            "/saved — Your favorites\n"
+            "/trending — Trending stories\n"
+            "/subscribe — Get notifications\n\n"
+            "<i>You can also just send a story name to search.</i>"
+        )
+    text = (
+        "<b>🆘 Help Center</b>\n"
+        "<i>All available commands and tips.</i>\n"
+        f"{_DIVIDER}\n\n"
+        f"{body}"
+    )
+    markup = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🌐 Language",  callback_data=f"menu|lang|{caller_id}"),
+            InlineKeyboardButton("🔥 Trending",  callback_data=f"menu|trending|{caller_id}"),
+        ],
+        _nav_row(caller_id, back="home"),
+    ])
+    return text, markup
+
+
+def _menu_lang(caller_id: int) -> tuple:
+    text = (
+        "<b>🌐 Language / भाषा</b>\n"
+        "<i>Select your preferred language for this chat.</i>\n"
+        f"{_DIVIDER}\n\n"
+        "Choose a language below:"
+    )
+    markup = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🇺🇸 English", callback_data="lang|en"),
+            InlineKeyboardButton("🇮🇳 हिन्दी",  callback_data="lang|hi"),
+        ],
+        _nav_row(caller_id, back="home"),
+    ])
+    return text, markup
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await _enforce_cooldown(update, context):
         return
 
     u = update.effective_user
-    user = u.mention_html()
     chat = update.effective_chat
     lang = get_chat_lang(chat.id)
+    caller_id = u.id
 
+    # Welcome note (not part of the menu panel, just a greeting)
     if lang == "hi":
-        text = f"""
-<b>♡ नमस्ते, स्वागत है</b>, {user}
-
-<blockquote>@StoriesFinderBot</blockquote>
-
-Commands: / टाइप करें और मेनू से विकल्प चुनें – खोजें, रिक्वेस्ट करें या कहानियाँ एक्सप्लोर करें।
-
-<blockquote><i>Disclaimer 📌
-हम केवल Telegram फ़ाइलों को इंडेक्स करते हैं, हम कोई कंटेंट होस्ट नहीं करते।</i></blockquote>
-
-<u>अपनी कहानी का नाम भेजकर शुरू करें!</u>
-
-<b>By</b> @MeJeetX
-"""
+        welcome = (
+            f"<b>♡ नमस्ते, स्वागत है</b>, {u.mention_html()}\n\n"
+            "<blockquote>@StoriesFinderBot</blockquote>\n\n"
+            "<blockquote><i>Disclaimer 📌\n"
+            "हम केवल Telegram फ़ाइलों को इंडेक्स करते हैं।</i></blockquote>\n\n"
+            "<u>स्टोरी का नाम भेजकर खोजें!</u>\n\n"
+            "<b>By</b> @MeJeetX"
+        )
     else:
-        text = f"""
-<b>♡ Hey Welcome</b>, {user}
+        welcome = (
+            f"<b>♡ Hey, Welcome</b>, {u.mention_html()}\n\n"
+            "<blockquote>@StoriesFinderBot</blockquote>\n\n"
+            "<blockquote><i>Disclaimer 📌\n"
+            "We only index Telegram files. We do not host content.</i></blockquote>\n\n"
+            "<u>Send a story name to begin searching!</u>\n\n"
+            "<b>By</b> @MeJeetX"
+        )
 
-<blockquote>@StoriesFinderBot</blockquote>
+    await update.message.reply_text(text=welcome, parse_mode="HTML")
 
-Commands: Type / to open the menu and use the options to search, request, or explore stories.
+    # Send the inline menu panel
+    text, markup = _menu_main(caller_id, lang)
+    await update.message.reply_text(text=text, parse_mode="HTML", reply_markup=markup)
 
-<blockquote><i>Disclaimer 📌
-We only index Telegram files. We do not host content.</i></blockquote>
-
-<u>Send your query to begin!</u>
-
-<b>By</b> @MeJeetX
-"""
-
-    keyboard = [
-        [
-            InlineKeyboardButton("📚 Browse Stories", callback_data="cmd|browse"),
-            InlineKeyboardButton("🔍 How it works", callback_data="cmd|how")
-        ],
-        [
-            InlineKeyboardButton("⭐ My Favorites", callback_data="cmd|saved"),
-            InlineKeyboardButton("🆕 New Additions", callback_data="cmd|new")
-        ],
-        [
-            InlineKeyboardButton("ℹ️ About", callback_data="cmd|about"),
-            InlineKeyboardButton("🆘 Help", callback_data="cmd|help")
-        ]
-    ]
-
-    await update.message.reply_text(
-        text=text,
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-    await log(
-        context,
-        f"START | user_id={u.id} username={u.username}"
-    )
+    await log(context, f"START | user_id={u.id} username={u.username}")
 
 
 async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1727,25 +1974,101 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _handle_config_callback(query, context)
         return
 
-    if query.data.startswith("cmd|"):
-        # simulate command executions from inline keyboards
-        cmd = query.data.split("|")[1]
-        dummy_update = Update(update_id=update.update_id, message=query.message, callback_query=query)
-        # Note: query.message.from_user is usually the bot, but query.from_user is the correct user
-        dummy_update._effective_user = query.from_user
-        if cmd == "start": await start(dummy_update, context)
-        elif cmd == "help": await help_cmd(dummy_update, context)
-        elif cmd == "about": await about(dummy_update, context)
-        elif cmd == "how": await how(dummy_update, context)
-        elif cmd == "trending": await trending_cmd(dummy_update, context)
-        elif cmd == "saved": await saved_cmd(dummy_update, context)
-        elif cmd == "browse": await browse_cmd(dummy_update, context)
-        elif cmd == "new": await new_cmd(dummy_update, context)
-        elif cmd == "lang_menu":
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("🇺🇸 English", callback_data="lang|en"), InlineKeyboardButton("🇮🇳 हिन्दी", callback_data="lang|hi")]])
-            await query.message.edit_text("Select language / अपनी भाषा चुनें:", reply_markup=kb)
+    # ── NEW: menu|<section>|<caller_id>  ──────────────────────────────────────
+    # Every section edits the SAME message. No new messages are ever sent.
+    if query.data.startswith("menu|"):
+        parts = query.data.split("|")
+        # parts: ["menu", section, caller_id]
+        section = parts[1] if len(parts) > 1 else "home"
+        try:
+            caller_id = int(parts[2]) if len(parts) > 2 else 0
+        except ValueError:
+            caller_id = 0
+
+        lang = get_chat_lang(query.message.chat.id) if query.message else "en"
+
+        # Close / delete the menu
+        if section == "close":
+            if user.id == caller_id or is_admin(user.id):
+                try:
+                    await query.message.delete()
+                except Exception:
+                    await query.answer("Could not delete.", show_alert=True)
+            else:
+                await query.answer("⛔ Only the user who opened this menu (or an admin) can close it.", show_alert=True)
+            return
+
+        # Build the right section
+        if section in ("home", "start"):
+            text, markup = _menu_main(caller_id, lang)
+        elif section == "trending":
+            text, markup = _menu_trending(caller_id)
+        elif section == "new":
+            text, markup = _menu_new(caller_id)
+        elif section == "saved":
+            text, markup = _menu_saved(caller_id)
+        elif section == "browse":
+            text, markup = _menu_browse(caller_id)
+        elif section == "how":
+            text, markup = _menu_how(caller_id, lang)
+        elif section == "about":
+            text, markup = _menu_about(caller_id, lang)
+        elif section == "help":
+            text, markup = _menu_help(caller_id, lang)
+        elif section == "lang":
+            text, markup = _menu_lang(caller_id)
+        else:
+            await query.answer("Unknown section.", show_alert=True)
+            return
+
+        try:
+            await query.message.edit_text(text=text, parse_mode="HTML", reply_markup=markup)
+        except Exception:
+            pass  # already same content, ignore "message not modified"
         await query.answer()
         return
+
+    # ── LEGACY: cmd|<section>  ──────────────────────────────────────────────
+    # Kept for any buttons created before the new menu system. Routes to menu|.
+    if query.data.startswith("cmd|"):
+        cmd = query.data.split("|")[1]
+        caller_id = user.id
+        lang = get_chat_lang(query.message.chat.id) if query.message else "en"
+        section_map = {
+            "start": "home", "help": "help", "about": "about",
+            "how": "how", "trending": "trending", "saved": "saved",
+            "browse": "browse", "new": "new", "lang_menu": "lang",
+        }
+        section = section_map.get(cmd)
+        if section:
+            if section == "home":
+                text, markup = _menu_main(caller_id, lang)
+            elif section == "trending":
+                text, markup = _menu_trending(caller_id)
+            elif section == "new":
+                text, markup = _menu_new(caller_id)
+            elif section == "saved":
+                text, markup = _menu_saved(caller_id)
+            elif section == "browse":
+                text, markup = _menu_browse(caller_id)
+            elif section == "how":
+                text, markup = _menu_how(caller_id, lang)
+            elif section == "about":
+                text, markup = _menu_about(caller_id, lang)
+            elif section == "help":
+                text, markup = _menu_help(caller_id, lang)
+            elif section == "lang":
+                text, markup = _menu_lang(caller_id)
+            else:
+                await query.answer()
+                return
+            try:
+                await query.message.edit_text(text=text, parse_mode="HTML", reply_markup=markup)
+            except Exception:
+                pass
+        await query.answer()
+        return
+
 
     if query.data.startswith("fav|"):
         story_key = query.data.split("|")[1]
@@ -3111,6 +3434,17 @@ async def rescan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         IS_SCANNING = False
 
 
+
+async def menu_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Open the inline menu panel directly (no welcome text)."""
+    if await _enforce_cooldown(update, context):
+        return
+    u = update.effective_user
+    lang = get_chat_lang(update.effective_chat.id)
+    text, markup = _menu_main(u.id, lang)
+    await update.message.reply_text(text=text, parse_mode="HTML", reply_markup=markup)
+
+
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.chat_data and context.chat_data.get("config_state"):
         return await handle_config_input(update, context)
@@ -3131,6 +3465,7 @@ def start_bot():
     app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("menu", menu_cmd))
     app.add_handler(CommandHandler("scan", scan))
     app.add_handler(CommandHandler("stories", stories))
     app.add_handler(CommandHandler("request", request_story))
