@@ -1125,18 +1125,24 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"STORIES | user_id={cmd_msg.from_user.id} username={cmd_msg.from_user.username}"
     )
 
-    async def _delete_later():
-        await asyncio.sleep(1800)
-        try:
-            await reply.delete()
-        except Exception:
-            pass
+    # Delete command message quickly (after 5 seconds)
+    async def _delete_cmd():
+        await asyncio.sleep(5)
         try:
             await cmd_msg.delete()
         except Exception:
             pass
 
-    asyncio.create_task(_delete_later())
+    # Delete reply later (after 30 minutes)
+    async def _delete_reply():
+        await asyncio.sleep(1800)
+        try:
+            await reply.delete()
+        except Exception:
+            pass
+
+    asyncio.create_task(_delete_cmd())
+    asyncio.create_task(_delete_reply())
 
 
 # -----------------------
@@ -1548,7 +1554,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         msg = await context.bot.send_video(
             chat_id=chat_id,
-            video="https://files.catbox.moe/lr91ja.mp4",
+            video="https://files.catbox.moe/rq7km7.mp4",
             caption=caption,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard)
@@ -1652,7 +1658,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 sent = await context.bot.send_video(
                     chat_id=query.message.chat.id,
-                    video="https://files.catbox.moe/lr91ja.mp4",
+                    video="https://files.catbox.moe/rq7km7.mp4",
                     caption=caption,
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup(keyboard)
@@ -1768,7 +1774,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"<i>{story_name}</i>\n\n"
                 "If this story link is really broken, please confirm below."
             )
-            confirm_label = "✅ Confirm Report"
+            confirm_label = "✅ Confirm"
             cancel_label = "❌ Cancel"
 
         reporter_id = owner or user.id
@@ -1852,6 +1858,48 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             asyncio.create_task(_del_warn())
             return
 
+        # Check if user has already reported this story (anti-spam)
+        existing_flag = link_flags.get(story_key)
+        if existing_flag and existing_flag.get("broken"):
+            # Story already confirmed as broken
+            lang = get_chat_lang(chat_id)
+            if lang == "hi":
+                txt = f"<b>आप पहले ही इस स्टोरी की रिपोर्ट कर चुके हैं।</b>\n\n<i>यह स्टोरी पहले से ही टूटी हुई के रूप में मार्क कर दी गई है। कृपया समाधान का इंतजार करें।</i>"
+            else:
+                txt = f"<b>You have already submitted a report for this story.</b>\n\n<i>This story is already marked as broken. Please wait while the issue is being resolved.</i>"
+            warn = await query.message.reply_text(txt, parse_mode="HTML")
+            
+            async def _del_warn():
+                await asyncio.sleep(15)
+                try:
+                    await warn.delete()
+                except Exception:
+                    pass
+            
+            asyncio.create_task(_del_warn())
+            return
+
+        # Check if user has already voted in this specific vote
+        vote_id = f"{chat_id}:{story_key}"
+        existing_vote = active_link_votes.get(vote_id)
+        if existing_vote and user_id in existing_vote.get("voters", {}):
+            lang = get_chat_lang(chat_id)
+            if lang == "hi":
+                txt = f"<b>आप पहले ही इस वोट में भाग ले चुके हैं।</b>\n\n<i>आपका वोट पहले से दर्ज है। कृपया दोहराएं नहीं।</i>"
+            else:
+                txt = f"<b>You have already participated in this vote.</b>\n\n<i>Your vote is already registered. Please do not repeat.</i>"
+            warn = await query.message.reply_text(txt, parse_mode="HTML")
+            
+            async def _del_warn():
+                await asyncio.sleep(15)
+                try:
+                    await warn.delete()
+                except Exception:
+                    pass
+            
+            asyncio.create_task(_del_warn())
+            return
+
         # delete confirmation panel immediately after confirm
         try:
             await query.message.delete()
@@ -1889,7 +1937,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             title = "<b>⚠ Link verification vote</b>"
             body = f"<i>{story_name}</i>\n\n"
             votes_line = f"Votes: {current} / {required}"
-            broken_label = "❌ Link Broken"
+            broken_label = "🔗 Broken"
             ok_label = "✅ Link Working"
 
         text = f"{title}\n\n{body}{votes_line}"
@@ -1967,7 +2015,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             title = "<b>⚠ Link verification vote</b>"
             body = f"<i>{story_name}</i>\n\n"
             votes_line = f"Votes: {current} / {required}"
-            broken_label = "❌ Link Broken"
+            broken_label = "🔗 Broken"
             ok_label = "✅ Link Working"
 
         text = f"{title}\n\n{body}{votes_line}"
@@ -2052,6 +2100,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # clean up vote and unpin
             try:
                 await context.bot.unpin_chat_message(chat_id=chat_id, message_id=vote["message_id"])
+                await context.bot.delete_message(chat_id=chat_id, message_id=vote["message_id"])
             except Exception:
                 pass
             active_link_votes.pop(vote_id, None)
@@ -2241,10 +2290,7 @@ async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "<i>नीचे दिए गए सेक्शन्स से बॉट की सेटिंग्स मैनेज करें:</i>\n"
         )
         buttons = [
-            [InlineKeyboardButton("📜 Start Message", callback_data="cfg|start")],
-            [InlineKeyboardButton("📡 Force Subscription", callback_data="cfg|fs")],
-            [InlineKeyboardButton("🛡 Moderators", callback_data="cfg|mods")],
-            [InlineKeyboardButton("📚 Source Channels & Formats", callback_data="cfg|sources")],
+            [InlineKeyboardButton(" Source Channels & Formats", callback_data="cfg|sources")],
             [InlineKeyboardButton("⏱ Auto Delete Timers", callback_data="cfg|timers")],
             [InlineKeyboardButton("🌐 Language", callback_data="cfg|lang")],
         ]
@@ -2254,9 +2300,6 @@ async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "<i>Use the sections below to manage bot settings:</i>\n"
         )
         buttons = [
-            [InlineKeyboardButton("📜 Start Message", callback_data="cfg|start")],
-            [InlineKeyboardButton("📡 Force Subscription", callback_data="cfg|fs")],
-            [InlineKeyboardButton("🛡 Moderators", callback_data="cfg|mods")],
             [InlineKeyboardButton("📚 Source Channels & Formats", callback_data="cfg|sources")],
             [InlineKeyboardButton("⏱ Auto Delete Timers", callback_data="cfg|timers")],
             [InlineKeyboardButton("🌐 Language", callback_data="cfg|lang")],
@@ -2305,46 +2348,6 @@ async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(text=text, parse_mode="HTML", reply_markup=kb)
         return
 
-    # For now other sections just show info + related commands
-    if section == "start":
-        start_text = bot_config.get("start_text") or "(default hardcoded message)"
-        if lang == "hi":
-            text = (
-                "<b>📜 Start Message</b>\n\n"
-                f"<i>Current:</i>\n{start_text}\n\n"
-                "<code>/setstart &lt;text&gt;</code> से नया start मैसेज सेट करें।"
-            )
-        else:
-            text = (
-                "<b>📜 Start Message</b>\n\n"
-                f"<i>Current:</i>\n{start_text}\n\n"
-                "<code>/setstart &lt;text&gt;</code> to set a new start message."
-            )
-        await query.message.edit_text(text=text, parse_mode="HTML")
-        return
-
-    if section == "fs":
-        channels = bot_config.get("force_sub_channels", [])
-        if lang == "hi":
-            body = "<i>फोर्स सब्सक्रिप्शन चैनल्स:</i>\n" + ("\n".join(channels) if channels else "(कोई नहीं)")
-            footer = "\n\n<code>/addfs &lt;username_or_id&gt;</code>\n<code>/removefs &lt;username_or_id&gt;</code>"
-        else:
-            body = "<i>Force subscription channels:</i>\n" + ("\n".join(channels) if channels else "(none)")
-            footer = "\n\n<code>/addfs &lt;username_or_id&gt;</code>\n<code>/removefs &lt;username_or_id&gt;</code>"
-        await query.message.edit_text("<b>📡 Force Subscription</b>\n\n" + body + footer, parse_mode="HTML")
-        return
-
-    if section == "mods":
-        mods = bot_config.get("moderators", [])
-        if lang == "hi":
-            body = "<i>Moderators (user IDs):</i>\n" + ("\n".join(str(m) for m in mods) if mods else "(कोई नहीं)")
-            footer = "\n\n<code>/addmod &lt;user_id&gt;</code>\n<code>/removemod &lt;user_id&gt;</code>"
-        else:
-            body = "<i>Moderators (user IDs):</i>\n" + ("\n".join(str(m) for m in mods) if mods else "(none)")
-            footer = "\n\n<code>/addmod &lt;user_id&gt;</code>\n<code>/removemod &lt;user_id&gt;</code>"
-        await query.message.edit_text("<b>🛡 Moderators</b>\n\n" + body + footer, parse_mode="HTML")
-        return
-
     if section == "timers":
         timers = bot_config.get("auto_delete", {})
         if lang == "hi":
@@ -2391,6 +2394,8 @@ def start_bot():
     app.add_handler(CommandHandler("announce", announce_cmd))
     app.add_handler(CommandHandler("copyright_mute", copyright_mute_cmd))
     app.add_handler(CommandHandler("setlang", setlang_cmd))
+    app.add_handler(CommandHandler("addsource", addsource_cmd))
+    app.add_handler(CommandHandler("removesource", removesource_cmd))
 
     # react when bot is added/removed
     app.add_handler(ChatMemberHandler(chat_member_update))
@@ -2408,6 +2413,74 @@ def start_bot():
 
     # drop_pending_updates avoids processing stale updates that may cause issues after restart
     app.run_polling(drop_pending_updates=True)
+
+
+async def addsource_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: add a source channel."""
+    if not is_admin(update.effective_user.id):
+        lang = get_chat_lang(update.effective_chat.id)
+        await update.message.reply_text("⛔ Admin only." if lang != "hi" else "⛔ केवल एडमिन।")
+        return
+    
+    if not context.args:
+        lang = get_chat_lang(update.effective_chat.id)
+        await update.message.reply_text("Usage: /addsource <channel_id>" if lang != "hi" else "उपयोग: /addsource <channel_id>")
+        return
+    
+    try:
+        channel_id = int(context.args[0])
+    except ValueError:
+        lang = get_chat_lang(update.effective_chat.id)
+        await update.message.reply_text("Invalid channel ID." if lang != "hi" else "अमान्य चैनल ID।")
+        return
+    
+    global bot_config
+    sources = bot_config.get("sources", [])
+    if channel_id in sources:
+        lang = get_chat_lang(update.effective_chat.id)
+        await update.message.reply_text("Channel already in sources." if lang != "hi" else "चैनल पहले से सोर्स में है।")
+        return
+    
+    sources.append(channel_id)
+    bot_config["sources"] = sources
+    save_config(bot_config)
+    
+    lang = get_chat_lang(update.effective_chat.id)
+    await update.message.reply_text(f"✅ Source channel added: {channel_id}" if lang != "hi" else f"✅ सोर्स चैनल जोड़ा गया: {channel_id}")
+
+
+async def removesource_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: remove a source channel."""
+    if not is_admin(update.effective_user.id):
+        lang = get_chat_lang(update.effective_chat.id)
+        await update.message.reply_text("⛔ Admin only." if lang != "hi" else "⛔ केवल एडमिन।")
+        return
+    
+    if not context.args:
+        lang = get_chat_lang(update.effective_chat.id)
+        await update.message.reply_text("Usage: /removesource <channel_id>" if lang != "hi" else "उपयोग: /removesource <channel_id>")
+        return
+    
+    try:
+        channel_id = int(context.args[0])
+    except ValueError:
+        lang = get_chat_lang(update.effective_chat.id)
+        await update.message.reply_text("Invalid channel ID." if lang != "hi" else "अमान्य चैनल ID।")
+        return
+    
+    global bot_config
+    sources = bot_config.get("sources", [])
+    if channel_id not in sources:
+        lang = get_chat_lang(update.effective_chat.id)
+        await update.message.reply_text("Channel not found in sources." if lang != "hi" else "चैनल सोर्स में नहीं मिला।")
+        return
+    
+    sources.remove(channel_id)
+    bot_config["sources"] = sources
+    save_config(bot_config)
+    
+    lang = get_chat_lang(update.effective_chat.id)
+    await update.message.reply_text(f"✅ Source channel removed: {channel_id}" if lang != "hi" else f"✅ सोर्स चैनल हटाया गया: {channel_id}")
 
 
 # -----------------------
