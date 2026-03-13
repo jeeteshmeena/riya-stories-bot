@@ -2347,20 +2347,25 @@ async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     lang = get_chat_lang(update.effective_chat.id)
+    sources = bot_config.get("sources", [])
+    formats = bot_config.get("formats", {})
+    
     if lang == "hi":
         text = (
             "<b>⚙ Riya Config Panel</b>\n\n"
-            "<i>नीचे दिए गए सेक्शन्स से बॉट की सेटिंग्स मैनेज करें:</i>\n"
+            f"<i>सोर्स चैनल: {len(sources)} | कस्टम फॉर्मेट: {len(formats)}</i>\n"
+            "<i>नीचे दिए गए सेक्शन्स से बॉट की सेटिंग्स मैनेज करें:</i>"
         )
         buttons = [
-            [InlineKeyboardButton(" Source Channels & Formats", callback_data="cfg|sources")],
+            [InlineKeyboardButton("📚 Source Channels & Formats", callback_data="cfg|sources")],
             [InlineKeyboardButton("⏱ Auto Delete Timers", callback_data="cfg|timers")],
             [InlineKeyboardButton("🌐 Language", callback_data="cfg|lang")],
         ]
     else:
         text = (
             "<b>⚙ Riya Config Panel</b>\n\n"
-            "<i>Use the sections below to manage bot settings:</i>\n"
+            f"<i>Source Channels: {len(sources)} | Custom Formats: {len(formats)}</i>\n"
+            "<i>Use the sections below to manage bot settings:</i>"
         )
         buttons = [
             [InlineKeyboardButton("📚 Source Channels & Formats", callback_data="cfg|sources")],
@@ -2372,7 +2377,7 @@ async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
-    """Handle cfg| callbacks for the simple config panel."""
+    """Handle cfg| callbacks for the enhanced config panel."""
     data = query.data
     _, section = data.split("|", 1)
     chat_id = query.message.chat.id
@@ -2380,28 +2385,127 @@ async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
 
     if section == "sources":
         sources = bot_config.get("sources", [])
+        formats = bot_config.get("formats", {})
+        
         if lang == "hi":
-            header = "<b>📚 सोर्स चैनल</b>\n\n"
+            header = "<b>📚 सोर्स चैनल और फॉर्मेट</b>\n\n"
+            sources_text = f"<i>सोर्स चैनल ({len(sources)}):</i>\n"
             if sources:
-                body = "<i>अभी जो चैनल स्कैन हो रहे हैं:</i>\n" + "\n".join(f"- <code>{cid}</code>" for cid in sources)
+                sources_text += "\n".join(f"- <code>{cid}</code>" for cid in sources)
             else:
-                body = "<i>अभी कोई extra सोर्स चैनल सेट नहीं है।</i>"
-            footer = "\n\n<code>/addsource &lt;channel_id&gt;</code>\n<code>/removesource &lt;channel_id&gt;</code>"
+                sources_text += "<i>कोई extra सोर्स चैनल नहीं</i>"
+            
+            formats_text = f"\n\n<i>कस्टम फॉर्मेट ({len(formats)}):</i>\n"
+            if formats:
+                for cid, fmts in formats.items():
+                    formats_text += f"\n<code>{cid}</code>: {len(fmts)} formats"
+            else:
+                formats_text += "<i>कोई कस्टम फॉर्मेट नहीं</i>"
+                
+            body = sources_text + formats_text
         else:
-            header = "<b>📚 Source Channels</b>\n\n"
+            header = "<b>📚 Source Channels & Formats</b>\n\n"
+            sources_text = f"<i>Source Channels ({len(sources)}):</i>\n"
             if sources:
-                body = "<i>Currently scanned extra channels:</i>\n" + "\n".join(f"- <code>{cid}</code>" for cid in sources)
+                sources_text += "\n".join(f"- <code>{cid}</code>" for cid in sources)
             else:
-                body = "<i>No extra source channels configured yet.</i>"
-            footer = "\n\n<code>/addsource &lt;channel_id&gt;</code>\n<code>/removesource &lt;channel_id&gt;</code>"
-        await query.message.edit_text(header + body + footer, parse_mode="HTML")
+                sources_text += "<i>No extra source channels</i>"
+            
+            formats_text = f"\n\n<i>Custom Formats ({len(formats)}):</i>\n"
+            if formats:
+                for cid, fmts in formats.items():
+                    formats_text += f"\n<code>{cid}</code>: {len(fmts)} formats"
+            else:
+                formats_text += "<i>No custom formats</i>"
+                
+            body = sources_text + formats_text
+
+        buttons = [
+            [InlineKeyboardButton("➕ Add Source Channel", callback_data="cfg|add_source")],
+            [InlineKeyboardButton("➖ Remove Source Channel", callback_data="cfg|remove_source")],
+            [InlineKeyboardButton("📝 Add Custom Format", callback_data="cfg|add_format")],
+            [InlineKeyboardButton("🗑 Remove Custom Format", callback_data="cfg|remove_format")],
+            [InlineKeyboardButton("🔙 Back", callback_data="cfg|back")],
+        ]
+        
+        await query.message.edit_text(header + body, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    if section == "add_source":
+        if lang == "hi":
+            text = "<b>➕ सोर्स चैनल जोड़ें</b>\n\n<i>चैनल ID भेजें जिसे आप जोड़ना चाहते हैं:</i>"
+        else:
+            text = "<b>➕ Add Source Channel</b>\n\n<i>Send the channel ID you want to add:</i>"
+        
+        # Store state for waiting for channel ID
+        context.chat_data["config_state"] = "waiting_source_id"
+        
+        await query.message.edit_text(text=text, parse_mode="HTML")
+        return
+
+    if section == "remove_source":
+        sources = bot_config.get("sources", [])
+        if not sources:
+            if lang == "hi":
+                text = "<b>➖ सोर्स चैनल हटाएं</b>\n\n<i>कोई सोर्स चैनल नहीं है।</i>"
+            else:
+                text = "<b>➖ Remove Source Channel</b>\n\n<i>No source channels to remove.</i>"
+        else:
+            buttons = []
+            for cid in sources:
+                buttons.append([InlineKeyboardButton(f"🗑 {cid}", callback_data=f"cfg|confirm_remove_source|{cid}")])
+            buttons.append([InlineKeyboardButton("🔙 Back", callback_data="cfg|sources")])
+            
+            if lang == "hi":
+                text = "<b>➖ सोर्स चैनल हटाएं</b>\n\n<i>हटाने के लिए चैनल चुनें:</i>"
+            else:
+                text = "<b>➖ Remove Source Channel</b>\n\n<i>Select channel to remove:</i>"
+            
+            await query.message.edit_text(text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
+            return
+
+    if section == "add_format":
+        if lang == "hi":
+            text = "<b>📝 कस्टम फॉर्मेट जोड़ें</b>\n\n<i>फॉर्मेट जोड़ने के लिए, इस फॉर्मेट में भेजें:</i>\n\n"
+            text += "<code>channel_id|name_regex|link_regex</code>\n\n"
+            text += "<i>उदाहरण:</i>\n<code>-123456789|^Story: (.+)$|https://t\\.me/(.+)</code>"
+        else:
+            text = "<b>📝 Add Custom Format</b>\n\n<i>To add a format, send in this format:</i>\n\n"
+            text += "<code>channel_id|name_regex|link_regex</code>\n\n"
+            text += "<i>Example:</i>\n<code>-123456789|^Story: (.+)$|https://t\\.me/(.+)</code>"
+        
+        context.chat_data["config_state"] = "waiting_format"
+        await query.message.edit_text(text=text, parse_mode="HTML")
+        return
+
+    if section.startswith("confirm_remove_source|"):
+        channel_id = section.split("|")[2]
+        sources = bot_config.get("sources", [])
+        if channel_id in sources:
+            sources.remove(channel_id)
+            bot_config["sources"] = sources
+            save_config(bot_config)
+            
+            if lang == "hi":
+                text = f"<b>✅ सोर्स चैनल हटाया गया</b>\n\n<code>{channel_id}</code> को हटा दिया गया है।"
+            else:
+                text = f"<b>✅ Source Channel Removed</b>\n\n<code>{channel_id}</code> has been removed."
+        else:
+            if lang == "hi":
+                text = "<b>❌ त्रुटि</b>\n\nचैनल नहीं मिला।"
+            else:
+                text = "<b>❌ Error</b>\n\nChannel not found."
+        
+        buttons = [[InlineKeyboardButton("🔙 Back", callback_data="cfg|sources")]]
+        await query.message.edit_text(text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
         return
 
     if section == "lang":
         kb = InlineKeyboardMarkup(
             [
                 [InlineKeyboardButton("English", callback_data="lang|en"),
-                 InlineKeyboardButton("हिन्दी", callback_data="lang|hi")]
+                 InlineKeyboardButton("हिन्दी", callback_data="lang|hi")],
+                [InlineKeyboardButton("🔙 Back", callback_data="cfg|back")]
             ]
         )
         if lang == "hi":
@@ -2419,7 +2523,96 @@ async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
         else:
             body = "<i>Auto delete timers (in seconds/minutes/hours):</i>\n" + json.dumps(timers, indent=2)
             footer = "\n\n<code>/settimer &lt;key&gt; &lt;seconds&gt;</code>"
-        await query.message.edit_text("<b>⏱ Auto Delete Timers</b>\n\n" + body + footer, parse_mode="HTML")
+        
+        buttons = [[InlineKeyboardButton("🔙 Back", callback_data="cfg|back")]]
+        await query.message.edit_text("<b>⏱ Auto Delete Timers</b>\n\n" + body + footer, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    if section == "back":
+        # Return to main config menu
+        await config_cmd(Update(message=query.message, user=query.from_user), context)
+        return
+
+
+async def handle_config_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle text input for config operations (channel IDs, custom formats)."""
+    if not is_admin(update.effective_user.id):
+        return
+    
+    chat_id = update.effective_chat.id
+    lang = get_chat_lang(chat_id)
+    text = update.message.text.strip()
+    
+    # Check if we're waiting for config input
+    state = context.chat_data.get("config_state")
+    
+    if state == "waiting_source_id":
+        try:
+            channel_id = int(text)
+            sources = bot_config.get("sources", [])
+            if channel_id not in sources:
+                sources.append(channel_id)
+                bot_config["sources"] = sources
+                save_config(bot_config)
+                
+                if lang == "hi":
+                    response = f"<b>✅ सोर्स चैनल जोड़ा गया</b>\n\n<code>{channel_id}</code> को सफलतापूर्वक जोड़ा गया है।"
+                else:
+                    response = f"<b>✅ Source Channel Added</b>\n\n<code>{channel_id}</code> has been successfully added."
+            else:
+                if lang == "hi":
+                    response = f"<b>⚠️ पहले से मौजूद</b>\n\n<code>{channel_id}</code> पहले से ही सोर्स चैनल में है।"
+                else:
+                    response = f"<b>⚠️ Already Exists</b>\n\n<code>{channel_id}</code> is already in source channels."
+        except ValueError:
+            if lang == "hi":
+                response = "<b>❌ अमान्य चैनल ID</b>\n\nकृपया एक वैध चैनल ID भेजें।"
+            else:
+                response = "<b>❌ Invalid Channel ID</b>\n\nPlease send a valid channel ID."
+        
+        # Clear state
+        context.chat_data.pop("config_state", None)
+        await update.message.reply_text(response, parse_mode="HTML")
+        return
+    
+    if state == "waiting_format":
+        try:
+            parts = text.split("|")
+            if len(parts) != 3:
+                raise ValueError("Invalid format")
+            
+            channel_id, name_regex, link_regex = parts
+            channel_id = int(channel_id)
+            
+            if not name_regex.strip() or not link_regex.strip():
+                raise ValueError("Empty regex patterns")
+            
+            formats = bot_config.get("formats", {})
+            if channel_id not in formats:
+                formats[channel_id] = []
+            
+            formats[channel_id].append({
+                "name_re": name_regex.strip(),
+                "link_re": link_regex.strip()
+            })
+            
+            bot_config["formats"] = formats
+            save_config(bot_config)
+            
+            if lang == "hi":
+                response = f"<b>✅ कस्टम फॉर्मेट जोड़ा गया</b>\n\nचैनल <code>{channel_id}</code> के लिए फॉर्मेट सफलतापूर्वक जोड़ा गया।"
+            else:
+                response = f"<b>✅ Custom Format Added</b>\n\nFormat successfully added for channel <code>{channel_id}</code>."
+                
+        except (ValueError, IndexError) as e:
+            if lang == "hi":
+                response = "<b>❌ अमान्य फॉर्मेट</b>\n\nकृपया सही फॉर्मेट का उपयोग करें:\n<code>channel_id|name_regex|link_regex</code>"
+            else:
+                response = "<b>❌ Invalid Format</b>\n\nPlease use the correct format:\n<code>channel_id|name_regex|link_regex</code>"
+        
+        # Clear state
+        context.chat_data.pop("config_state", None)
+        await update.message.reply_text(response, parse_mode="HTML")
         return
 
 
@@ -2468,6 +2661,11 @@ def start_bot():
 
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, search)
+    )
+
+    # config input handler
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_config_input)
     )
 
     app.add_handler(CallbackQueryHandler(buttons))
