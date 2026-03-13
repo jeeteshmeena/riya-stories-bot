@@ -798,13 +798,14 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show bot uptime and basic stats in IST, auto-delete after 60 sec."""
     if await _enforce_cooldown(update, context):
         return
-    """Show bot uptime and basic stats in IST, auto-delete after delays."""
     if IS_SCANNING:
         lang = get_chat_lang(update.effective_chat.id)
         await _send_scan_busy_notice(update.message, lang)
         return
+
     user = update.effective_user
     chat = update.effective_chat
     cmd_msg = update.message
@@ -833,33 +834,41 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Load additional statistics
     requests_data = load_requests()
     total_requests = len(requests_data.get("requests", {}))
-    
+
     link_flags_data = load_link_flags()
     total_broken_reports = len([flag for flag in link_flags_data.values() if flag.get("broken", False)])
 
     text = (
-        f"<b>📊 Riya Status</b>\n\n"
-        f"{mention}, here is the current bot status:\n\n"
-        f"<b>⏱ Uptime:</b> <i>{uptime_str}</i>\n"
-        f"<b>🕒 Local Time (IST):</b> <code>{ist.strftime('%d-%m-%Y %H:%M:%S')} IST</code>\n"
-        f"<b>📚 Stories in database:</b> <i>{total_stories}</i>\n"
-        f"<b>📝 Total story requests:</b> <i>{total_requests}</i>\n"
-        f"<b>⚠️ Broken link reports:</b> <i>{total_broken_reports}</i>\n"
-        f"<b>🤖 Bot status:</b> <i>Running normally</i>\n"
+        f"<b>📊 Riya Bot Status</b>\n"
+        f"━━━━━━━━━━━━━━━━━\n\n"
+        f"👤 {mention}\n\n"
+        f"<b>⏱ Uptime:</b>  <i>{uptime_str}</i>\n"
+        f"<b>🕒 Time (IST):</b>  <code>{ist.strftime('%d-%m-%Y %H:%M:%S')}</code>\n\n"
+        f"<b>📚 Stories in DB:</b>  <i>{total_stories}</i>\n"
+        f"<b>📝 Story Requests:</b>  <i>{total_requests}</i>\n"
+        f"<b>⚠️ Broken Link Reports:</b>  <i>{total_broken_reports}</i>\n\n"
+        f"<b>🤖 Bot Status:</b>  <i>Running normally ✅</i>\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"<i>⏳ This message deletes in 60 seconds.</i>"
     )
 
-    reply = await chat.send_message(text=text, parse_mode="HTML")
+    caller_id = user.id if user else 0
+    delete_btn = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("🗑 Delete", callback_data=f"status_delete|{caller_id}")]]
+    )
 
-    # delete command message after 5 minutes, reply after 24 hours
+    reply = await chat.send_message(text=text, parse_mode="HTML", reply_markup=delete_btn)
+
+    # auto-delete command immediately and reply after 60 seconds
     async def _delete_cmd():
-        await asyncio.sleep(300)
+        await asyncio.sleep(5)
         try:
             await cmd_msg.delete()
         except Exception:
             pass
 
     async def _delete_reply():
-        await asyncio.sleep(86400)
+        await asyncio.sleep(60)
         try:
             await reply.delete()
         except Exception:
@@ -1758,6 +1767,21 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except: pass
         else:
             await query.answer("You haven't joined all channels yet. Please join them first.", show_alert=True)
+        return
+
+    if query.data.startswith("status_delete|"):
+        # Allow the original caller and admins to delete the status message
+        try:
+            caller_id = int(query.data.split("|")[1])
+        except (IndexError, ValueError):
+            caller_id = 0
+        if user.id == caller_id or is_admin(user.id):
+            try:
+                await query.message.delete()
+            except Exception:
+                await query.answer("Could not delete.", show_alert=True)
+        else:
+            await query.answer("⛔ Only the person who ran /status (or an admin) can delete this.", show_alert=True)
         return
 
     if query.data.startswith("lang|"):
@@ -2945,27 +2969,112 @@ async def subscribe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def rescan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.effective_user.id): return
     if len(context.args) < 1:
-        return await update.message.reply_text("Usage: /rescan <channel_id|username>")
+        return await update.message.reply_text(
+            "Usage: /rescan <channel\_id|username>\n"
+            "Example: /rescan -1001234567890",
+            parse_mode="Markdown"
+        )
+
     target_channel = context.args[0]
     # Convert to int if it's a numeric channel ID
     if target_channel.lstrip("-").isdigit():
         target_channel = int(target_channel)
-    
+
     global IS_SCANNING
     if IS_SCANNING:
         return await update.message.reply_text("⏳ A scan is already in progress.")
-        
+
     IS_SCANNING = True
-    progress_msg = await update.message.reply_text(f"⏳ Scanning channel `{target_channel}`...")
-    
+
+    # ---- live-UI state (mirrors /scan) ----
+    rescan_start_ts = time.time()
+    last_ui_update = 0.0
+    last_story_name = ""
+    last_found = 0
+    expected_total = last_scan_count or 0  # best estimate from previous scan
+
+    # Display channel name safely (no backtick, no underscore in Markdown)
+    safe_ch = re.sub(r'[*_`\[\]()~]', '', str(target_channel))
+
+    msg = await update.message.reply_text(
+        text=(
+            "🔎 *Riya Rescan*\n\n"
+            f"*Channel:* `{safe_ch}`\n"
+            "*Status:* _Initializing scanner..._\n\n"
+            "*Progress:* ░░░░░░░░░░ 0%"
+        ),
+        parse_mode="Markdown"
+    )
+
+    await asyncio.sleep(1)
+    try:
+        await msg.edit_text(
+            text=(
+                "🔎 *Riya Rescan*\n\n"
+                f"*Channel:* `{safe_ch}`\n"
+                "*Status:* _Fetching channel messages..._\n\n"
+                "*Progress:* ▓▓░░░░░░░░ 20%"
+            ),
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+
+    await asyncio.sleep(1)
+    try:
+        await msg.edit_text(
+            text=(
+                "🔎 *Riya Rescan*\n\n"
+                f"*Channel:* `{safe_ch}`\n"
+                "*Status:* _Detecting stories..._\n\n"
+                "*Progress:* ▓▓▓▓░░░░░░ 40%"
+            ),
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+
+    await asyncio.sleep(1)
+
     try:
         formats = bot_config.get("formats", {})
-        
+
         async def _progress_cb(p):
-            sf = p.get('stories_found', 0)
-            if sf > 0 and sf % 50 == 0:
-                try: await progress_msg.edit_text(f"⏳ Scanning `{target_channel}`: {sf} stories found")
-                except Exception: pass
+            nonlocal last_ui_update, last_story_name, last_found
+            now = time.time()
+            last_story_name = (p.get("last_story") or "").strip()
+            last_found = int(p.get("stories_found") or 0)
+
+            # throttle: update at most once every 2.5 s
+            if now - last_ui_update < 2.5:
+                return
+            last_ui_update = now
+
+            elapsed = max(now - rescan_start_ts, 1)
+            rate = last_found / elapsed
+            remaining = max(expected_total - last_found, 0) if expected_total else 0
+            eta_s = int(remaining / rate) if (expected_total and rate > 0) else 0
+            eta_text = f"`~{eta_s//60:02d}:{eta_s%60:02d}`" if eta_s else "`--:--`"
+
+            # strip markdown chars from story name
+            safe_story = re.sub(r'[*_`\[\]()~]', '', last_story_name)
+            safe_story = (safe_story[:60] + "…") if len(safe_story) > 60 else safe_story
+
+            try:
+                await msg.edit_text(
+                    text=(
+                        "🔎 *Riya Rescan*\n\n"
+                        f"*Channel:* `{safe_ch}`\n"
+                        "*Status:* _Scanning & adding stories..._\n\n"
+                        f"*Last Added:* _{safe_story}_\n"
+                        f"*Stories Found:* *{last_found}*\n"
+                        f"*Estimated Remaining:* {eta_text}\n\n"
+                        "_Please wait until the rescan is complete._"
+                    ),
+                    parse_mode="Markdown",
+                )
+            except Exception as parse_err:
+                logger.warning(f"Rescan UI update failed: {parse_err}")
 
         result = await scan_channel(
             channel_id=target_channel,
@@ -2976,12 +3085,31 @@ async def rescan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             formats_by_channel=formats
         )
         count = result.get("stories", 0)
-        await progress_msg.edit_text(f"✅ Scanning complete for `{target_channel}`. Indexed {count} stories.")
-        
+        try:
+            await msg.edit_text(
+                text=(
+                    "✅ *Rescan Completed*\n\n"
+                    f"*Channel:* `{safe_ch}`\n"
+                    f"*Stories Indexed:* *{count}*\n\n"
+                    "_Your story database has been updated._"
+                ),
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
     except Exception as e:
-        await progress_msg.edit_text(f"❌ Scan failed: {e}")
+        safe_err = re.sub(r'[*_`\[\]()~]', '', str(e))
+        try:
+            await msg.edit_text(
+                text=f"❌ *Rescan failed*\n\n`{safe_ch}`\n\n{safe_err}",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            await msg.edit_text(text=f"❌ Rescan failed: {e}")
     finally:
         IS_SCANNING = False
+
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.chat_data and context.chat_data.get("config_state"):
