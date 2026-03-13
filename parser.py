@@ -1,25 +1,16 @@
 import re
 
-# possible fields used in posts
+# possible fields used in posts - STRICT PATTERNS ONLY
 NAME_PATTERNS = [
     # Bullet format with status: "- Story Title ( Completed )"
     r"^\s*-\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)\s*$",
-    # Name patterns
-    r"name\s*[:\-]\s*(.+)",
-    r"story\s*[:\-]\s*(.+)",
-    r"title\s*[:\-]\s*(.+)",
-    r"story name\s*[:\-]\s*(.+)",
-    # More flexible patterns
+    # Name patterns with status requirement
+    r"name\s*[:\-]\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)",
+    r"story\s*[:\-]\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)",
+    r"title\s*[:\-]\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)",
+    r"story name\s*[:\-]\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)",
+    # Strict title with status
     r"^\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)\s*$",
-    r"^\s*📖\s*(.+?)\s*$",
-    r"^\s*📚\s*(.+?)\s*$",
-    r"^\s*📕\s*(.+?)\s*$",
-    r"^\s*📗\s*(.+?)\s*$",
-    r"^\s*📘\s*(.+?)\s*$",
-    r"^\s*📙\s*(.+?)\s*$",
-    r"^\s*📔\s*(.+?)\s*$",
-    # Simple title patterns
-    r"^\s*(.+?)\s*\n",
 ]
 
 LINK_PATTERN = r"https://t\.me/[^\s]+"
@@ -49,7 +40,7 @@ def get_text(message):
 def extract_name(text):
     """
     Try multiple patterns to detect story name (title).
-    We normalise out status markers like (Completed)/(Ongoing).
+    EXTREMELY STRICT - only match valid story formats.
     """
 
     for pattern in NAME_PATTERNS:
@@ -63,39 +54,7 @@ def extract_name(text):
             if cleaned and len(cleaned) > 2:  # Ensure meaningful title
                 return cleaned or None
 
-    # fallback: first line of message, but require strict formatting
-    lines = text.split("\n")
-
-    if len(lines) > 0:
-        first = lines[0].strip()
-
-        # ignore obvious non-story lines
-        bad_keywords = [
-            "telegram support",
-            "copyright",
-            "method batao",
-            "looking for",
-            "new stories chat group",
-            "https://",
-            "http://",
-            "t.me/",
-            "join",
-            "subscribe",
-            "channel",
-            "group",
-            "forwarded",
-            "shared",
-        ]
-
-        lowered = first.lower()
-        if any(k in lowered for k in bad_keywords):
-            return None
-
-        # Strict: require status marker for fallback
-        if re.search(r"\(\s*(completed?|complete|ongoing)\s*\)", first, re.IGNORECASE):
-            cleaned = re.sub(r"\(.*?\)", "", first).strip()
-            return cleaned or None
-
+    # NO FALLBACK - if no pattern matches, it's not a story
     return None
 
 
