@@ -90,8 +90,9 @@ def extract_name(text):
             cleaned = re.sub(r"\(.*?\)", "", first).strip()
             return cleaned or None
         
-        # Additional fallback: if first line looks like a title and has reasonable length
-        if len(first) > 2 and len(first) < 100:
+        # DEBUG: Make fallback more permissive to catch more stories
+        # Remove this after debugging
+        if len(first) > 2 and len(first) < 200:
             # Remove common prefixes but be more permissive
             cleaned = re.sub(r"^(📖|📚|📕|📗|📘|📙|📔|[-•*]\s*)", "", first).strip()
             cleaned = re.sub(r"\(.*?\)", "", cleaned).strip()

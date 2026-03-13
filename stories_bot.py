@@ -1008,12 +1008,12 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await asyncio.sleep(1)
 
-        story_index = result.get("names", [])
+        story_index = uniq_names
 
         build_search_index(story_index)
         save_story_index(story_index)
 
-        last_scan_count = result.get("stories", len(story_index))
+        last_scan_count = total_stories_found
 
         # clear link flags for stories whose link has been updated/confirmed again
         db = load_db()
