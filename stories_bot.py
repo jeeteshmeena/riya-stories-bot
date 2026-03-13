@@ -49,6 +49,7 @@ from config import (
 from scanner_client import scan_channel
 from search_engine import fuzzy_search
 from filters_text import is_valid_query
+from link_checker import start_link_checker
 from database import (
     get_story,
     load_db,
@@ -554,39 +555,45 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = """
 <b>📚 Riya Bot के बारे में</b>
 
-<blockquote><i>Riya एक समझदार Telegram स्टोरी डिस्कवरी बॉट है जो आपको कई Telegram चैनलों में शेयर की गई कहानियाँ तुरंत ढूंढने में मदद करता है।</i></blockquote>
+<blockquote><i>Riya एक समझदार Telegram स्टोरी खोज बॉट है जो उपयोगकर्ताओं को कई Telegram चैनलों में साझा की गई कहानियाँ तुरंत खोजने में मदद करता है।</i></blockquote>
 
-<u>✨ Riya क्या कर सकती है</u>
+<u>✨ विशेषताएं</u>
 
-• तेज़ स्टोरी सर्च
-• तुरंत डेटाबेस रिज़ल्ट
-• स्टोरी रिक्वेस्ट सिस्टम
-• स्टोरी अपलोड होने पर ऑटो नोटिफ़िकेशन
+• AI फजी सर्च
+• प्रोग्रेस बार रिप्लाई
+• स्पैम फिल्टर
+• भाषा सिस्टम
+• इनलाइन बटन
+• JSON डेटाबेस
+• एडमिन स्टैट्स, /scan, /request
 
-<b>👨‍💻 Developer:</b>
+<b>👨‍💻 डेवलपर:</b>
 @MeJeetX
 
 <b>⚙ Version:</b>
-Riya Pie v11
+Riya v10
 """
     else:
         text = """
 <b>📚 About Riya Bot</b>
 
-<blockquote><i>Riya is an intelligent Telegram story discovery bot that helps users find stories shared across multiple Telegram channels instantly.</i></blockquote>
+<blockquote><i>Riya is an intelligent Telegram story finder bot with AI fuzzy search, inline buttons, and admin stats.</i></blockquote>
 
-<u>✨ What Riya Can Do</u>
+<u>✨ Features</u>
 
-• Fast Story Search
-• Instant Database Results
-• Story Request System
-• Auto Notification when story is uploaded
+• AI fuzzy search
+• Progress bar replies
+• Spam filter
+• Language system
+• Inline buttons
+• JSON database
+• Admin stats, /scan, /request
 
 <b>👨‍💻 Developer:</b>
 @MeJeetX
 
 <b>⚙ Version:</b>
-Riya Pie v11
+Riya v10
 """
 
     reply = await update.message.reply_text(text=text, parse_mode="HTML")
@@ -1113,6 +1120,16 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard.append(nav)
 
     cmd_msg = update.message
+
+    # Delete command message after 5 seconds
+    async def _delete_cmd():
+        await asyncio.sleep(5)
+        try:
+            await cmd_msg.delete()
+        except Exception:
+            pass
+    
+    asyncio.create_task(_delete_cmd())
 
     reply = await update.message.reply_text(
         text=text,
@@ -1854,10 +1871,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await warn.delete()
                 except Exception:
                     pass
-
-            asyncio.create_task(_del_warn())
-            return
-
+        
         # Check if user has already reported this story (anti-spam)
         existing_flag = link_flags.get(story_key)
         if existing_flag and existing_flag.get("broken"):
@@ -2041,7 +2055,10 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
         # check threshold
-        if current >= required:
+        if current >= required and not vote.get("completed", False):
+            # Mark as completed to prevent duplicate processing
+            vote["completed"] = True
+            
             voter_items = list(vote["voters"].items())
             mentions = " ".join(_user_mention_by_id(uid, name) for uid, name in voter_items)
             if lang == "hi":
@@ -2060,6 +2077,18 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             try:
                 await context.bot.send_message(chat_id=chat_id, text=final_text, parse_mode="HTML")
+            except Exception:
+                pass
+
+            # Delete the vote message immediately to prevent further voting
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=vote["message_id"])
+            except Exception:
+                pass
+            
+            # Unpin the message
+            try:
+                await context.bot.unpin_chat_message(chat_id=chat_id, message_id=vote["message_id"])
             except Exception:
                 pass
 
@@ -2083,26 +2112,23 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # notify admin/copyright channel
             if COPYRIGHT_CHANNEL:
-                voters_txt = "\n".join([f"- {_user_mention_by_id(uid, fallback=str(uid))} (id: {uid})" for uid in voters])
+                voters_txt = "\n".join([f"- {_user_mention_by_id(uid, fallback=str(uid))} (id: {uid})" for uid, name in voter_items])
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
                 report = (
                     f"⚠ Link Broken Report\n\n"
-                    f"Story: {story_name}\n"
-                    f"Story key: {story_key}\n"
-                    f"Link: {link}\n"
-                    f"Chat ID: {chat_id}\n\n"
-                    f"Voters:\n{voters_txt}"
+                    f"📖 Story: {story_name}\n"
+                    f"🔑 Story key: {story_key}\n"
+                    f"🔗 Broken Link: {link}\n"
+                    f"💬 Chat ID: {chat_id}\n"
+                    f"⏰ Timestamp: {timestamp}\n\n"
+                    f"👥 Voters:\n{voters_txt}"
                 )
                 try:
                     await context.bot.send_message(chat_id=COPYRIGHT_CHANNEL, text=report, parse_mode="HTML")
                 except Exception as e:
                     logger.warning("Failed to send link broken report: %s", e)
 
-            # clean up vote and unpin
-            try:
-                await context.bot.unpin_chat_message(chat_id=chat_id, message_id=vote["message_id"])
-                await context.bot.delete_message(chat_id=chat_id, message_id=vote["message_id"])
-            except Exception:
-                pass
+# clean up vote
             active_link_votes.pop(vote_id, None)
 
         return
@@ -2373,8 +2399,8 @@ def start_bot():
     async def _post_init(application):
         if str(AUTO_SCAN).lower() == "true" and CHANNEL_ID:
             asyncio.create_task(auto_scan_loop(application.bot))
-        # background link verification
-        asyncio.create_task(link_check_loop(application.bot))
+        # Start background link checker
+        asyncio.create_task(start_link_checker())
 
     app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
