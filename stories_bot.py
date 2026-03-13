@@ -1780,8 +1780,36 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not story:
             await query.answer("Story not found.", show_alert=True)
             return
+        
+        chat_id = query.message.chat.id
+        user_id = user.id
         story_name = clean_story(story.get("text", story.get("name", "")))
-        lang = get_chat_lang(query.message.chat.id)
+        
+        # Anti-spam: Check if user already reported this story
+        existing_flag = link_flags.get(story_key)
+        if existing_flag and existing_flag.get("broken"):
+            # Story already confirmed as broken
+            lang = get_chat_lang(chat_id)
+            if lang == "hi":
+                txt = f"<b>आप पहले ही इस स्टोरी की रिपोर्ट कर चुके हैं।</b>\n\n<i>यह स्टोरी पहले से ही टूटी हुई के रूप में मार्क कर दी गई है। कृपया समाधान का इंतजार करें।</i>"
+            else:
+                txt = f"<b>You have already submitted a report for this story.</b>\n\n<i>This story is already marked as broken. Please wait while the issue is being resolved.</i>"
+            await query.answer(txt, show_alert=True)
+            return
+
+        # Check if user has already voted in this specific vote
+        vote_id = f"{chat_id}:{story_key}"
+        existing_vote = active_link_votes.get(vote_id)
+        if existing_vote and user_id in existing_vote.get("voters", {}):
+            lang = get_chat_lang(chat_id)
+            if lang == "hi":
+                txt = f"<b>आप पहले ही इस वोट में भाग ले चुके हैं।</b>\n\n<i>आपका वोट पहले से दर्ज है। कृपया दोहराएं नहीं।</i>"
+            else:
+                txt = f"<b>You have already participated in this vote.</b>\n\n<i>Your vote is already registered. Please do not repeat.</i>"
+            await query.answer(txt, show_alert=True)
+            return
+        
+        lang = get_chat_lang(chat_id)
         if lang == "hi":
             text = (
                 f"<b>⚠ लिंक रिपोर्त करना चाहते हैं?</b>\n\n"
@@ -1949,15 +1977,17 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if lang == "hi":
             title = "<b>⚠ लिंक वेरीफिकेशन वोट</b>"
             body = f"<i>{story_name}</i>\n\n"
-            votes_line = f"Votes: {current} / {required}"
+            body += f"<b>वोट का उद्देश्य:</b> यह जांचना के लिए कि स्टोरी लिंक काम कर रहा है या टूटा हुआ है\n\n"
+            votes_line = f"<b>वोट:</b> {current} / {required} (कुल {required - current} और वोट चाहिए)"
             broken_label = "❌ लिंक नहीं चल रहा"
-            ok_label = "✅ लिंक सही है"
+            ok_label = "🔗 चल रहा है"
         else:
-            title = "<b>⚠ Link verification vote</b>"
+            title = "<b>⚠ Link Verification Vote</b>"
             body = f"<i>{story_name}</i>\n\n"
-            votes_line = f"Votes: {current} / {required}"
+            body += f"<b>Purpose:</b> To verify if the story link is working or broken\n\n"
+            votes_line = f"<b>Votes:</b> {current} / {required} ({required - current} more votes needed)"
             broken_label = "🔗 Broken"
-            ok_label = "✅ Link Working"
+            ok_label = "🔗 Working"
 
         text = f"{title}\n\n{body}{votes_line}"
         kb = InlineKeyboardMarkup(
@@ -2027,15 +2057,17 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if lang == "hi":
             title = "<b>⚠ लिंक वेरीफिकेशन वोट</b>"
             body = f"<i>{story_name}</i>\n\n"
-            votes_line = f"Votes: {current} / {required}"
+            body += f"<b>वोट का उद्देश्य:</b> यह जांचना के लिए कि स्टोरी लिंक काम कर रहा है या टूटा हुआ है\n\n"
+            votes_line = f"<b>वोट:</b> {current} / {required} (कुल {required - current} और वोट चाहिए)"
             broken_label = "❌ लिंक नहीं चल रहा"
-            ok_label = "✅ लिंक सही है"
+            ok_label = "🔗 चल रहा है"
         else:
-            title = "<b>⚠ Link verification vote</b>"
+            title = "<b>⚠ Link Verification Vote</b>"
             body = f"<i>{story_name}</i>\n\n"
-            votes_line = f"Votes: {current} / {required}"
+            body += f"<b>Purpose:</b> To verify if the story link is working or broken\n\n"
+            votes_line = f"<b>Votes:</b> {current} / {required} ({required - current} more votes needed)"
             broken_label = "🔗 Broken"
-            ok_label = "✅ Link Working"
+            ok_label = "🔗 Working"
 
         text = f"{title}\n\n{body}{votes_line}"
         kb = InlineKeyboardMarkup(

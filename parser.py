@@ -4,10 +4,22 @@ import re
 NAME_PATTERNS = [
     # Bullet format with status: "- Story Title ( Completed )"
     r"^\s*-\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)\s*$",
+    # Name patterns
     r"name\s*[:\-]\s*(.+)",
     r"story\s*[:\-]\s*(.+)",
     r"title\s*[:\-]\s*(.+)",
     r"story name\s*[:\-]\s*(.+)",
+    # More flexible patterns
+    r"^\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)\s*$",
+    r"^\s*📖\s*(.+?)\s*$",
+    r"^\s*📚\s*(.+?)\s*$",
+    r"^\s*📕\s*(.+?)\s*$",
+    r"^\s*📗\s*(.+?)\s*$",
+    r"^\s*📘\s*(.+?)\s*$",
+    r"^\s*📙\s*(.+?)\s*$",
+    r"^\s*📔\s*(.+?)\s*$",
+    # Simple title patterns
+    r"^\s*(.+?)\s*\n",
 ]
 
 LINK_PATTERN = r"https://t\.me/[^\s]+"
@@ -48,9 +60,10 @@ def extract_name(text):
             raw = match.group(1).strip()
             # drop any status in parentheses
             cleaned = re.sub(r"\(.*?\)", "", raw).strip()
-            return cleaned or None
+            if cleaned and len(cleaned) > 2:  # Ensure meaningful title
+                return cleaned or None
 
-    # fallback: first line of message, but only if it looks like a story title
+    # fallback: first line of message, but be more permissive
     lines = text.split("\n")
 
     if len(lines) > 0:
@@ -66,16 +79,24 @@ def extract_name(text):
             "https://",
             "http://",
             "t.me/",
+            "join",
+            "subscribe",
+            "channel",
+            "group",
         ]
 
         lowered = first.lower()
         if any(k in lowered for k in bad_keywords):
             return None
 
-        # require a status marker like (Completed) / (Ongoing) to accept as title
-        if re.search(r"\(\s*(completed?|complete|ongoing)\s*\)", first, re.IGNORECASE):
-            cleaned = re.sub(r"\(.*?\)", "", first).strip()
-            return cleaned or None
+        # Accept titles with reasonable length and content
+        if len(first) > 2 and len(first) < 100:
+            # Remove common prefixes
+            cleaned = re.sub(r"^(📖|📚|📕|📗|📘|📙|📔|[-•*]\s*)", "", first).strip()
+            cleaned = re.sub(r"\(.*?\)", "", cleaned).strip()
+            
+            if cleaned and len(cleaned) > 2:
+                return cleaned
 
     return None
 
