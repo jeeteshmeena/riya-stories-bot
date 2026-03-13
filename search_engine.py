@@ -34,9 +34,9 @@ def fuzzy_search(query):
         # Use the best of the three scores
         combined_score = max(partial_ratio, token_sort_ratio, token_set_ratio)
         
-        # Require very high score for accuracy
-        if combined_score > score and combined_score >= 85:
-            # Additional check: ensure at least some word overlap
+        # Require extremely high score for accuracy
+        if combined_score > score and combined_score >= 90:
+            # Additional check: ensure very high word overlap
             query_words = set(query.split())
             story_words = set(story_name.split())
             
@@ -45,10 +45,10 @@ def fuzzy_search(query):
             query_words -= stop_words
             story_words -= stop_words
             
-            # Require at least 50% word overlap for meaningful matches
+            # Require at least 70% word overlap for meaningful matches
             if query_words and story_words:
                 overlap = len(query_words & story_words) / len(query_words)
-                if overlap >= 0.5:
+                if overlap >= 0.7:
                     score = combined_score
                     best = data
     

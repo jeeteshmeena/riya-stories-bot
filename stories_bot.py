@@ -1803,9 +1803,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if existing_vote and user_id in existing_vote.get("voters", {}):
             lang = get_chat_lang(chat_id)
             if lang == "hi":
-                txt = f"<b>आप पहले ही इस वोट में भाग ले चुके हैं।</b>\n\n<i>आपका वोट पहले से दर्ज है। कृपया दोहराएं नहीं।</i>"
+                txt = f"<b>आप पहले ही इस वेरिफिकेशन में भाग ले चुके हैं।</b>\n\n<i>कृपया समस्या के समाधान का इंतजार करें।</i>"
             else:
-                txt = f"<b>You have already participated in this vote.</b>\n\n<i>Your vote is already registered. Please do not repeat.</i>"
+                txt = f"<b>You have already participated in this verification.</b>\n\n<i>Please wait while the issue is being resolved.</i>"
             await query.answer(txt, show_alert=True)
             return
         

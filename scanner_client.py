@@ -71,7 +71,7 @@ async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None,
 
     scan_start = asyncio.get_event_loop().time()
 
-    async for msg in client.iter_messages(channel_id):
+    async for msg in client.iter_messages(channel_id, limit=None):
 
         total_messages += 1
 

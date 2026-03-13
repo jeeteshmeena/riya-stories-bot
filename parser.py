@@ -63,13 +63,13 @@ def extract_name(text):
             if cleaned and len(cleaned) > 2:  # Ensure meaningful title
                 return cleaned or None
 
-    # fallback: first line of message, but be more permissive
+    # fallback: first line of message, but be more permissive like original
     lines = text.split("\n")
 
     if len(lines) > 0:
         first = lines[0].strip()
 
-        # ignore obvious non-story lines
+        # ignore obvious non-story lines (original logic)
         bad_keywords = [
             "telegram support",
             "copyright",
@@ -79,19 +79,20 @@ def extract_name(text):
             "https://",
             "http://",
             "t.me/",
-            "join",
-            "subscribe",
-            "channel",
-            "group",
         ]
 
         lowered = first.lower()
         if any(k in lowered for k in bad_keywords):
             return None
 
-        # Accept titles with reasonable length and content
+        # Original logic: require status marker for fallback, but be more flexible
+        if re.search(r"\(\s*(completed?|complete|ongoing)\s*\)", first, re.IGNORECASE):
+            cleaned = re.sub(r"\(.*?\)", "", first).strip()
+            return cleaned or None
+        
+        # Additional fallback: if first line looks like a title and has reasonable length
         if len(first) > 2 and len(first) < 100:
-            # Remove common prefixes
+            # Remove common prefixes but be more permissive
             cleaned = re.sub(r"^(📖|📚|📕|📗|📘|📙|📔|[-•*]\s*)", "", first).strip()
             cleaned = re.sub(r"\(.*?\)", "", cleaned).strip()
             
