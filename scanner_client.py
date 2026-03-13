@@ -72,7 +72,18 @@ async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None,
 
     scan_start = asyncio.get_event_loop().time()
 
-    async for msg in client.iter_messages(channel_id, limit=None, reverse=True):
+    # CRITICAL: For StringSession, integer IDs require accessing the dialogs first
+    # to populate the internal entity cache, otherwise "Could not find input entity" occurs
+    try:
+        entity = await client.get_entity(channel_id)
+    except ValueError:
+        try:
+            await client.get_dialogs()
+            entity = await client.get_entity(channel_id)
+        except Exception:
+            entity = channel_id # fallback to raw id if still failing, will probably raise
+
+    async for msg in client.iter_messages(entity, limit=None, reverse=True):
 
         total_messages += 1
 

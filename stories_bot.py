@@ -1679,12 +1679,17 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = query.from_user
 
-    await query.answer()
+    if not query.data.startswith(("fav|", "check_sub")):
+        try:
+            await query.answer()
+        except Exception:
+            pass
 
     if await _enforce_cooldown(update, context):
         return
 
     if query.data.startswith("cfg_") or query.data.startswith("cfg|"):
+        await query.answer()
         await _handle_config_callback(query, context)
         return
 
@@ -1731,6 +1736,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if query.data.startswith("lang|"):
+        await query.answer()
         lang = query.data.split("|", 1)[1]
         if lang not in ("en", "hi"):
             return
@@ -2926,19 +2932,24 @@ async def rescan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         formats = bot_config.get("formats", {})
-        channel_format = formats.get(str(target_channel), formats.get(int(target_channel) if target_channel.lstrip('-').isdigit() else target_channel))
         
-        async def _progress_cb(current, total):
-            if current % 100 == 0:
-                try: await progress_msg.edit_text(f"⏳ Scanning `{target_channel}`: {current}/{total} messages processed")
-                except: pass
+        async def _progress_cb(p):
+            sf = p.get('stories_found', 0)
+            if sf > 0 and sf % 50 == 0:
+                try: await progress_msg.edit_text(f"⏳ Scanning `{target_channel}`: {sf} stories found")
+                except Exception: pass
 
-        count = await scan_channel(target_channel, channel_format, _progress_cb)
+        result = await scan_channel(
+            channel_id=target_channel,
+            bot=context.bot,
+            log_channel=LOG_CHANNEL,
+            progress_cb=_progress_cb,
+            cleanup=False,
+            formats_by_channel=formats
+        )
+        count = result.get("stories", 0)
         await progress_msg.edit_text(f"✅ Scanning complete for `{target_channel}`. Indexed {count} stories.")
         
-        db = load_db()
-        remove_stories_not_in(db, list(db.keys())) # Clean up any local broken entries? Actually, single channel scan shouldn't delete unrelated DB keys.
-        # Well, just load the scanner count
     except Exception as e:
         await progress_msg.edit_text(f"❌ Scan failed: {e}")
     finally:
