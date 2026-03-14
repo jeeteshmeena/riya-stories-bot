@@ -73,40 +73,55 @@ def search_story_exact_or_alias(query):
 
 def get_suggestions(query, limit=5):
     """
-    Return similar titles from the database, not random fuzzy results.
-    Only titles starting with or containing the query, or passing a strict threshold.
+    Return similar titles from the database — only shown when the query is
+    genuinely close to a known title.
+
+    Rules (ALL must be met for a suggestion to appear):
+      - The query must be at least 3 characters long.
+      - Either:
+          a) Fuzzy similarity (WRatio) is >= 72, OR
+          b) The cleaned query is a substring of the title AND the query is
+             at least half the length of the title (prevents "secret" matching
+             "A Secret Love Story Between Two Strangers").
     """
     _get_cache()
-    if not query or len(query.strip()) < 2:
+    if not query or len(query.strip()) < 3:
         return []
-        
+
     q = query.lower().strip()
     qc = clean_story(q).lower()
-    
+
     results = []
     for title in _list_cache:
         title_lower = title.lower()
         title_clean = clean_story(title).lower()
-        
-        if qc and (qc in title_clean or title_clean in qc):
-            results.append(title)
-            continue
-            
+
+        # Substring check — only accept if the query covers at least 50% of the title
+        # (prevents short common words triggering suggestions for long titles)
+        if qc in title_clean:
+            if len(qc) >= len(title_clean) * 0.5:
+                results.append((title, 100))
+                continue
+
+        # High-bar fuzzy similarity
         ratio = fuzz.ratio(qc, title_clean)
-        if ratio >= 80:
-            results.append(title)
-            
-    # sort by edit distance practically
-    results.sort(key=lambda t: fuzz.ratio(qc, clean_story(t).lower()), reverse=True)
-    
+        partial = fuzz.partial_ratio(qc, title_clean)
+        token_set = fuzz.token_set_ratio(qc, title_clean)
+        best = max(ratio, partial, token_set)
+
+        if best >= 72:
+            results.append((title, best))
+
+    # Sort by best score descending
+    results.sort(key=lambda x: x[1], reverse=True)
+
     # Remove duplicates, keeping order
     seen = set()
     final = []
-    for r in results:
+    for r, _ in results:
         if r not in seen:
             seen.add(r)
             final.append(r)
-            
-    return final[:limit]
 
+    return final[:limit]
 

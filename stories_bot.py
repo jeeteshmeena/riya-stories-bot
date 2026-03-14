@@ -349,14 +349,14 @@ async def _enforce_cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if lang == "hi":
         text = (
-            f"<b>☆ Cooldown Active / आप कोल्डाउन पर हैं</b>\n\n"
+            f"<b>◌ Cooldown Active / आप कोल्डाउन पर हैं</b>\n\n"
             f"{user.mention_html()}\n"
             f"✧ <i>कारण:</i> <b>{reason}</b>\n"
             f"<i>कृपया लगभग {mins} मिनट बाद फिर से कोशिश करें।</i>"
         )
     else:
         text = (
-            f"<b>☆ Cooldown Active</b>\n\n"
+            f"<b>◌ Cooldown Active</b>\n\n"
             f"{user.mention_html()}\n"
             f"✧ <i>Reason:</i> <b>{reason}</b>\n"
             f"<i>Please try again after approximately {mins} minutes.</i>"
@@ -377,17 +377,17 @@ async def _send_scan_busy_notice(msg, lang: str):
     if lang == "hi":
         text = (
             "<b>⏳ डेटाबेस अपडेट हो रहा है</b>\n\n"
-            "<i>Riya अभी डेटाबेस से स्टोरीज़ अपडेट कर रही है।</i>\n"
-            "कृपया कुछ समय प्रतीक्षा करें।\n"
-            "<b>अपडेट पूरा होने के बाद बॉट अपने आप काम करना शुरू कर देगा।</b>\n\n"
+            "<i>✺ Riya अभी डेटाबेस से स्टोरीज़ अपडेट कर रही है।</i>\n"
+            "▪ कृपया कुछ समय प्रतीक्षा करें।\n"
+            "▪ <b>अपडेट पूरा होने के बाद बॉट अपने आप काम करना शुरू कर देगा।</b>\n\n"
             f"<code>{datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S')} UTC</code>"
         )
     else:
         text = (
             "<b>⏳ Database Updating</b>\n\n"
-            "<i>Riya is currently updating the story database.</i>\n"
-            "Please wait for a certain amount of time.\n"
-            "<b>The bot will automatically start working again once the update is complete.</b>\n\n"
+            "<i>✺ Riya is currently updating the story database.</i>\n"
+            "▪ Please wait for a certain amount of time.\n"
+            "▪ <b>The bot will automatically start working again once the update is complete.</b>\n\n"
             f"<code>{datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S')} UTC</code>"
         )
 
@@ -435,11 +435,11 @@ async def _send_maintenance_notice(msg, lang: str):
         text = (
             "<b>🔧 Riya — रखरखाव मोड</b>\n"
             "━━━━━━━━━━━━━━━━\n\n"
-            "<i>Riya अभी मेंटेनेंस पर है।</i>\n\n"
-            "✦ <b>हम क्या कर रहे हैं?</b>\n"
-            "✧ सिस्टम अपग्रेड और सुधार\n"
-            "✧ डेटाबेस ऑप्टिमाइज़ेशन\n\n"
-            f"✦ <b>अनुमानित समय:</b> <code>{eta_hi}</code>\n\n"
+            "<i>◎ Riya अभी मेंटेनेंस पर है।</i>\n\n"
+            "❁ <b>हम क्या कर रहे हैं?</b>\n"
+            "➔ सिस्टम अपग्रेड और सुधार\n"
+            "➔ डेटाबेस ऑप्टिमाइज़ेशन\n\n"
+            f"❁ <b>अनुमानित समय:</b> <code>{eta_hi}</code>\n\n"
             "<i>आपके धैर्य के लिए धन्यवाद।</i> 🙏"
         )
     else:
@@ -634,13 +634,13 @@ def _menu_main(caller_id: int, lang: str = "en") -> tuple:
     if lang == "hi":
         text = (
             "<b>📚 Riya — Main Menu</b>\n"
-            "<i>स्टोरी खोजें, एक्सप्लोर करें, और ज़्यादा।</i>\n"
+            "<i>✺ स्टोरी खोजें, एक्सप्लोर करें, और ज़्यादा।</i>\n"
             f"{_DIVIDER}"
         )
     else:
         text = (
             "<b>📚 Riya — Main Menu</b>\n"
-            "<i>Search stories, explore, and more.</i>\n"
+            "<i>✺ Search stories, explore, and more.</i>\n"
             f"{_DIVIDER}"
         )
     markup = InlineKeyboardMarkup([
@@ -691,9 +691,9 @@ def _menu_new(caller_id: int) -> tuple:
             name = clean_story(s.get("name") or s.get("text") or "Story")
             link = s.get("link", "")
             if link:
-                lines.append(f'✦ <a href="{link}">{name}</a>')
+                lines.append(f'✧ <a href="{link}">{name}</a>')
             else:
-                lines.append(f"✦ {name}")
+                lines.append(f"✧ {name}")
         body = "\n".join(lines)
     else:
         body = "<i>No new series in the database yet.</i>"
@@ -710,22 +710,14 @@ def _menu_new(caller_id: int) -> tuple:
 def _menu_saved(caller_id: int) -> tuple:
     user_id_str = str(caller_id)
     favs = favorites_db.get(user_id_str, [])
-    if favs:
-        lines = []
-        for story_key in favs[:15]:
-            res = get_story(story_key)
-            name = clean_story(story_key)
-            if res and res.get("link"):
-                lines.append(f'★ <a href="{res["link"]}">{name}</a>')
-            else:
-                lines.append(f"★ {name} <i>(link unavailable)</i>")
-        body = "\n".join(lines)
+    if len(favs) > 0:
+        body = "\n".join([f"♥ <code>{clean_story(s)}</code>" for s in favs[:15]])
         if len(favs) > 15:
             body += f"\n<i>…and {len(favs) - 15} more.</i>"
     else:
-        body = "<i>☆ No favourites yet.\nTap ★ on any search result to save it.</i>"
+        body = "<i>♡ No favourites yet.\nTap ★ on any search result to save it.</i>"
     text = (
-        "<b>★ My Favourites</b>\n"
+        "<b>♥ My Favourites</b>\n"
         "<i>Your personal saved stories.</i>\n"
         f"{_DIVIDER}\n\n"
         f"{body}"
@@ -773,24 +765,24 @@ def _menu_about(caller_id: int, lang: str = "en") -> tuple:
     if lang == "hi":
         body = (
             "<blockquote><i>Riya एक स्मार्ट Telegram स्टोरी खोज बॉट है।</i></blockquote>\n\n"
-            "<u>✨ Features</u>\n"
-            "✦ AI फ़जी सर्च\n"
-            "✦ इनलाइन मेनू नेविगेशन\n"
-            "✦ JSON डेटाबेस\n"
-            "✦ एडमिन /scan\n"
-            "✦ फेवरेट सिस्टम\n\n"
+            "<u>❁ Features</u>\n"
+            "▪ AI फ़जी सर्च\n"
+            "▪ इनलाइन मेनू नेविगेशन\n"
+            "▪ JSON डेटाबेस\n"
+            "▪ एडमिन /scan\n"
+            "▪ फेवरेट सिस्टम\n\n"
             "<b>👨‍💻 Developer:</b> @MeJeetX\n"
             "<b>⚙ Version:</b> Riya v10"
         )
     else:
         body = (
             "<blockquote><i>Riya is an intelligent Telegram story finder bot.</i></blockquote>\n\n"
-            "<u>✨ Features</u>\n"
-            "✦ AI fuzzy search\n"
-            "✦ Inline menu navigation\n"
-            "✦ JSON database\n"
-            "✦ Admin /scan command\n"
-            "✦ Favourites system\n\n"
+            "<u>❁ Features</u>\n"
+            "▪ AI fuzzy search\n"
+            "▪ Inline menu navigation\n"
+            "▪ JSON database\n"
+            "▪ Admin /scan command\n"
+            "▪ Favourites system\n\n"
             "<b>👨‍💻 Developer:</b> @MeJeetX\n"
             "<b>⚙ Version:</b> Riya v10"
         )
@@ -807,12 +799,10 @@ def _menu_about(caller_id: int, lang: str = "en") -> tuple:
 def _menu_help(caller_id: int, lang: str = "en") -> tuple:
     if lang == "hi":
         body = (
-            "<u>✦ Bot कैसे काम करता है?</u>\n"
+            "<u>❁ Bot कैसे काम करता है?</u>\n"
             "1️⃣  स्टोरी का नाम भेजें\n"
             "2️⃣  बॉट डेटाबेस में खोजता है\n"
             "3️⃣  मिली → लिंक मिलता है\n"
-            "4️⃣  नहीं मिली → /request करें\n\n"
-            "<i>जब स्टोरी आएगी, आपको नोटिफिकेशन मिलेगा।</i>\n\n"
             "<u>✦ Commands</u>\n"
             "/start — बॉट शुरू करें\n"
             "/request — स्टोरी रिक्वेस्ट\n"
@@ -1625,19 +1615,19 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if lang == "hi":
             warn_text = """
-★ कृपया स्टोरी/सीरीज़ का नाम लिखें
+<b>✮ कृपया स्टोरी/सीरीज़ का नाम लिखें</b>
 
-✧ उदाहरण:
-/request Vashikaran
-/request Saaya
+➔ उदाहरण:
+▪ /request Vashikaran
+▪ /request Saaya
 """
         else:
             warn_text = """
-★ Please provide the name of the Story/Series
+<b>✮ Please provide the name of the Story/Series</b>
 
-✧ Examples:
-/request Vashikaran
-/request Saaya
+➔ Examples:
+▪ /request Vashikaran
+▪ /request Saaya
 """
 
         warn_msg = await update.effective_chat.send_message(warn_text)
@@ -2001,7 +1991,28 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_valid_query(raw_text):
         return
 
+    # Strip any leading @mention from query (e.g. "@username StoryName" → "StoryName")
+    # Also extract the tagged user so we can reply to them
     query_text = raw_text
+    _tagged_user_mention: str | None = None
+    _tagged_user_id: int | None = None
+    if msg.entities:
+        for _ent in msg.entities:
+            if _ent.type == "mention":
+                # @username at start → strip it from query
+                mention_str = raw_text[_ent.offset : _ent.offset + _ent.length]
+                query_text = raw_text[_ent.offset + _ent.length :].strip()
+                _tagged_user_mention = mention_str
+                break
+            elif _ent.type == "text_mention" and _ent.user:
+                mention_str = raw_text[_ent.offset : _ent.offset + _ent.length]
+                query_text = raw_text[_ent.offset + _ent.length :].strip()
+                _tagged_user_mention = _ent.user.mention_html()
+                _tagged_user_id = _ent.user.id
+                break
+
+    if not query_text or len(query_text) < 2:
+        return
 
     # Force Sub Check
     if not await _check_force_sub(user.id, context):
@@ -2084,21 +2095,18 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     target_mention = user.mention_html()
     target_user_id = user.id
-    
+
+    # Prefer reply_to_message as the tagging target
     if getattr(msg, "reply_to_message", None) and msg.reply_to_message.from_user:
         target_mention = msg.reply_to_message.from_user.mention_html()
         target_user_id = msg.reply_to_message.from_user.id
-    elif msg.entities:
-        for ent in msg.entities:
-            if ent.type == "mention":
-                mtxt = msg.text or ""
-                if mtxt:
-                    target_mention = mtxt[ent.offset : ent.offset + ent.length]
-                break
-            elif ent.type == "text_mention" and ent.user:
-                target_mention = ent.user.mention_html()
-                target_user_id = ent.user.id
-                break
+    elif _tagged_user_id:
+        # text_mention entity (no @username)
+        target_mention = _tagged_user_mention or user.mention_html()
+        target_user_id = _tagged_user_id
+    elif _tagged_user_mention:
+        # plain @username mention — keep as string mention
+        target_mention = _tagged_user_mention
 
     mention = target_mention
 
@@ -2149,13 +2157,13 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     photo = result.get("photo") or result.get("image")
-    story_type_line = f"\n<b>Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
+    story_type_line = f"\n<b>✽ Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
     caption = f"""Hey {mention} 👋
-<b>I found this story</b> 👇
+<b>✫ I found this story</b> ➴
 
-<i>Name:-</i> <b>{story_name}</b>{story_type_line}
+<i>❁ Name:-</i> <b>{story_name}</b>{story_type_line}
 
-<tg-spoiler>This reply will be deleted automatically in 5 minutes.</tg-spoiler>
+<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>
 """
 
     chat_id = update.effective_chat.id
@@ -3212,21 +3220,21 @@ def _cfg_main_panel(caller_id: int, lang: str = "en") -> tuple:
     cur_lang = "हिन्दी" if lang == "hi" else "English"
     if lang == "hi":
         header = (
-            "<b>★ Configuration Panel</b>\n"
-            "<i>Bot settings aur system options manage karein.</i>\n"
+            "<b>✺ Configuration Panel</b>\n"
+            "<i>▪ Bot settings aur system options manage karein.</i>\n"
             f"{_CFG_DIV}\n\n"
-            f"✦ Sources: <b>{len(sources)}</b>  "
-            f"✦ Formats: <b>{sum(len(v) for v in formats.values()) if isinstance(formats, dict) else 0}</b>  "
-            f"✦ Language: <b>{cur_lang}</b>"
+            f"▪ Sources: <b>{len(sources)}</b>  "
+            f"▪ Formats: <b>{sum(len(v) for v in formats.values()) if isinstance(formats, dict) else 0}</b>  "
+            f"▪ Language: <b>{cur_lang}</b>"
         )
     else:
         header = (
-            "<b>★ Configuration Panel</b>\n"
-            "<i>Manage bot settings and system options.</i>\n"
+            "<b>✺ Configuration Panel</b>\n"
+            "<i>▪ Manage bot settings and system options.</i>\n"
             f"{_CFG_DIV}\n\n"
-            f"✦ Sources: <b>{len(sources)}</b>  "
-            f"✦ Formats: <b>{sum(len(v) for v in formats.values()) if isinstance(formats, dict) else 0}</b>  "
-            f"✧ Language: <b>{cur_lang}</b>"
+            f"▪ Sources: <b>{len(sources)}</b>  "
+            f"▪ Formats: <b>{sum(len(v) for v in formats.values()) if isinstance(formats, dict) else 0}</b>  "
+            f"▫ Language: <b>{cur_lang}</b>"
         )
     markup = InlineKeyboardMarkup([
         [
@@ -3513,14 +3521,14 @@ def _cfg_sysinfo_panel(caller_id: int) -> tuple:
     req_count = len(request_db)
     maint_status = "🔴 ON" if MAINTENANCE_MODE else "🟢 OFF"
     text = (
-        "<b>★ System Information</b>\n"
+        "<b>✺ System Information</b>\n"
         "<i>Current runtime statistics.</i>\n"
         f"{_CFG_DIV}\n\n"
-        f"✦ <b>Uptime</b>  →  <code>{uptime_str}</code>\n"
-        f"✦ <b>Stories</b>  →  <code>{story_count}</code>\n"
-        f"✦ <b>Sources</b>  →  <code>{sources}</code>\n"
-        f"✧ <b>Requests</b>  →  <code>{req_count}</code>\n"
-        f"✧ <b>Maintenance</b>  →  <code>{maint_status}</code>"
+        f"▪ <b>Uptime</b>  ➔  <code>{uptime_str}</code>\n"
+        f"▪ <b>Stories</b>  ➔  <code>{story_count}</code>\n"
+        f"▪ <b>Sources</b>  ➔  <code>{sources}</code>\n"
+        f"▫ <b>Requests</b>  ➔  <code>{req_count}</code>\n"
+        f"▫ <b>Maintenance</b>  ➔  <code>{maint_status}</code>"
     )
     markup = InlineKeyboardMarkup([_cfg_nav(caller_id, back="main")])
     return text, markup
@@ -3546,8 +3554,8 @@ def _cfg_maintenance_panel(caller_id: int) -> tuple:
         "<b>🔧 Maintenance Mode</b>\n"
         "<i>Control bot-wide maintenance and downtime.</i>\n"
         f"{_CFG_DIV}\n\n"
-        f"✦ Status: {status_line}\n\n"
-        "✧ <i>When enabled, only admins can use the bot.\n"
+        f"▪ Status: {status_line}\n\n"
+        "▫ <i>When enabled, only admins can use the bot.\n"
         "Users receive a polished maintenance notice.</i>\n\n"
         f"<b>{action_note}</b>"
     )
@@ -4563,27 +4571,43 @@ async def addalias_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         return await update.message.reply_text("Usage: /addalias <Story Name>")
         
-    alias_name = update.message.reply_to_message.text
+    # The alias is the WRONG name (what the admin replies to — the user's search message)
+    # The story target is what the admin types after /addalias
+    replied_text = (update.message.reply_to_message.text or update.message.reply_to_message.caption or "").strip()
+    if not replied_text:
+        return await update.message.reply_text("❌ Replied message has no text to use as alias.")
+
+    # Strip any bot-formatting that might have wrapped the query (e.g. the bot echoes queries)
+    # Keep only the first non-empty line as the alias search text
+    alias_name = replied_text.splitlines()[0].strip()
+    # Remove common prefixes like "Search:" or similar wrapping
+    alias_name = re.sub(r'^[^a-zA-Z\u0900-\u097F0-9]+', '', alias_name).strip()
     if not alias_name:
-        return await update.message.reply_text("Original message has no text.")
-        
-    alias_name = alias_name.strip()
+        return await update.message.reply_text("❌ Could not extract alias text. Make sure you reply to the user's search message.")
+
     story_raw = " ".join(context.args).strip()
     story_cleaned = clean_story(story_raw).lower()
-    
+
     db = load_db()
     if story_cleaned not in db:
-        return await update.message.reply_text(f"Story '{story_raw}' not found in database.")
-        
+        return await update.message.reply_text(f"❌ Story '{story_raw}' not found in database. Check the exact name.")
+
     story_data = db[story_cleaned]
     aliases = story_data.get("aliases", [])
-    if alias_name not in aliases:
+    alias_clean = clean_story(alias_name).lower()
+    if not any(clean_story(a).lower() == alias_clean for a in aliases):
         aliases.append(alias_name)
         story_data["aliases"] = aliases
         db[story_cleaned] = story_data
         save_db(db)
-        
-    await update.message.reply_text(f"✅ Alias '{alias_name}' added to story '{story_data.get('text', story_raw)}'.")
+        await update.message.reply_text(
+            f"✅ Alias added!\n"
+            f"<b>Alias:</b> <code>{alias_name}</code>\n"
+            f"<b>Story:</b> <i>{story_data.get('text', story_raw)}</i>",
+            parse_mode="HTML"
+        )
+    else:
+        await update.message.reply_text(f"ℹ️ The alias <code>{alias_name}</code> already exists for this story.", parse_mode="HTML")
 
 async def removealias_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin-only: remove an alias."""
