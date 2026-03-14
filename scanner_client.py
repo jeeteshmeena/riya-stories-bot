@@ -64,7 +64,7 @@ def _apply_learned_formats(channel_id, message, learned: dict):
         return None
 
     for tmpl in templates:
-        result = extract_with_template(text, tmpl)
+        result = extract_with_template(message, tmpl)
         if result:
             result["message_id"]     = message.id
             result["caption"]        = text

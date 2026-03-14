@@ -3787,20 +3787,26 @@ async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # Build fake message wrapper for learn_format
+        button_url = context.chat_data.get("fmt_sample_button_url")
+        class _FakeBtn:
+            def __init__(self, u): self.url = u
+        class _FakeRow:
+            def __init__(self, u): self.inline_keyboard = [[_FakeBtn(u)]] if u else []
         class _FakeMsg:
-            def __init__(self, t, m):
+            def __init__(self, t, m, bu):
                 self.message = t
                 self.text    = t
                 self.caption = t
                 self.photo   = m
                 self.id      = 0
+                self.reply_markup = _FakeRow(bu)
 
         try:
             ch_id_int = int(cid_str)
         except ValueError:
             ch_id_int = 0
 
-        tmpl = learn_format(_FakeMsg(sample_text, has_media), ch_id_int)
+        tmpl = learn_format(_FakeMsg(sample_text, has_media, button_url), ch_id_int)
 
         # Normalise key: always store as the exact string that matches the source channel
         key = cid_str if cid_str else str(ch_id_int)
@@ -3813,6 +3819,7 @@ async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
         context.chat_data.pop("config_state", None)
         context.chat_data.pop("fmt_sample_text", None)
         context.chat_data.pop("fmt_sample_has_media", None)
+        context.chat_data.pop("fmt_sample_button_url", None)
 
         preview = build_preview(tmpl, sample_text)
         await query.answer("✦ Format learned!", show_alert=False)
@@ -3969,9 +3976,20 @@ async def handle_config_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         # Store sample in chat_data and ask admin to pick a channel
         has_media = bool(msg.photo)
-        context.chat_data["fmt_sample_text"]     = sample_text
-        context.chat_data["fmt_sample_has_media"] = has_media
-        context.chat_data["config_state"]         = "waiting_fmt_channel_id"
+        button_url = None
+        if getattr(msg, "reply_markup", None) and hasattr(msg.reply_markup, "inline_keyboard"):
+            for row in msg.reply_markup.inline_keyboard:
+                for btn in row:
+                    url = getattr(btn, "url", None)
+                    if url and "t.me/" in url:
+                        button_url = url
+                        break
+                if button_url: break
+
+        context.chat_data["fmt_sample_text"]       = sample_text
+        context.chat_data["fmt_sample_has_media"]  = has_media
+        context.chat_data["fmt_sample_button_url"] = button_url
+        context.chat_data["config_state"]          = "waiting_fmt_channel_id"
 
         # Build inline channel-picker buttons
         from config import CHANNEL_ID as _PCH
@@ -4028,15 +4046,21 @@ async def handle_config_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             await msg.reply_text("❌ Invalid channel ID. Send a numeric ID like <code>-1001234567890</code>.", parse_mode="HTML")
             return
 
+        class _FakeBtn:
+            def __init__(self, u): self.url = u
+        class _FakeRow:
+            def __init__(self, u): self.inline_keyboard = [[_FakeBtn(u)]] if u else []
         class _FakeMsg:
-            def __init__(self, t, m):
+            def __init__(self, t, m, bu):
                 self.message = t
                 self.text = t
                 self.caption = t
                 self.photo = m
                 self.id = 0
+                self.reply_markup = _FakeRow(bu)
 
-        tmpl = learn_format(_FakeMsg(sample_text, has_media), ch_id_int)
+        button_url = context.chat_data.get("fmt_sample_button_url")
+        tmpl = learn_format(_FakeMsg(sample_text, has_media, button_url), ch_id_int)
         cid_str = str(ch_id_int)
         if cid_str not in learned_formats_db:
             learned_formats_db[cid_str] = []
@@ -4047,6 +4071,7 @@ async def handle_config_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         context.chat_data.pop("config_state", None)
         context.chat_data.pop("fmt_sample_text", None)
         context.chat_data.pop("fmt_sample_has_media", None)
+        context.chat_data.pop("fmt_sample_button_url", None)
         await msg.reply_text(
             f"<b>★ Format Learned!</b>\n"
             f"━━━━━━━━━━━━━━━━\n\n"
@@ -4072,7 +4097,7 @@ async def handle_config_input(update: Update, context: ContextTypes.DEFAULT_TYPE
             if not isinstance(templates, list):
                 continue
             for tmpl in templates:
-                result = build_test_result(test_text, tmpl)
+                result = build_test_result(msg, tmpl)
                 if "★ Test Result: Matched" in result:
                     matched_result = result
                     matched_label = tmpl.get("label", cid_str)
