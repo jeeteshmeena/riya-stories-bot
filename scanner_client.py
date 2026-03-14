@@ -16,19 +16,46 @@ from format_learner import extract_with_template
 logger = logging.getLogger(__name__)
 
 
-def _apply_learned_formats(channel_id, message, learned_formats_by_channel):
+def _normalise_channel_key(channel_id) -> str:
+    """
+    Return a consistent string key for channel_id lookups.
+
+    Telegram channel IDs arrive as integers like -1001234567890.
+    We store them as their exact string representations ("-1001234567890").
+    We also try the bare number without leading minus ("1001234567890") and
+    the stripped-100 variant ("1234567890") as fallbacks so older saved
+    templates are still found.
+    """
+    return str(channel_id)
+
+
+def _lookup_templates(channel_id, learned: dict) -> list:
+    """
+    Try several possible key shapes for *channel_id* and return the first
+    non-empty list found, or [].
+    """
+    cid_str = str(channel_id)       # e.g. "-1001234567890"
+    cid_abs = str(abs(int(cid_str)) if cid_str.lstrip("-").isdigit() else 0)  # "1001234567890"
+
+    # Strip the -100 / 100 prefix to get the bare channel number
+    cid_bare = cid_abs
+    if cid_abs.startswith("100") and len(cid_abs) > 10:
+        cid_bare = cid_abs[3:]      # "1234567890"
+
+    for key in (cid_str, cid_abs, cid_bare):
+        val = learned.get(key)
+        if isinstance(val, list) and val:
+            return val
+
+    return []
+
+
+def _apply_learned_formats(channel_id, message, learned: dict):
     """
     Try every learned template stored for *channel_id*.
     Returns a story dict or None.
     """
-    if not learned_formats_by_channel:
-        return None
-
-    templates = (
-        learned_formats_by_channel.get(str(channel_id))
-        or learned_formats_by_channel.get(str(abs(int(channel_id))))
-        or []
-    )
+    templates = _lookup_templates(channel_id, learned)
     if not templates:
         return None
 
@@ -39,9 +66,9 @@ def _apply_learned_formats(channel_id, message, learned_formats_by_channel):
     for tmpl in templates:
         result = extract_with_template(text, tmpl)
         if result:
-            result["message_id"] = message.id
-            result["caption"]    = text
-            result["story_type"] = result.pop("status", None)
+            result["message_id"]     = message.id
+            result["caption"]        = text
+            result["story_type"]     = result.pop("status", None)
             result["source_channel"] = str(channel_id)
             if not result.get("name"):
                 continue
@@ -147,9 +174,12 @@ async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None,
 
     # Load the learned formats fresh each scan
     learned = load_learned_formats()
-    has_learned_template = bool(
-        learned.get(str(channel_id))
-        or learned.get(str(abs(int(channel_id) if str(channel_id).lstrip("-").isdigit() else 0)))
+
+    # Does this channel have at least one learned template?
+    has_learned_template = bool(_lookup_templates(channel_id, learned))
+    logger.info(
+        f"scan_channel({channel_id}): learned_template={'YES' if has_learned_template else 'NO'} "
+        f"| keys_in_db={list(learned.keys())}"
     )
 
     total_messages = 0
@@ -161,7 +191,7 @@ async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None,
 
     try:
         entity = await _resolve_entity(client, channel_id)
-        logger.info(f"Starting scan of channel {channel_id} (has_learned={has_learned_template})")
+        logger.info(f"Starting scan of channel {channel_id}")
 
         async for msg in client.iter_messages(entity, limit=None, reverse=True):
 

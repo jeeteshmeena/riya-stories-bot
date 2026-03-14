@@ -3340,18 +3340,45 @@ def _cfg_formats_panel(caller_id: int, lang: str = "en") -> tuple:
 
 
 def _cfg_fmt_learn_panel(caller_id: int) -> tuple:
-    """Prompt admin to forward a sample post + send the channel ID."""
+    """Prompt admin to forward a sample post, then pick channel from buttons."""
+    # Gather all known source channels
+    all_sources = []
+    from config import CHANNEL_ID as _PRIMARY_CH
+    if _PRIMARY_CH:
+        all_sources.append(str(_PRIMARY_CH))
+    for cid in bot_config.get("sources", []):
+        cid_s = str(cid)
+        if cid_s not in all_sources:
+            all_sources.append(cid_s)
+
+    if all_sources:
+        ch_lines = "\n".join(f"• <code>{c}</code>" for c in all_sources)
+        body = (
+            "<b>◆ Step 1:</b> Forward one example story post from your channel.\n"
+            "<b>◆ Step 2:</b> Then tap your channel below.\n\n"
+            f"<b>Your source channels:</b>\n{ch_lines}"
+        )
+        # Build channel picker buttons
+        ch_rows = [
+            [InlineKeyboardButton(f"◆ {c}", callback_data=f"cfg|fmt_pick_ch|{c}|{caller_id}")]
+            for c in all_sources
+        ]
+    else:
+        body = (
+            "<b>◆ No source channels configured yet.</b>\n\n"
+            "✧ First add a source channel via <b>Sources</b> in /config,\n"
+            "then come back here to learn a format."
+        )
+        ch_rows = []
+
     text = (
-        "<b>★ Add Format — Step 1</b>\n"
-        "<i>Teach the bot a new channel's story format.</i>\n"
+        "<b>★ Add Format — Forward a Sample Post</b>\n"
         f"{_CFG_DIV}\n\n"
-        "<b>◆ Instructions:</b>\n"
-        "• First <b>forward</b> one example story post from the channel.\n"
-        "• Then send the <b>channel ID</b> (e.g. <code>-1001234567890</code>).\n\n"
-        "The bot will analyse the post and auto-learn the format.\n\n"
-        "<i>✧ No regex required — just forward a real post!</i>"
+        f"{body}\n\n"
+        "<i>✧ No regex required — just forward a real story post!</i>"
     )
-    markup = InlineKeyboardMarkup([_cfg_nav(caller_id, back="formats")])
+    rows = ch_rows + [_cfg_nav(caller_id, back="formats")]
+    markup = InlineKeyboardMarkup(rows)
     return text, markup
 
 
@@ -3700,9 +3727,72 @@ async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         return
 
+    if section == "fmt_pick_ch":
+        # Admin tapped a channel button — apply sample text to that channel
+        cid_str = action
+        sample_text = context.chat_data.get("fmt_sample_text", "")
+        has_media   = context.chat_data.get("fmt_sample_has_media", False)
 
+        if not sample_text:
+            await query.answer("☆ No sample found. Please forward a post first.", show_alert=True)
+            return
+
+        # Build fake message wrapper for learn_format
+        class _FakeMsg:
+            def __init__(self, t, m):
+                self.message = t
+                self.text    = t
+                self.caption = t
+                self.photo   = m
+                self.id      = 0
+
+        try:
+            ch_id_int = int(cid_str)
+        except ValueError:
+            ch_id_int = 0
+
+        tmpl = learn_format(_FakeMsg(sample_text, has_media), ch_id_int)
+
+        # Normalise key: always store as the exact string that matches the source channel
+        key = cid_str if cid_str else str(ch_id_int)
+        if key not in learned_formats_db:
+            learned_formats_db[key] = []
+        learned_formats_db[key].append(tmpl)
+        save_learned_formats(learned_formats_db)
+
+        # Clear state
+        context.chat_data.pop("config_state", None)
+        context.chat_data.pop("fmt_sample_text", None)
+        context.chat_data.pop("fmt_sample_has_media", None)
+
+        preview = build_preview(tmpl, sample_text)
+        await query.answer("✦ Format learned!", show_alert=False)
+        # Show result by editing the config message
+        markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("◆ View Formats", callback_data=f"cfg|fmt_view||{caller_id}")],
+            _cfg_nav(caller_id, back="formats"),
+        ])
+        await _edit_cfg(
+            query,
+            f"<b>★ Format Learned!</b>\n"
+            f"━━━━━━━━━━━━━━━━\n\n"
+            f"✦ Template saved for channel <code>{key}</code>.\n\n"
+            f"{preview}",
+            markup
+        )
+        return
+
+    if section == "fmt_learn":
+        # Re-entry: show the Add Format panel (sets state)
+        text, markup = _cfg_fmt_learn_panel(caller_id)
+        context.chat_data["config_state"] = "waiting_fmt_sample"
+        context.chat_data["config_caller_id"] = caller_id
+        await _edit_cfg(query, text, markup)
+        await query.answer()
+        return
 
     # ── System info ──────────────────────────────────────────────────────────
+
     if section == "sysinfo":
         text, markup = _cfg_sysinfo_panel(caller_id)
         await _edit_cfg(query, text, markup, loading=True)
@@ -3804,75 +3894,65 @@ async def handle_config_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     # ── Step 1a: Admin forwards a sample story post ──────────────────────────
     if state == "waiting_fmt_sample":
         msg = update.message
-        # If it's a forwarded message, use it as the sample; otherwise treat plain text as channel_id
-        fwd = getattr(msg, "forward_origin", None) or getattr(msg, "forward_from", None) or getattr(msg, "forward_from_chat", None)
+        sample_text = (msg.text or msg.caption or "").strip()
 
-        if fwd or (msg.text and not msg.text.lstrip("-").isdigit()):
-            # Treat this as the sample post — store msgid + text in chat_data
-            sample_text = msg.text or msg.caption or ""
-            has_media = bool(msg.photo)
-            context.chat_data["fmt_sample_text"] = sample_text
-            context.chat_data["fmt_sample_has_media"] = has_media
-            context.chat_data["config_state"] = "waiting_fmt_channel_id"
+        if not sample_text:
             await msg.reply_text(
-                "<b>★ Add Format — Step 2</b>\n"
-                "━━━━━━━━━━━━━━━━\n\n"
-                "✦ Sample post received!\n\n"
-                "Now send the <b>channel ID</b> of this channel:\n"
-                "<code>-1001234567890</code>\n\n"
-                "<i>✧ The channel must already be in your Sources list.</i>",
+                "<b>☆ Empty message.</b>\n\n"
+                "Please forward a post that has text or a caption.",
                 parse_mode="HTML"
             )
+            return
+
+        # Store sample in chat_data and ask admin to pick a channel
+        has_media = bool(msg.photo)
+        context.chat_data["fmt_sample_text"]     = sample_text
+        context.chat_data["fmt_sample_has_media"] = has_media
+        context.chat_data["config_state"]         = "waiting_fmt_channel_id"
+
+        # Build inline channel-picker buttons
+        from config import CHANNEL_ID as _PCH
+        all_sources = []
+        if _PCH:
+            all_sources.append(str(_PCH))
+        for cid in bot_config.get("sources", []):
+            cid_s = str(cid)
+            if cid_s not in all_sources:
+                all_sources.append(cid_s)
+
+        caller_id = context.chat_data.get("config_caller_id", 0)
+        if all_sources:
+            ch_rows = [
+                [InlineKeyboardButton(f"◆ {c}", callback_data=f"cfg|fmt_pick_ch|{c}|{caller_id}")]
+                for c in all_sources
+            ]
+            channel_note = "Tap your channel below:"
         else:
-            # They sent a channel ID directly; if we have a sample, process it
-            sample_text = context.chat_data.get("fmt_sample_text", "")
-            has_media   = context.chat_data.get("fmt_sample_has_media", False)
-            if not sample_text:
-                await msg.reply_text(
-                    "<b>☆ No sample found.</b>\n\n"
-                    "Please first forward an example story post, then send the channel ID.",
-                    parse_mode="HTML"
-                )
-                return
-            try:
-                ch_id_int = int(msg.text.strip())
-            except ValueError:
-                await msg.reply_text("❌ Invalid channel ID. Send a numeric ID like <code>-1001234567890</code>.", parse_mode="HTML")
-                return
-
-            # Build a fake message-like object for learn_format
-            class _FakeMsg:
-                def __init__(self, t, m):
-                    self.message = t
-                    self.text = t
-                    self.caption = t
-                    self.photo = m
-                    self.id = 0
-
-            tmpl = learn_format(_FakeMsg(sample_text, has_media), ch_id_int)
-            cid_str = str(ch_id_int)
-            if cid_str not in learned_formats_db:
-                learned_formats_db[cid_str] = []
-            learned_formats_db[cid_str].append(tmpl)
-            save_learned_formats(learned_formats_db)
-
-            # Show preview
-            preview = build_preview(tmpl, sample_text)
-            context.chat_data.pop("config_state", None)
-            context.chat_data.pop("fmt_sample_text", None)
-            context.chat_data.pop("fmt_sample_has_media", None)
-            await msg.reply_text(
-                f"<b>★ Format Learned!</b>\n"
-                f"━━━━━━━━━━━━━━━━\n\n"
-                f"✦ Template saved for channel <code>{ch_id_int}</code>.\n\n"
-                f"{preview}",
-                parse_mode="HTML"
+            ch_rows = []
+            channel_note = (
+                "No source channels configured yet.\n"
+                "Add one in Sources first, then try again."
             )
+
+        markup = InlineKeyboardMarkup(ch_rows + [[InlineKeyboardButton("✕ Cancel", callback_data=f"cfg|formats||{caller_id}")]])
+        await msg.reply_text(
+            "<b>★ Add Format — Step 2</b>\n"
+            "━━━━━━━━━━━━━━━━\n\n"
+            "✦ Sample post received!\n\n"
+            f"<b>◆ {channel_note}</b>",
+            parse_mode="HTML",
+            reply_markup=markup
+        )
         return
 
-    # ── Step 1b: Admin sends channel ID after sending sample ──────────────────
+    # ── waiting_fmt_channel_id: now handled via callback (fmt_pick_ch), not text ──
     if state == "waiting_fmt_channel_id":
+        # If the admin typed a channel ID (fallback for no-button situations)
         msg = update.message
+        raw = (msg.text or "").strip()
+        if not raw.lstrip("-").isdigit():
+            await msg.reply_text("❌ Please tap one of the channel buttons, or enter a valid numeric channel ID.", parse_mode="HTML")
+            return
         sample_text = context.chat_data.get("fmt_sample_text", "")
         has_media   = context.chat_data.get("fmt_sample_has_media", False)
         if not sample_text:

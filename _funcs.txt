@@ -1,0 +1,14 @@
+_cfg_nav: 3160
+_cfg_main_panel: 3168
+_cfg_lang_panel: 3212
+_cfg_timers_panel: 3233
+_cfg_sources_panel: 3251
+_cfg_add_source_panel: 3274
+_cfg_rm_source_panel: 3287
+_cfg_formats_panel: 3308
+_cfg_fmt_learn_panel: 3342
+_cfg_fmt_view_panel: 3358
+_cfg_fmt_rm_panel: 3395
+_cfg_fmt_test_panel: 3421
+_cfg_sysinfo_panel: 3438
+_cfg_maintenance_panel: 3462
