@@ -295,8 +295,19 @@ def _clear_cooldown(user_id: int):
 
 
 async def _enforce_cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Return True if user is blocked and we've informed them."""
+    """Return True if user is blocked or if system is scanning, to abort command."""
     user = update.effective_user
+    if getattr(update, "callback_query", None):
+        target_msg = update.callback_query.message
+    else:
+        target_msg = update.message
+
+    if IS_SCANNING:
+        if not (user and is_admin(user.id)):
+            lang = get_chat_lang(update.effective_chat.id) if update.effective_chat else "en"
+            await _send_scan_busy_notice(target_msg, lang)
+            return True
+
     if not user:
         return False
     entry = _get_cooldown(user.id)
@@ -341,16 +352,18 @@ async def _send_scan_busy_notice(msg, lang: str):
     """Send scan busy notice, auto-delete after 24h."""
     if lang == "hi":
         text = (
-            "<b>⏳ कृपया प्रतीक्षा करें</b>\n\n"
+            "<b>⏳ डेटाबेस अपडेट हो रहा है</b>\n\n"
             "<i>Riya अभी डेटाबेस से स्टोरीज़ अपडेट कर रही है।</i>\n"
-            "कृपया थोड़ी देर बाद फिर से कोशिश करें।\n\n"
+            "कृपया कुछ समय प्रतीक्षा करें।\n"
+            "<b>अपडेट पूरा होने के बाद बॉट अपने आप काम करना शुरू कर देगा।</b>\n\n"
             f"<code>{datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S')} UTC</code>"
         )
     else:
         text = (
-            "<b>⏳ Please wait</b>\n\n"
-            "<i>Riya is currently fetching and updating stories from the database.</i>\n"
-            "Try again after some time.\n\n"
+            "<b>⏳ Database Updating</b>\n\n"
+            "<i>Riya is currently updating the story database.</i>\n"
+            "Please wait for a certain amount of time.\n"
+            "<b>The bot will automatically start working again once the update is complete.</b>\n\n"
             f"<code>{datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S')} UTC</code>"
         )
 
@@ -2835,6 +2848,20 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -----------------------
 
 async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    
+    if IS_SCANNING:
+        await update.inline_query.answer(
+            [
+                InlineQueryResultArticle(
+                    id="scanning",
+                    title="⏳ Database Updating",
+                    description="The bot is currently scanning for updates. Please try again soon.",
+                    input_message_content=InputTextMessageContent("Riya is currently updating the database. The bot will automatically start working once complete.")
+                )
+            ],
+            cache_time=5
+        )
+        return
 
     query = update.inline_query.query
 
