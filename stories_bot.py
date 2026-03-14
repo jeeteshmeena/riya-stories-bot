@@ -121,6 +121,10 @@ last_scan_count = len(story_index)
 # runtime state
 BOT_START_TS = time.time()
 IS_SCANNING = False
+
+# Maintenance mode state
+MAINTENANCE_MODE = False          # True while bot is in maintenance
+MAINTENANCE_UNTIL: float = 0.0   # epoch timestamp when maintenance ends (0 = indefinite)
 cooldowns_db = load_cooldowns()  # user_id(str) -> {'until': ts, 'reason': str}
 COPYRIGHT_DEFAULT_COOLDOWN_MIN = 1440  # 24h
 chat_languages = load_languages()  # chat_id(str) -> 'en'/'hi'
@@ -130,6 +134,15 @@ bot_config = load_config()
 stats_db = load_stats()  # {"searches": {}, "users": {}, "trending": {}}
 favorites_db = load_favorites()  # { user_id_str: [story_key1, ...] }
 subs_db = load_subs()  # [ user_id1_str, ... ]
+
+# Restore maintenance state from config (survives restarts)
+_maint_cfg = bot_config.get("maintenance", {})
+if _maint_cfg.get("enabled") and (_maint_cfg.get("until", 0) == 0 or _maint_cfg.get("until", 0) > time.time()):
+    MAINTENANCE_MODE = True
+    MAINTENANCE_UNTIL = float(_maint_cfg.get("until", 0))
+else:
+    MAINTENANCE_MODE = False
+    MAINTENANCE_UNTIL = 0.0
 
 # Rate limit: min seconds between searches per user
 SEARCH_COOLDOWN = 2
@@ -303,6 +316,17 @@ async def _enforce_cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await _send_scan_busy_notice(target_msg, lang)
             return True
 
+    # Maintenance mode check
+    if MAINTENANCE_MODE:
+        if not (user and is_admin(user.id)):
+            # auto-expire if time is up
+            if MAINTENANCE_UNTIL > 0 and time.time() >= MAINTENANCE_UNTIL:
+                _end_maintenance()
+            else:
+                lang = get_chat_lang(update.effective_chat.id) if update.effective_chat else "en"
+                await _send_maintenance_notice(target_msg, lang)
+                return True
+
     if not user:
         return False
     entry = _get_cooldown(user.id)
@@ -372,6 +396,72 @@ async def _send_scan_busy_notice(msg, lang: str):
             pass
 
     asyncio.create_task(_delete_notice())
+
+
+def _end_maintenance():
+    """Disable maintenance mode and persist the off-state."""
+    global MAINTENANCE_MODE, MAINTENANCE_UNTIL
+    MAINTENANCE_MODE = False
+    MAINTENANCE_UNTIL = 0.0
+    bot_config["maintenance"] = {"enabled": False, "until": 0}
+    save_config(bot_config)
+
+
+async def _send_maintenance_notice(msg, lang: str):
+    """Send a premium maintenance notice to blocked users (auto-deleted after 2 min)."""
+    if MAINTENANCE_UNTIL > 0:
+        rem = max(0, int(MAINTENANCE_UNTIL - time.time()))
+        h, r = divmod(rem, 3600)
+        m, _ = divmod(r, 60)
+        if h > 0:
+            eta_en = f"approximately {h}h {m}m"
+            eta_hi = f"लगभग {h}h {m}m"
+        elif m > 0:
+            eta_en = f"approximately {m} minute(s)"
+            eta_hi = f"लगभग {m} मिनट"
+        else:
+            eta_en = "a few seconds"
+            eta_hi = "कुछ सेकंड"
+    else:
+        eta_en = "an unspecified time"
+        eta_hi = "अनिश्चित समय"
+
+    if lang == "hi":
+        text = (
+            "<b>🔧 Riya — रखरखाव मोड</b>\n"
+            "━━━━━━━━━━━━━━━━\n\n"
+            "<i>Riya अभी मेंटेनेंस पर है।</i>\n\n"
+            "✦ <b>हम क्या कर रहे हैं?</b>\n"
+            "✧ सिस्टम अपग्रेड और सुधार\n"
+            "✧ डेटाबेस ऑप्टिमाइज़ेशन\n\n"
+            f"✦ <b>अनुमानित समय:</b> <code>{eta_hi}</code>\n\n"
+            "<i>आपके धैर्य के लिए धन्यवाद।</i> 🙏"
+        )
+    else:
+        text = (
+            "<b>🔧 Riya — Maintenance Mode</b>\n"
+            "━━━━━━━━━━━━━━━━\n\n"
+            "<i>Riya is currently undergoing scheduled maintenance.</i>\n\n"
+            "✦ <b>What's happening?</b>\n"
+            "✧ System upgrades & improvements\n"
+            "✧ Database optimisation\n\n"
+            f"✦ <b>Expected back in:</b> <code>{eta_en}</code>\n\n"
+            "<i>Thank you for your patience. We'll be back shortly!</i> 🙏"
+        )
+
+    try:
+        notice = await msg.reply_text(text=text, parse_mode="HTML")
+
+        async def _del():
+            await asyncio.sleep(120)
+            try:
+                await notice.delete()
+            except Exception:
+                pass
+
+        asyncio.create_task(_del())
+    except Exception:
+        pass
 
 
 def init_search_index():
@@ -2849,6 +2939,26 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
+    # Maintenance mode block (non-admins)
+    if MAINTENANCE_MODE and not is_admin(update.inline_query.from_user.id):
+        if MAINTENANCE_UNTIL > 0 and time.time() >= MAINTENANCE_UNTIL:
+            _end_maintenance()
+        else:
+            await update.inline_query.answer(
+                [
+                    InlineQueryResultArticle(
+                        id="maintenance",
+                        title="🔧 Maintenance Mode",
+                        description="Riya is currently under maintenance. Please try again later.",
+                        input_message_content=InputTextMessageContent(
+                            "🔧 Riya is currently under scheduled maintenance. We will be back shortly. Thank you for your patience! 🙏"
+                        )
+                    )
+                ],
+                cache_time=30
+            )
+            return
+
     if IS_SCANNING:
         await update.inline_query.answer(
             [
@@ -3077,18 +3187,21 @@ def _cfg_main_panel(caller_id: int, lang: str = "en") -> tuple:
         )
     markup = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("✦ Language",    callback_data=f"cfg|lang||{caller_id}"),
-            InlineKeyboardButton("✦ Timers",       callback_data=f"cfg|timers||{caller_id}"),
+            InlineKeyboardButton("✦ Language",      callback_data=f"cfg|lang||{caller_id}"),
+            InlineKeyboardButton("✦ Timers",         callback_data=f"cfg|timers||{caller_id}"),
         ],
         [
-            InlineKeyboardButton("✦ Channels",    callback_data=f"cfg|sources||{caller_id}"),
-            InlineKeyboardButton("✦ Formats",      callback_data=f"cfg|formats||{caller_id}"),
+            InlineKeyboardButton("✦ Channels",      callback_data=f"cfg|sources||{caller_id}"),
+            InlineKeyboardButton("✦ Formats",        callback_data=f"cfg|formats||{caller_id}"),
         ],
         [
-            InlineKeyboardButton("✦ System Info", callback_data=f"cfg|sysinfo||{caller_id}"),
-            InlineKeyboardButton("✧ Refresh",      callback_data=f"cfg|main||{caller_id}"),
+            InlineKeyboardButton("✦ System Info",   callback_data=f"cfg|sysinfo||{caller_id}"),
+            InlineKeyboardButton("🔧 Maintenance",   callback_data=f"cfg|maintenance||{caller_id}"),
         ],
-        [InlineKeyboardButton("✕ Delete", callback_data=f"cfg|close||{caller_id}")],
+        [
+            InlineKeyboardButton("✧ Refresh",        callback_data=f"cfg|main||{caller_id}"),
+            InlineKeyboardButton("✕ Delete",          callback_data=f"cfg|close||{caller_id}"),
+        ],
     ])
     return header, markup
 
@@ -3257,6 +3370,7 @@ def _cfg_sysinfo_panel(caller_id: int) -> tuple:
     story_count = len(story_index)
     sources = len(bot_config.get("sources", []))
     req_count = len(request_db)
+    maint_status = "🔴 ON" if MAINTENANCE_MODE else "🟢 OFF"
     text = (
         "<b>★ System Information</b>\n"
         "<i>Current runtime statistics.</i>\n"
@@ -3264,9 +3378,57 @@ def _cfg_sysinfo_panel(caller_id: int) -> tuple:
         f"✦ <b>Uptime</b>  →  <code>{uptime_str}</code>\n"
         f"✦ <b>Stories</b>  →  <code>{story_count}</code>\n"
         f"✦ <b>Sources</b>  →  <code>{sources}</code>\n"
-        f"✧ <b>Requests</b>  →  <code>{req_count}</code>"
+        f"✧ <b>Requests</b>  →  <code>{req_count}</code>\n"
+        f"✧ <b>Maintenance</b>  →  <code>{maint_status}</code>"
     )
     markup = InlineKeyboardMarkup([_cfg_nav(caller_id, back="main")])
+    return text, markup
+
+
+def _cfg_maintenance_panel(caller_id: int) -> tuple:
+    """Build the maintenance mode config panel."""
+    if MAINTENANCE_MODE:
+        if MAINTENANCE_UNTIL > 0:
+            rem = max(0, int(MAINTENANCE_UNTIL - time.time()))
+            h, r = divmod(rem, 3600)
+            m, _ = divmod(r, 60)
+            eta = f"{h}h {m}m remaining" if h > 0 else (f"{m}m remaining" if m > 0 else "ending soon")
+        else:
+            eta = "indefinite"
+        status_line = f"🔴 <b>ACTIVE</b>  —  <code>{eta}</code>"
+    else:
+        status_line = "🟢 <b>INACTIVE</b>"
+
+    text = (
+        "<b>🔧 Maintenance Mode</b>\n"
+        "<i>Control bot-wide maintenance and downtime.</i>\n"
+        f"{_CFG_DIV}\n\n"
+        f"✦ Status: {status_line}\n\n"
+        "✧ <i>When enabled, only admins can use the bot.\n"
+        "Users receive a polished maintenance notice.</i>\n\n"
+        "<b>Select duration then toggle:</b>"
+    )
+    # toggle label
+    toggle_label = "🔴 Disable" if MAINTENANCE_MODE else "🟢 Enable"
+    markup = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("30 min",  callback_data=f"cfg|maint_dur|30|{caller_id}"),
+            InlineKeyboardButton("1 hour",  callback_data=f"cfg|maint_dur|60|{caller_id}"),
+            InlineKeyboardButton("3 hours", callback_data=f"cfg|maint_dur|180|{caller_id}"),
+        ],
+        [
+            InlineKeyboardButton("6 hours", callback_data=f"cfg|maint_dur|360|{caller_id}"),
+            InlineKeyboardButton("12 hours", callback_data=f"cfg|maint_dur|720|{caller_id}"),
+            InlineKeyboardButton("24 hours", callback_data=f"cfg|maint_dur|1440|{caller_id}"),
+        ],
+        [
+            InlineKeyboardButton("∞ Indefinite", callback_data=f"cfg|maint_dur|0|{caller_id}"),
+        ],
+        [
+            InlineKeyboardButton(toggle_label, callback_data=f"cfg|maint_toggle||{caller_id}"),
+        ],
+        _cfg_nav(caller_id, back="main"),
+    ])
     return text, markup
 
 
@@ -3466,6 +3628,52 @@ async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
         text, markup = _cfg_sysinfo_panel(caller_id)
         await _edit_cfg(query, text, markup, loading=True)
         await query.answer()
+        return
+
+    # ── Maintenance mode ─────────────────────────────────────────────────────
+    if section == "maintenance":
+        text, markup = _cfg_maintenance_panel(caller_id)
+        await _edit_cfg(query, text, markup)
+        await query.answer()
+        return
+
+    if section == "maint_dur":
+        # Store chosen duration in chat_data and refresh maintenance panel
+        try:
+            mins_val = int(action)
+        except ValueError:
+            mins_val = 60
+        context.chat_data["maint_pending_mins"] = mins_val
+        dur_label = f"{mins_val} minute(s)" if mins_val > 0 else "indefinitely"
+        await query.answer(f"✦ Duration set to {dur_label}. Now tap Enable/Disable.", show_alert=False)
+        text, markup = _cfg_maintenance_panel(caller_id)
+        await _edit_cfg(query, text, markup)
+        return
+
+    if section == "maint_toggle":
+        global MAINTENANCE_MODE, MAINTENANCE_UNTIL
+        if MAINTENANCE_MODE:
+            # Turn OFF
+            _end_maintenance()
+            await query.answer("🟢 Maintenance mode disabled.", show_alert=True)
+        else:
+            # Turn ON with chosen duration
+            mins_val = context.chat_data.get("maint_pending_mins", 60)  # default 1h
+            MAINTENANCE_MODE = True
+            MAINTENANCE_UNTIL = (time.time() + mins_val * 60) if mins_val > 0 else 0.0
+            bot_config["maintenance"] = {"enabled": True, "until": MAINTENANCE_UNTIL}
+            save_config(bot_config)
+            dur_label = f"{mins_val} minute(s)" if mins_val > 0 else "indefinitely"
+            await query.answer(f"🔴 Maintenance mode ON for {dur_label}.", show_alert=True)
+            # Schedule auto-expiry if duration is finite
+            if mins_val > 0:
+                async def _auto_off():
+                    await asyncio.sleep(mins_val * 60)
+                    if MAINTENANCE_MODE:  # might already be turned off manually
+                        _end_maintenance()
+                asyncio.create_task(_auto_off())
+        text, markup = _cfg_maintenance_panel(caller_id)
+        await _edit_cfg(query, text, markup)
         return
 
     # ── Legacy cfg_main|* compat ──────────────────────────────────────────────
