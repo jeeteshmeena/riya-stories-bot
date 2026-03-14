@@ -1605,6 +1605,17 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await _enforce_cooldown(update, context):
         return
 
+    # Always delete the /request command message from the group after 5 seconds
+    async def _delete_cmd_msg():
+        await asyncio.sleep(5)
+        try:
+            await update.message.delete()
+        except Exception:
+            pass
+
+    if update.message:
+        asyncio.create_task(_delete_cmd_msg())
+
     if not context.args:
 
         chat = update.effective_chat
@@ -1629,22 +1640,14 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         warn_msg = await update.effective_chat.send_message(warn_text)
 
-        async def _delete_later():
-
-            await asyncio.sleep(3600)
-
+        async def _delete_warn():
+            await asyncio.sleep(30)
             try:
                 await warn_msg.delete()
-            except:
+            except Exception:
                 pass
 
-            try:
-                await update.message.delete()
-            except:
-                pass
-
-        asyncio.create_task(_delete_later())
-
+        asyncio.create_task(_delete_warn())
         return
 
     story_raw = " ".join(context.args).strip()
@@ -1850,6 +1853,41 @@ If we find it, it will be uploaded soon.</b>
         f"REQUEST | user_id={user.id} username={user.username} story={story}"
     )
 
+
+# ---------------------------------------------------------------------------
+# Group Cleanup Handler
+# Auto-deletes bot commands and @botusername messages from the group to keep
+# the chat clean and organised for new users.
+# ---------------------------------------------------------------------------
+
+async def group_cleanup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    In group chats: silently delete any message that is either:
+      • A bot command (starts with /)
+      • Text that mentions the bot's username (@botname)
+    Uses a 5-second delay so the user briefly sees their message was received.
+    Admin messages are also cleaned so the group stays tidy.
+    """
+    msg = update.message or update.edited_message
+    if not msg:
+        return
+
+    # Only run in groups / supergroups
+    if update.effective_chat.type not in ("group", "supergroup"):
+        return
+
+    # If GROUP_ID is configured, only clean that specific group
+    if GROUP_ID and str(update.effective_chat.id) != str(GROUP_ID):
+        return
+
+    async def _do_delete():
+        await asyncio.sleep(5)
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+
+    asyncio.create_task(_do_delete())
 
 async def _notify_fulfilled_requests(context: ContextTypes.DEFAULT_TYPE):
     """After a scan, notify chats where stories were requested if now available."""
@@ -4368,6 +4406,24 @@ def start_bot():
 
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler)
+    )
+
+    # ── Group Cleanup: auto-delete commands & @botusername messages ──────────
+    # Commands in groups (any /command sent in the group chat)
+    app.add_handler(
+        MessageHandler(
+            filters.COMMAND & filters.ChatType.GROUPS,
+            group_cleanup_handler,
+        ),
+        group=10,   # lower priority than command handlers so they still fire first
+    )
+    # Text messages that @mention the bot in a group (catches "@botname ..." style messages)
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & filters.ChatType.GROUPS & filters.Entity("mention"),
+            group_cleanup_handler,
+        ),
+        group=10,
     )
 
     app.add_handler(CallbackQueryHandler(buttons))

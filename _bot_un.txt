@@ -1,0 +1,7 @@
+1346:             # Support both integer IDs and string usernames
+2045:     target_mention = user.mention_html()
+2049:         target_mention = msg.reply_to_message.from_user.mention_html()
+2056:                     target_mention = mtxt[ent.offset : ent.offset + ent.length]
+2059:                 target_mention = ent.user.mention_html()
+2063:     mention = target_mention
+4307: async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
