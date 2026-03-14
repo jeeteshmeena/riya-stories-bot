@@ -1,92 +1,99 @@
-# Riya Stories Bot v10
+# 🌟 Riya Stories Bot v10
 
-Telegram story finder bot with AI fuzzy search, inline buttons, and admin stats.
+A high-performance, feature-rich Telegram bot designed for indexing, searching, and managing stories across multiple channels. Built with a focus on speed, user experience, and robust admin management.
 
-## Features
+## ✨ Key Features
 
-- AI fuzzy search
-- Progress bar replies
-- Spam filter
-- Language system
-- Inline buttons
-- JSON database (stories, claims, requests)
-- Admin stats, /scan, /request
+### 🔍 Search & Discovery
+*   **AI Fuzzy Search**: Advanced search powered by `rapidfuzz` that handles typos and complex queries.
+*   **Trending Stories**: Real-time tracking of the most popular searches.
+*   **Categorized Browsing**: Automated category extraction from story posts for easy navigation.
+*   **Recent Series**: Quickly view the 10 most recently added stories.
 
-## Quick Start
+### 🍱 User Experience
+*   **Premium Unicode UI**: A clean, modern interface using custom Unicode symbols instead of standard emojis.
+*   **Favorites & Saved Stories**: Users can save their favorite stories for quick access directly in-bot.
+*   **Language System**: Full support for both **English** and **Hindi** interfaces.
+*   **Inline Navigation**: Responsive inline keyboard buttons for searching, pagination, and menu management.
+*   **Notification System**: Users can subscribe to get alerts when new stories are added.
 
-1. Copy `.env.example` to `.env`
-2. Set `BOT_TOKEN` (required) and other variables
-3. Run: `python stories_bot.py`
-
-## Google Cloud VPS Deployment
-
-### 1. Clone and configure
-
-```bash
-git clone https://github.com/jeeteshmeena/riya-stories-bot.git
-cd riya-stories-bot
-cp .env.example .env
-nano .env   # Add BOT_TOKEN, CHANNEL_ID, etc.
-```
-
-### 2. Run with install script (recommended)
-
-```bash
-chmod +x deploy/install-vps.sh deploy/run.sh
-./deploy/install-vps.sh
-./deploy/run.sh
-```
-
-### 3. Run as systemd service (survives reboot)
-
-```bash
-./deploy/install-vps.sh
-sudo cp /tmp/riya-bot.service /etc/systemd/system/
-sudo sed -i "s|YOUR_USER|$(whoami)|g" /etc/systemd/system/riya-bot.service
-sudo sed -i "s|/home/YOUR_USER/riya-stories-bot|$(pwd)|g" /etc/systemd/system/riya-bot.service
-sudo systemctl daemon-reload
-sudo systemctl enable riya-bot
-sudo systemctl start riya-bot
-sudo systemctl status riya-bot
-```
-
-### 4. Run in background (no systemd)
-
-```bash
-nohup ./deploy/run.sh >> bot.log 2>&1 &
-```
-
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| BOT_TOKEN | Yes | Telegram bot token from @BotFather |
-| CHANNEL_ID | Yes | Channel to scan for stories |
-| ADMIN_ID / OWNER_ID | For /scan, /stats | Your Telegram user ID |
-| REQUEST_GROUP | For /request | Group to post requests |
-| LOG_CHANNEL | Optional | Channel for logs |
-| API_ID, API_HASH, SESSION_STRING | For /scan | From my.telegram.org; run `generate_session.py` |
-| RUN_HTTP_SERVER | false | Set `true` only for Render |
-| DATA_DIR | . | Directory for JSON DB files |
-| AUTO_SCAN | true | Auto-rescan channel every 10 min |
-
-## Generate Session String
-
-Run locally (once):
-
-```bash
-python generate_session.py
-# Enter API_ID, API_HASH from https://my.telegram.org
-# Copy SESSION_STRING to .env
-```
-
-## Deploy on Render
-
-1. Connect GitHub repo
-2. Add `BOT_TOKEN` and other env vars
-3. Set `RUN_HTTP_SERVER=true`
-4. Deploy
+### 🛡️ Admin & Management
+*   **Dynamic Channel Management**: Add/Remove source channels directly via the bot UI.
+*   **Format Learning System**: Teach the bot new post formats simply by forwarding a sample post—no regex required.
+*   **Link Verification**: Integrated broken link reporter with an admin-driven voting/verification system.
+*   **Maintenance Mode**: Easily enable bot-wide maintenance with custom durations.
+*   **Detailed Analytics**: Real-time system stats, user search history, and trending data.
+*   **Story Request System**: Manage and respond to user story requests with automated notifications.
 
 ---
 
-By @MeJeetX
+## 🚀 Setup & Deployment
+
+### 📋 Prerequisites
+*   Python 3.9+
+*   Telegram Bot Token (from [@BotFather](https://t.me/BotFather))
+*   Telegram API ID & Hash (from [my.telegram.org](https://my.telegram.org))
+
+### 🛠️ Local Setup
+
+1.  **Clone the Repository**:
+    ```bash
+    git clone https://github.com/jeeteshmeena/riya-stories-bot.git
+    cd riya-stories-bot
+    ```
+
+2.  **Install Dependencies**:
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+3.  **Configure Environment**:
+    *   Copy `.env.example` to `.env`.
+    *   Fill in your `BOT_TOKEN`, `API_ID`, `API_HASH`, and `ADMIN_ID`.
+
+4.  **Generate Session String**:
+    *   This is required for the bot to scan channels using the Telethon client.
+    ```bash
+    python generate_session.py
+    ```
+    *   Copy the generated `SESSION_STRING` to your `.env` file.
+
+5.  **Run the Bot**:
+    ```bash
+    python stories_bot.py
+    ```
+
+---
+
+## ⚙️ Configuration (.env)
+
+| Variable | Description |
+| :--- | :--- |
+| `BOT_TOKEN` | Token provided by @BotFather. |
+| `API_ID` / `API_HASH` | Your Telegram API credentials. |
+| `SESSION_STRING` | String session from Telethon. |
+| `ADMIN_ID` / `OWNER_ID` | Telegram User IDs authorized for admin commands. |
+| `CHANNEL_ID` | The primary channel to be scanned. |
+| `REQUEST_GROUP` | Group where user requests will be forwarded. |
+| `LOG_CHANNEL` | Channel for internal bot logs. |
+| `AUTO_SCAN` | Set to `true` to enable automated channel re-scanning. |
+
+---
+
+## 📜 Deployment
+
+For detailed production deployment instructions (including Linux/systemd setup), please refer to the [Deployment Guide](DEPLOYMENT_GUIDE.md).
+
+### Quick Deploy (VPS)
+```bash
+chmod +x deploy/install-vps.sh deploy/run.sh
+./deploy/install-vps.sh
+# Follow instructions to setup systemd service
+```
+
+---
+
+## 🤝 Support & Contribution
+Developed and maintained by **@MeJeetX**.
+
+Feel free to report issues or suggest new features via the request system!
