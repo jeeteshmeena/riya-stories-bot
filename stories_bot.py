@@ -2046,9 +2046,22 @@ async def trigger_community_poll(context: ContextTypes.DEFAULT_TYPE, chat_id: in
         )
     except Exception as e:
         import traceback
-        traceback.print_exc()
+        err_msg = traceback.format_exc()
         # Restore queue on failure
         voting_queue = to_poll + voting_queue
+        # Crucial: save the restored queue back to JSON so it doesn't stay out of sync if bot restarts!
+        save_voting_db({"queue": voting_queue, "polls": active_polls})
+        
+        # Ping the admin so they aren't completely blind as to why Telegram rejected the poll!
+        if ADMIN_ID:
+            try:
+                await context.bot.send_message(
+                    chat_id=ADMIN_ID,
+                    text=f"❌ <b>Poll Creation Failed!</b>\nTelegram rejected the community poll.\n\n<pre>{html.escape(str(e))}</pre>",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
         return
     
     # Pin the poll
@@ -4768,6 +4781,7 @@ def start_bot():
     app.add_handler(CommandHandler("settimer", settimer_cmd))
     app.add_handler(CommandHandler("requests", requests_cmd))
     app.add_handler(CommandHandler("userinfo", userinfo_cmd))
+    app.add_handler(CommandHandler("cleardata", cleardata_cmd))
     app.add_handler(CommandHandler("rescan", rescan_cmd))
     app.add_handler(CommandHandler("announce", announce_cmd))
     app.add_handler(CommandHandler("copyright_mute", copyright_mute_cmd))
@@ -4979,6 +4993,39 @@ async def listalias_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("No aliases found for this story.")
 
+
+async def cleardata_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: clear all requests, link reports, and voting loops."""
+    global request_db, voting_queue, active_polls, link_flags, active_link_votes, spam_requests_count
+    
+    if not is_admin(update.effective_user.id):
+        return await update.message.reply_text("⛔ Admin only.")
+        
+    try:
+        # Clear request mapping DB
+        request_db.clear()
+        save_requests({"requests": request_db})
+        
+        # Clear voting queue
+        voting_queue.clear()
+        active_polls.clear()
+        save_voting_db({"queue": voting_queue, "polls": active_polls})
+        
+        # Clear link flags (broken report votes)
+        link_flags.clear()
+        save_link_flags(link_flags)
+        
+        # Clear in-memory caches
+        if "active_link_votes" in globals():
+            active_link_votes.clear()
+        if "spam_requests_count" in globals():
+            spam_requests_count.clear()
+            
+        await update.message.reply_text("✅ All temporary queues cleared!\n\n- Story requests fully reset.\n- Voting queue & polls reset.\n- Link Not Working reports reset.", parse_mode="HTML")
+        await log(context, f"ADMIN CLEARDATA | user_id={update.effective_user.id}")
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error clearing data: {e}")
 
 # -----------------------
 # main
