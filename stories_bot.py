@@ -29,6 +29,7 @@ from telegram.ext import (
     InlineQueryHandler,
     ChosenInlineResultHandler,
     ChatMemberHandler,
+    PollAnswerHandler,
     filters,
 )
 
@@ -76,6 +77,7 @@ from database import (
     load_stats, save_stats,
     load_subs, save_subs,
     load_learned_formats, save_learned_formats,
+    load_voting_db, save_voting_db,
 )
 from format_learner import learn_format, build_preview, build_test_result, extract_with_template
 
@@ -157,6 +159,17 @@ SCAN_PROGRESS = {
     "start_ts": 0
 }
 SCAN_PROGRESS["expected_total"] = last_scan_count or 0
+
+# --- Voting Persistence ---
+voting_db = load_voting_db()
+# voting_queue: [{"name": str, "requesters": {chat_id: [uids]}}, ...]
+voting_queue = voting_db.get("queue", [])
+# active_polls: {poll_id: {message_id, chat_id, options, votes, created_at}}
+active_polls = voting_db.get("polls", {})
+
+VOTING_THRESHOLD = 5 # 5 votes to win
+VOTING_SIZE_FOR_POLL = 3 # 3 unique stories to start a poll
+POLL_TIMEOUT_SEC = 86400 # 24 hours
 
 _maint_cfg = bot_config.get("maintenance", {})
 if _maint_cfg.get("enabled") and (_maint_cfg.get("until", 0) == 0 or _maint_cfg.get("until", 0) > time.time()):
@@ -1930,8 +1943,34 @@ Please avoid sending duplicate requests.</i>
         reply_markup=kb
     )
 
-    # persist requests state
     save_requests({"requests": request_db})
+
+    # --- Voting Queue Integration ---
+    # story is already clean_story(story_raw).lower()
+    in_queue = any(q["name"] == story for q in voting_queue)
+    in_polls = any(story in p["options"] for p in active_polls.values())
+
+    if not in_queue and not in_polls:
+        voting_queue.append({
+            "name": story,
+            "requesters": {chat_id: [user.id]}
+        })
+    elif in_queue:
+        # Update existing queue entry with new requester
+        for q in voting_queue:
+            if q["name"] == story:
+                chat_reqs = q.get("requesters", {})
+                chat_reqs.setdefault(chat_id, [])
+                if user.id not in chat_reqs[chat_id]:
+                    chat_reqs[chat_id].append(user.id)
+                q["requesters"] = chat_reqs
+                break
+    
+    save_voting_db({"queue": voting_queue, "polls": active_polls})
+
+    # Trigger poll creation if threshold reached
+    if len(voting_queue) >= VOTING_SIZE_FOR_POLL:
+        asyncio.create_task(trigger_community_poll(context, int(chat_id)))
 
     await log(
         context,
@@ -1944,6 +1983,144 @@ Please avoid sending duplicate requests.</i>
 # Auto-deletes bot commands and @botusername messages from the group to keep
 # the chat clean and organised for new users.
 # ---------------------------------------------------------------------------
+
+# --- Voting System Logic ---
+
+async def trigger_community_poll(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
+    """Create a community poll if the queue has enough unique stories."""
+    global voting_queue, active_polls
+    if len(voting_queue) < VOTING_SIZE_FOR_POLL:
+        return
+
+    # Take the first 3 stories
+    to_poll = voting_queue[:VOTING_SIZE_FOR_POLL]
+    voting_queue = voting_queue[VOTING_SIZE_FOR_POLL:]
+    
+    options = [q["name"] for q in to_poll]
+    
+    poll_msg = await context.bot.send_poll(
+        chat_id=chat_id,
+        question="Which story should be uploaded next? (Community Vote)",
+        options=options,
+        is_anonymous=False,
+        allows_multiple_answers=False,
+    )
+    
+    # Pin the poll
+    try:
+        await context.bot.pin_chat_message(chat_id=chat_id, message_id=poll_msg.message_id)
+    except Exception:
+        pass
+
+    poll_id = poll_msg.poll.id
+    active_polls[poll_id] = {
+        "message_id": poll_msg.message_id,
+        "chat_id": chat_id,
+        "options": options,
+        "votes": {str(i): [] for i in range(len(options))},
+        "created_at": time.time(),
+        "requesters": {q["name"]: q["requesters"] for q in to_poll}
+    }
+    
+    save_voting_db({"queue": voting_queue, "polls": active_polls})
+    await log(context, f"POLL CREATED | poll_id={poll_id} options={options}")
+
+
+async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle poll answer updates and check for winners."""
+    global active_polls, voting_queue
+    answer = update.poll_answer
+    poll_id = answer.poll_id
+    
+    if poll_id not in active_polls:
+        return
+
+    poll_data = active_polls[poll_id]
+    user_id = answer.user.id
+    
+    # Reset user's previous vote if any
+    for opt_idx in poll_data["votes"]:
+        if user_id in poll_data["votes"][opt_idx]:
+            poll_data["votes"][opt_idx].remove(user_id)
+    
+    # Add new vote
+    if answer.option_ids:
+        opt_idx = str(answer.option_ids[0])
+        poll_data["votes"][opt_idx].append(user_id)
+        
+        # Check if winner
+        if len(poll_data["votes"][opt_idx]) >= VOTING_THRESHOLD:
+            await _declare_poll_winner(context, poll_id, int(opt_idx))
+    
+    save_voting_db({"queue": voting_queue, "polls": active_polls})
+
+
+async def _declare_poll_winner(context, poll_id, winner_idx):
+    """Declare a winner, notify, and clean up the poll."""
+    global active_polls
+    poll_data = active_polls.pop(poll_id, None)
+    if not poll_data:
+        return
+
+    winner_name = poll_data["options"][winner_idx]
+    chat_id = poll_data["chat_id"]
+    msg_id = poll_data["message_id"]
+
+    # Stop and unpin
+    try:
+        await context.bot.stop_poll(chat_id=chat_id, message_id=msg_id)
+        await context.bot.unpin_chat_message(chat_id=chat_id, message_id=msg_id)
+    except Exception:
+        pass
+
+    # Announce winner
+    win_text = f"🎊 <b>Community Voting Result</b>\n\nApproved Story: <b>{winner_name}</b>\n\nThis story has been approved by community voting and will be uploaded soon! 🚀"
+    await context.bot.send_message(chat_id=chat_id, text=win_text, parse_mode="HTML")
+    
+    # Notify request channel
+    if REQUEST_GROUP:
+        await context.bot.send_message(
+            chat_id=REQUEST_GROUP,
+            text=f"✅ Story Approved via Voting: {winner_name}\nPoll ID: {poll_id}"
+        )
+
+    # Notify requesters
+    requesters = poll_data.get("requesters", {}).get(winner_name, {})
+    for rid_chat, uids in requesters.items():
+        for uid in uids:
+            try:
+                mention = _user_mention_by_id(uid, fallback="User")
+                await context.bot.send_message(
+                    chat_id=int(rid_chat),
+                    text=f"👋 {mention}, your requested story <b>{winner_name}</b> has been approved via community voting! It will be uploaded soon.",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+
+
+async def poll_timeout_manager(context: ContextTypes.DEFAULT_TYPE):
+    """Background task to close stale polls."""
+    global active_polls, voting_queue
+    while True:
+        await asyncio.sleep(3600) # Check every hour
+        now = time.time()
+        to_remove = []
+        for pid, data in active_polls.items():
+            if now - data["created_at"] > POLL_TIMEOUT_SEC:
+                to_remove.append(pid)
+        
+        for pid in to_remove:
+            data = active_polls.pop(pid)
+            try:
+                await context.bot.stop_poll(chat_id=data["chat_id"], message_id=data["message_id"])
+                await context.bot.unpin_chat_message(chat_id=data["chat_id"], message_id=data["message_id"])
+            except Exception:
+                pass
+        
+        if to_remove:
+            save_voting_db({"queue": voting_queue, "polls": active_polls})
+
 
 async def group_cleanup_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -1972,7 +2149,19 @@ async def group_cleanup_handler(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception:
             pass
 
+    async def _do_delete():
+        await asyncio.sleep(5)
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+
     asyncio.create_task(_do_delete())
+
+
+def _user_mention_by_id(user_id: int, fallback: str = "User") -> str:
+    """Return a HTML mention for a user ID."""
+    return f'<a href="tg://user?id={user_id}">{html.escape(fallback)}</a>'
 
 async def _notify_fulfilled_requests(context: ContextTypes.DEFAULT_TYPE):
     """After a scan, notify chats where stories were requested if now available."""
@@ -4518,8 +4707,12 @@ def start_bot():
             asyncio.create_task(auto_scan_loop(application.bot))
         # Start background link checker
         asyncio.create_task(start_link_checker())
+        # Start background voting poll timeout manager
+        asyncio.create_task(poll_timeout_manager(application))
 
     app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
+
+    app.add_handler(PollAnswerHandler(poll_answer_handler))
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_cmd))

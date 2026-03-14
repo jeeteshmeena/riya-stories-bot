@@ -13,6 +13,7 @@ def _data_path(name):
 DB_FILE = _data_path("stories_db.json")
 CLAIMS_FILE = _data_path("claims_db.json")
 REQUESTS_FILE = _data_path("requests_db.json")
+VOTING_FILE = _data_path("voting_db.json")
 SEARCH_INDEX_FILE = _data_path("search_index.json")
 STORY_INDEX_FILE = _data_path("story_index.json")
 LANG_FILE = _data_path("languages_db.json")
@@ -317,4 +318,29 @@ def load_learned_formats() -> dict:
 
 def save_learned_formats(data: dict):
     _save_json(FORMATS_FILE, data)
+
+
+# -----------------------
+# Voting system persistence
+# -----------------------
+
+def load_voting_db() -> dict:
+    """
+    Return voting db: {
+        "queue": [{"name": str, "requesters": {str(chat_id): [user_ids]}}, ...],
+        "polls": {
+            str(poll_id): {
+                "message_id": int,
+                "chat_id": int,
+                "options": [str], # story names in order
+                "votes": {str(option_index): [user_ids]},
+                "created_at": float
+            }
+        }
+    }
+    """
+    return _load_json(VOTING_FILE, {"queue": [], "polls": {}})
+
+def save_voting_db(data: dict):
+    _save_json(VOTING_FILE, data)
 

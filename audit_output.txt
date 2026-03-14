@@ -1,0 +1,85 @@
+Total Commands: 30
+- /about
+- /addalias
+- /addsource
+- /announce
+- /browse
+- /config
+- /copyright_mute
+- /help
+- /how
+- /info
+- /listalias
+- /menu
+- /myrequests
+- /new
+- /removealias
+- /removesource
+- /request
+- /requests
+- /rescan
+- /saved
+- /scan
+- /setlang
+- /settimer
+- /start
+- /stats
+- /status
+- /stories
+- /subscribe
+- /trending
+- /userinfo
+
+
+Total Buttons: 64
+- 1 hour
+- 12 hours
+- 24 hours
+- 3 hours
+- 30 min
+- 6 hours
+- English
+- Next ►
+- हिन्दी
+- ∞ Indefinite
+- ◄ Prev
+- ◆ View Formats
+- ◇ View
+- ◌ Link Not Working?
+- ◌ WARN
+- ★ Favourites
+- ♥ Favourites
+- ⚠ Link Broken?
+- ✕ Delete
+- ✖ Cancel
+- ✖ Close
+- ✖ REJECT
+- ✖ Remove
+- ✚ Add
+- ✚ Add Format
+- ✦ Channels
+- ✦ Formats
+- ✦ Help
+- ✦ I've Joined
+- ✦ Language
+- ✦ Open Story
+- ✦ System Info
+- ✦ Timers
+- ✧ Language
+- ✧ Refresh
+- ✸ New Series
+- ✺ Trending
+- ❁ About
+- ➔ Open Story
+- ➦ Back
+- ➦ Back to Menu
+- ⬡ Test
+- 🇮🇳 हिन्दी
+- 🇺🇸 English
+- 🌐 Change Language
+- 🌐 Language
+- 🔙 Back to Menu
+- 🔥 Trending
+- 🔧 Maintenance
+- 🗑️ Delete
+- 🟢 Disable Maintenance
