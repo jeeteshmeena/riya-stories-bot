@@ -1957,12 +1957,6 @@ Please avoid sending duplicate requests.</i>
 ➔ If we find it, it will be uploaded soon.</b>
 """
 
-    await update.effective_chat.send_message(
-        text=text,
-        parse_mode="HTML",
-        reply_markup=kb
-    )
-
     save_requests({"requests": request_db})
 
     # --- Voting Queue Integration ---
@@ -1988,8 +1982,28 @@ Please avoid sending duplicate requests.</i>
     
     save_voting_db({"queue": voting_queue, "polls": active_polls})
 
+    queue_len = len(voting_queue)
+    
+    # Append queue status to reply text
+    if lang == "hi":
+        if queue_len < VOTING_SIZE_FOR_POLL:
+            text += f"\n\n<b>📊 वोटिंग कतार:</b> <code>{queue_len}/{VOTING_SIZE_FOR_POLL}</code> स्टोरीज़\n<i>(कम्युनिटी वोटिंग शुरू होने के लिए {VOTING_SIZE_FOR_POLL} अलग-अलग स्टोरीज़ चाहिए।)</i>"
+        else:
+            text += f"\n\n<b>🎉 वोटिंग कतार फुल हो गई है!</b>\n<i>जल्द ही रिक्वेस्ट चैनल में एक नया पोल शुरू होगा।</i>"
+    else:
+        if queue_len < VOTING_SIZE_FOR_POLL:
+            text += f"\n\n<b>📊 Voting Queue:</b> <code>{queue_len}/{VOTING_SIZE_FOR_POLL}</code> Stories\n<i>(A poll will start once {VOTING_SIZE_FOR_POLL} unique stories are requested.)</i>"
+        else:
+            text += f"\n\n<b>🎉 Voting Queue is full!</b>\n<i>A new poll will start shortly in the request channel.</i>"
+
+    await update.effective_chat.send_message(
+        text=text,
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+
     # Trigger poll creation if threshold reached
-    if len(voting_queue) >= VOTING_SIZE_FOR_POLL:
+    if queue_len >= VOTING_SIZE_FOR_POLL:
         asyncio.create_task(trigger_community_poll(context, int(chat_id)))
 
     await log(
@@ -2021,13 +2035,20 @@ async def trigger_community_poll(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     # Send poll to REQUEST_GROUP if configured, otherwise to the requester's chat
     target_chat = int(REQUEST_GROUP) if REQUEST_GROUP else chat_id
     
-    poll_msg = await context.bot.send_poll(
-        chat_id=target_chat,
-        question="Which story should be uploaded next? (Community Vote)",
-        options=options,
-        is_anonymous=False,
-        allows_multiple_answers=False,
-    )
+    try:
+        poll_msg = await context.bot.send_poll(
+            chat_id=target_chat,
+            question="Which story should be uploaded next? (Community Vote)",
+            options=options,
+            is_anonymous=False,
+            allows_multiple_answers=False,
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        # Restore queue on failure
+        voting_queue = to_poll + voting_queue
+        return
     
     # Pin the poll
     try:
