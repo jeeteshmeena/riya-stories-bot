@@ -352,14 +352,14 @@ async def _enforce_cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             f"<b>◌ Cooldown Active / आप कोल्डाउन पर हैं</b>\n\n"
             f"{user.mention_html()}\n"
             f"✧ <i>कारण:</i> <b>{reason}</b>\n"
-            f"<i>कृपया लगभग {mins} मिनट बाद फिर से कोशिश करें।</i>"
+            f"<i>➔ कृपया लगभग {mins} मिनट बाद फिर से कोशिश करें।</i>"
         )
     else:
         text = (
             f"<b>◌ Cooldown Active</b>\n\n"
             f"{user.mention_html()}\n"
             f"✧ <i>Reason:</i> <b>{reason}</b>\n"
-            f"<i>Please try again after approximately {mins} minutes.</i>"
+            f"<i>➔ Please try again after approximately {mins} minutes.</i>"
         )
 
     # reply to whatever is available
@@ -376,17 +376,19 @@ async def _send_scan_busy_notice(msg, lang: str):
     """Send scan busy notice, auto-delete after 24h."""
     if lang == "hi":
         text = (
-            "<b>⏳ डेटाबेस अपडेट हो रहा है</b>\n\n"
-            "<i>✺ Riya अभी डेटाबेस से स्टोरीज़ अपडेट कर रही है।</i>\n"
+            "<b>⏳ डेटाबेस अपडेट हो रहा है</b>\n"
+            "━━━━━━━━━━━━━━━━\n\n"
+            "<i>◎ Riya अभी डेटाबेस से स्टोरीज़ अपडेट कर रही है।</i>\n\n"
             "▪ कृपया कुछ समय प्रतीक्षा करें।\n"
             "▪ <b>अपडेट पूरा होने के बाद बॉट अपने आप काम करना शुरू कर देगा।</b>\n\n"
             f"<code>{datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S')} UTC</code>"
         )
     else:
         text = (
-            "<b>⏳ Database Updating</b>\n\n"
-            "<i>✺ Riya is currently updating the story database.</i>\n"
-            "▪ Please wait for a certain amount of time.\n"
+            "<b>⏳ Database Updating</b>\n"
+            "━━━━━━━━━━━━━━━━\n\n"
+            "<i>◎ Riya is currently updating the story database.</i>\n\n"
+            "▪ Please wait for a few moments.\n"
             "▪ <b>The bot will automatically start working again once the update is complete.</b>\n\n"
             f"<code>{datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S')} UTC</code>"
         )
@@ -439,8 +441,8 @@ async def _send_maintenance_notice(msg, lang: str):
             "❁ <b>हम क्या कर रहे हैं?</b>\n"
             "➔ सिस्टम अपग्रेड और सुधार\n"
             "➔ डेटाबेस ऑप्टिमाइज़ेशन\n\n"
-            f"❁ <b>अनुमानित समय:</b> <code>{eta_hi}</code>\n\n"
-            "<i>आपके धैर्य के लिए धन्यवाद।</i> 🙏"
+            f"✦ <b>अनुमानित समय:</b> <code>{eta_hi}</code>\n\n"
+            "<i>आपके धैर्य के लिए धन्यवाद। 🙏</i>"
         )
     else:
         text = (
@@ -666,15 +668,15 @@ def _menu_trending(caller_id: int) -> tuple:
     sorted_trend = sorted(trending.items(), key=lambda x: x[1], reverse=True)[:10]
     if sorted_trend:
         lines = "\n".join(
-            f"<b>{i}.</b> {k}  <i>({v})</i>"
+            f"<b>{i}.</b> {k}  <i>✶ {v} searches</i>"
             for i, (k, v) in enumerate(sorted_trend, 1)
         )
         body = lines
     else:
-        body = "<i>No trending stories yet. Start searching!</i>"
+        body = "<i>☆ No trending stories yet. Start searching!</i>"
     text = (
         "<b>🔥 Trending Stories</b>\n"
-        "<i>Top searched stories right now.</i>\n"
+        "<i>✺ Top searched stories right now.</i>\n"
         f"{_DIVIDER}\n\n"
         f"{body}"
     )
@@ -691,15 +693,15 @@ def _menu_new(caller_id: int) -> tuple:
             name = clean_story(s.get("name") or s.get("text") or "Story")
             link = s.get("link", "")
             if link:
-                lines.append(f'✧ <a href="{link}">{name}</a>')
+                lines.append(f'✸ <a href="{link}">{name}</a>')
             else:
-                lines.append(f"✧ {name}")
+                lines.append(f"✸ {name}")
         body = "\n".join(lines)
     else:
-        body = "<i>No new series in the database yet.</i>"
+        body = "<i>☆ No new series in the database yet.</i>"
     text = (
         "<b>✦ New Series</b>\n"
-        "<i>The latest stories added to the database.</i>\n"
+        "<i>✺ The latest stories added to the database.</i>\n"
         f"{_DIVIDER}\n\n"
         f"{body}"
     )
@@ -715,10 +717,10 @@ def _menu_saved(caller_id: int) -> tuple:
         if len(favs) > 15:
             body += f"\n<i>…and {len(favs) - 15} more.</i>"
     else:
-        body = "<i>♡ No favourites yet.\nTap ★ on any search result to save it.</i>"
+        body = "<i>♡ No favourites yet.\n➔ Tap ★ on any search result to save it.</i>"
     text = (
         "<b>♥ My Favourites</b>\n"
-        "<i>Your personal saved stories.</i>\n"
+        "<i>✧ Your personal saved stories.</i>\n"
         f"{_DIVIDER}\n\n"
         f"{body}"
     )
@@ -788,7 +790,7 @@ def _menu_about(caller_id: int, lang: str = "en") -> tuple:
         )
     text = (
         "<b>📚 About Riya Bot</b>\n"
-        "<i>Everything you need to know.</i>\n"
+        "<i>✧ Everything you need to know.</i>\n"
         f"{_DIVIDER}\n\n"
         f"{body}"
     )
@@ -802,14 +804,16 @@ def _menu_help(caller_id: int, lang: str = "en") -> tuple:
             "<u>❁ Bot कैसे काम करता है?</u>\n"
             "1️⃣  स्टोरी का नाम भेजें\n"
             "2️⃣  बॉट डेटाबेस में खोजता है\n"
-            "3️⃣  मिली → लिंक मिलता है\n"
+            "3️⃣  मिली ➜ लिंक मिलता है\n"
+            "4️⃣  नहीं मिली ➜ /request करें\n\n"
+            "<i>स्टोरी मिलने पर आपको नोटिफिकेशन मिलेगा।</i>\n\n"
             "<u>✦ Commands</u>\n"
-            "/start — बॉट शुरू करें\n"
-            "/request — स्टोरी रिक्वेस्ट\n"
-            "/info — स्टोरी डिटेल्स\n"
-            "/saved — फेवरेट देखें\n"
-            "/trending — ट्रेंडिंग\n"
-            "/subscribe — नोटिफिकेशन\n\n"
+            "➔ /start — बॉट शुरू करें\n"
+            "➔ /request — स्टोरी रिक्वेस्ट\n"
+            "➔ /info — स्टोरी डिटेल्स\n"
+            "➔ /saved — फेवरेट देखें\n"
+            "➔ /trending — ट्रेंडिंग\n"
+            "➔ /subscribe — नोटिफिकेशन\n\n"
             "<i>स्टोरी का नाम भेजकर सीधे खोजें।</i>"
         )
     else:
@@ -817,21 +821,21 @@ def _menu_help(caller_id: int, lang: str = "en") -> tuple:
             "<u>✦ How It Works</u>\n"
             "1️⃣  Send a story name\n"
             "2️⃣  Bot searches the database\n"
-            "3️⃣  Found → you get the link\n"
-            "4️⃣  Not found → use /request\n\n"
+            "3️⃣  Found ➜ you get the link\n"
+            "4️⃣  Not found ➜ use /request\n\n"
             "<i>When the story is uploaded, you will be notified automatically.</i>\n\n"
             "<u>✦ Commands</u>\n"
-            "/start — Open the menu\n"
-            "/request — Request a story\n"
-            "/info — Story details\n"
-            "/saved — Your favourites\n"
-            "/trending — Trending stories\n"
-            "/subscribe — Get notifications\n\n"
+            "➔ /start — Open the menu\n"
+            "➔ /request — Request a story\n"
+            "➔ /info — Story details\n"
+            "➔ /saved — Your favourites\n"
+            "➔ /trending — Trending stories\n"
+            "➔ /subscribe — Get notifications\n\n"
             "<i>You can also just send a story name to search.</i>"
         )
     text = (
         "<b>🚧 Help &amp; How It Works</b>\n"
-        "<i>Everything you need to use this bot.</i>\n"
+        "<i>✧ Everything you need to use this bot.</i>\n"
         f"{_DIVIDER}\n\n"
         f"{body}"
     )
@@ -1092,10 +1096,12 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = clean_story(result.get("text", result.get("name", "")))
     link = result.get("link", "")
     stype = result.get("story_type") or extract_story_type(result.get("caption", ""))
-    type_line = f"\n<b>Story Type:</b> {stype}" if stype else ""
-    text = f"""<b>📖 {name}</b>{type_line}
+    type_line = f"\n<b>✽ Story Type:</b> <i>{stype}</i>" if stype else ""
+    desc = result.get("description", "")
+    desc_line = f"\n\n<b>❁ Description:</b>\n<i>{desc[:200]}</i>" if desc else ""
+    text = f"""<b>📖 {name}</b>{type_line}{desc_line}
 
-<b>Link:</b> {link}"""
+<b>➜ Link:</b> {link}"""
     await update.message.reply_text(text, parse_mode="HTML")
 
 
@@ -1115,12 +1121,14 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_stories = len(db)
     total_requests = sum(len(v) for v in request_db.values()) if isinstance(request_db, dict) else 0
     unique_requests = len(request_db)
-    text = f"""<b>📊 Bot Statistics</b>
-
-<b>Stories in DB:</b> {total_stories}
-<b>Indexed titles:</b> {len(story_index)}
-<b>Unique requests:</b> {unique_requests}
-<b>Total request count:</b> {total_requests}"""
+    text = (
+        "<b>◆ Bot Statistics</b>\n"
+        "━━━━━━━━━━━━━━━━\n\n"
+        f"▪ <b>Stories in DB:</b> <i>{total_stories}</i>\n"
+        f"▪ <b>Indexed titles:</b> <i>{len(story_index)}</i>\n"
+        f"▪ <b>Unique requests:</b> <i>{unique_requests}</i>\n"
+        f"▪ <b>Total requests:</b> <i>{total_requests}</i>"
+    )
     await update.message.reply_text(text, parse_mode="HTML")
 
 
@@ -1169,13 +1177,13 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"<b>★ Riya Bot Status</b>\n"
         f"━━━━━━━━━━━━━━━━━\n\n"
         f"👤 {mention}\n\n"
-        f"• <b>Uptime:</b>  <i>{uptime_str}</i>\n"
-        f"• <b>Time (IST):</b>  <code>{ist.strftime('%d-%m-%Y %H:%M:%S')}</code>\n\n"
+        f"◍ <b>Uptime:</b>  <i>{uptime_str}</i>\n"
+        f"◍ <b>Time (IST):</b>  <code>{ist.strftime('%d-%m-%Y %H:%M:%S')}</code>\n\n"
         f"◆ <b>Database</b>\n"
-        f"• <b>Total Stories:</b>  <i>{total_stories}</i>\n"
-        f"• <b>Requests:</b>  <i>{total_requests}</i>\n"
-        f"• <b>Broken Links:</b>  <i>{total_broken_reports}</i>\n\n"
-        f"✦ <b>Bot Status:</b>  <i>Running normally</i>\n"
+        f"▪ <b>Total Stories:</b>  <i>{total_stories}</i>\n"
+        f"▪ <b>Requests:</b>  <i>{total_requests}</i>\n"
+        f"▪ <b>Broken Links:</b>  <i>{total_broken_reports}</i>\n\n"
+        f"◎ <b>Bot Status:</b>  <i>Running normally ✺</i>\n"
         f"━━━━━━━━━━━━━━━━━\n"
         f"✧ <i>This message deletes in 60 seconds.</i>"
     )
@@ -1464,8 +1472,8 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text=f"""
 ✅ *Scan Completed*
 
-📚 *Stories Indexed:* {last_scan_count}  
-📡 *Channels Scanned:* {len(sources) - len(scan_errors)}/{len(sources)}
+✶ *Stories Indexed:* {last_scan_count}  
+◍ *Channels Scanned:* {len(sources) - len(scan_errors)}/{len(sources)}
 ⚡ *Search Engine:* _Optimized_
 
 _Your story database is now fully updated._{error_text}
@@ -1520,7 +1528,7 @@ def _stories_page(page=0):
     total = len(story_index)
     header = (
         f"<b>✦ Story List  ·  {total} titles</b>\n"
-        f"<i>Page {page + 1}  ·  #{start + 1}–#{min(end, total)}</i>\n"
+        f"<i>▪ Page {page + 1}  ·  #{start + 1}–#{min(end, total)}</i>\n"
         "━━━━━━━━━━━━━━━━\n"
     )
     text = header + "\n".join(lines)
@@ -1617,7 +1625,7 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
             warn_text = """
 <b>✮ कृपया स्टोरी/सीरीज़ का नाम लिखें</b>
 
-➔ उदाहरण:
+<i>➔ उदाहरण:</i>
 ▪ /request Vashikaran
 ▪ /request Saaya
 """
@@ -1625,7 +1633,7 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
             warn_text = """
 <b>✮ Please provide the name of the Story/Series</b>
 
-➔ Examples:
+<i>➔ Examples:</i>
 ▪ /request Vashikaran
 ▪ /request Saaya
 """
@@ -1739,14 +1747,14 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = f"""
 <b>{mention}</b>
 
-<i>☆ आप पहले ही <b>{story}</b> रिक्वेस्ट कर चुके हैं।  
+<i>◌ आप पहले ही <b>{story}</b> रिक्वेस्ट कर चुके हैं।  
 कृपया डुप्लीकेट रिक्वेस्ट न भेजें।</i>
 """
         else:
             text = f"""
 <b>{mention}</b>
 
-<i>☆ You have already requested <b>{story}</b>.  
+<i>◌ You have already requested <b>{story}</b>.  
 Please avoid sending duplicate requests.</i>
 """
         await update.effective_chat.send_message(text=text, parse_mode="HTML")
@@ -1772,13 +1780,13 @@ Please avoid sending duplicate requests.</i>
     sent_req = await context.bot.send_message(
         chat_id=REQUEST_GROUP,
         text=f"""
-Story Request
+✶ Story Request
 
-Name: {story}
-• User ID: {user.id}
-• Username: {username}
+▪ Name: {story}
+▪ User ID: {user.id}
+▪ Username: {username}
 
-• Total Requests: {count}
+▪ Total Requests: {count}
 """
     )
     
@@ -1796,17 +1804,17 @@ Name: {story}
             text = f"""
 <b>{mention}</b>
 
-<b>✦ आपकी <i>{story}</i> की रिक्वेस्ट भेज दी गई है।  
-हम इसे उपलब्ध कराने की पूरी कोशिश करेंगे।  
-जैसे ही मिलेगी, जल्द अपलोड कर दी जाएगी।</b>
+<b>✦ आपकी <i>{story}</i> की रिक्वेस्ट भेज दी गई है।
+➔ हम इसे उपलब्ध कराने की पूरी कोशिश करेंगे।
+➔ जैसे ही मिलेगी, जल्द अपलोड कर दी जाएगी।</b>
 """
         else:
             text = f"""
 <b>{mention}</b>
 
-<b>✦ Your request for <i>{story}</i> has been sent.  
-We will try our best to provide this story.  
-If we find it, it will be uploaded soon.</b>
+<b>✦ Your request for <i>{story}</i> has been sent.
+➔ We will try our best to provide this story.
+➔ If we find it, it will be uploaded soon.</b>
 """
 
     else:
@@ -1818,17 +1826,17 @@ If we find it, it will be uploaded soon.</b>
             text = f"""
 <b>{mention}</b>
 
-<b>आपके साथ {others} और लोगों ने भी <i>{story}</i> रिक्वेस्ट की है।  
-हम इसे उपलब्ध कराने की पूरी कोशिश करेंगे।  
-जैसे ही मिलेगी, जल्द अपलोड कर दी जाएगी।</b>
+<b>✦ आपके साथ {others} और लोगों ने भी <i>{story}</i> रिक्वेस्ट की है।
+➔ हम इसे उपलब्ध कराने की पूरी कोशिश करेंगे।
+➔ जैसे ही मिलेगी, जल्द अपलोड कर दी जाएगी।</b>
 """
         else:
             text = f"""
 <b>{mention}</b>
 
-<b>You and {others} other users requested <i>{story}</i>.  
-We will try our best to provide this story.  
-If we find it, it will be uploaded soon.</b>
+<b>✦ You and {others} others also requested <i>{story}</i>.
+➔ We will try our best to provide this story.
+➔ If we find it, it will be uploaded soon.</b>
 """
 
     await update.effective_chat.send_message(
@@ -1920,15 +1928,17 @@ async def _notify_fulfilled_requests(context: ContextTypes.DEFAULT_TYPE):
             lang = get_chat_lang(chat_id)
             if lang == "hi":
                 text = (
-                    f"<b>✦ {mentions}</b>\n\n"
-                    f"<i>{title}</i>\n\n"
-                    f"<b>यहाँ पढ़ें:</b> {link}"
+                    f"<b>✸ {mentions}</b>\n\n"
+                    f"<b>❁ {title}</b>\n"
+                    f"<i>➜ आपकी रिक्वेस्ट की हुई स्टोरी अब उपलब्ध है!</i>\n\n"
+                    f"<b>➜ यहाँ पढ़ें:</b> {link}"
                 )
             else:
                 text = (
-                    f"<b>✦ {mentions}</b>\n\n"
-                    f"<i>{title}</i>\n\n"
-                    f"<b>Read here:</b> {link}"
+                    f"<b>✸ {mentions}</b>\n\n"
+                    f"<b>❁ {title}</b>\n"
+                    f"<i>➜ Your requested story is now available!</i>\n\n"
+                    f"<b>➜ Read here:</b> {link}"
                 )
 
             try:
