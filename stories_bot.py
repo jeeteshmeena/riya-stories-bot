@@ -457,6 +457,26 @@ async def _send_scan_busy_notice(msg, lang: str):
     asyncio.create_task(_delete_notice())
 
 
+def _looks_like_existing_story_query(query: str) -> bool:
+    """Return True if the query looks like it could be a story name search.
+    Filters out very short queries, greetings, or random text.
+    """
+    q = query.strip().lower()
+    if len(q) < 2:
+        return False
+    # Common greetings and filler words that are NOT story searches
+    noise = {
+        "hi", "hello", "hey", "ok", "yes", "no", "thanks", "thank you",
+        "bye", "good", "bad", "nice", "wow", "lol", "haha", "hmm",
+        "please", "help", "start", "stop", "admin", "bro", "sis",
+        "kya", "kaise", "kaisa", "kyun", "haan", "nahi", "acha",
+        "theek", "shukriya", "dhanyavaad", "namaste",
+    }
+    if q in noise:
+        return False
+    return True
+
+
 def _end_maintenance():
     """Disable maintenance mode and persist the off-state."""
     global MAINTENANCE_MODE, MAINTENANCE_UNTIL
@@ -1998,8 +2018,11 @@ async def trigger_community_poll(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     
     options = [q["name"] for q in to_poll]
     
+    # Send poll to REQUEST_GROUP if configured, otherwise to the requester's chat
+    target_chat = int(REQUEST_GROUP) if REQUEST_GROUP else chat_id
+    
     poll_msg = await context.bot.send_poll(
-        chat_id=chat_id,
+        chat_id=target_chat,
         question="Which story should be uploaded next? (Community Vote)",
         options=options,
         is_anonymous=False,
@@ -2008,14 +2031,14 @@ async def trigger_community_poll(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     
     # Pin the poll
     try:
-        await context.bot.pin_chat_message(chat_id=chat_id, message_id=poll_msg.message_id)
+        await context.bot.pin_chat_message(chat_id=target_chat, message_id=poll_msg.message_id)
     except Exception:
         pass
 
     poll_id = poll_msg.poll.id
     active_polls[poll_id] = {
         "message_id": poll_msg.message_id,
-        "chat_id": chat_id,
+        "chat_id": target_chat,
         "options": options,
         "votes": {str(i): [] for i in range(len(options))},
         "created_at": time.time(),
@@ -2141,13 +2164,6 @@ async def group_cleanup_handler(update: Update, context: ContextTypes.DEFAULT_TY
     # If GROUP_ID is configured, only clean that specific group
     if GROUP_ID and str(update.effective_chat.id) != str(GROUP_ID):
         return
-
-    async def _do_delete():
-        await asyncio.sleep(5)
-        try:
-            await msg.delete()
-        except Exception:
-            pass
 
     async def _do_delete():
         await asyncio.sleep(5)
@@ -2319,10 +2335,8 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # If a scan is running, tell user to wait
     if IS_SCANNING:
-        # Only show busy notice for queries that plausibly refer to an existing story.
-        if _looks_like_existing_story_query(query_text):
-            lang = get_chat_lang(update.effective_chat.id)
-            await _send_scan_busy_notice(msg, lang)
+        lang = get_chat_lang(update.effective_chat.id)
+        await _send_scan_busy_notice(msg, lang)
         return
 
     # Rate limit
