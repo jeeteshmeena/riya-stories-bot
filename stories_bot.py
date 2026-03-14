@@ -1322,6 +1322,33 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if key in db:
                 new_link = db[key].get("link", "")
                 if flag.get("link") and new_link and new_link != flag["link"]:
+                    # Link was updated by admin — notify all voters/reporters
+                    voters = flag.get("voters") or []
+                    chats = flag.get("chats") or []
+                    title = clean_story(db[key].get("text", key))
+                    for chat_id in chats:
+                        lang = get_chat_lang(chat_id)
+                        mentions = " ".join(
+                            _user_mention_by_id(v.get("id"), v.get("name", str(v.get("id")))) for v in voters
+                        )
+                        if lang == "hi":
+                            text = (
+                                f"<b>✦ लिंक अपडेट हो गया है</b>\n\n"
+                                f"{mentions}\n\n"
+                                f"<i>{title}</i>\n"
+                                f"<b>New Link:</b> {new_link}"
+                            )
+                        else:
+                            text = (
+                                f"<b>✦ Link Has Been Updated</b>\n\n"
+                                f"{mentions}\n\n"
+                                f"<i>{title}</i>\n"
+                                f"<b>New Link:</b> {new_link}"
+                            )
+                        try:
+                            await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML")
+                        except Exception:
+                            pass
                     link_flags.pop(key, None)
                     changed = True
         if changed:
@@ -1525,6 +1552,34 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
     existing = get_story(story)
     if existing:
         link = existing.get("link", "")
+        story_key = existing.get("name") or story
+        # Check if the link is flagged as broken
+        lf = load_link_flags()
+        if lf.get(story_key, {}).get("broken", False):
+            user = update.effective_user
+            mention = user.mention_html() if user else ""
+            lang = get_chat_lang(update.effective_chat.id)
+            s_name = clean_story(existing.get("text", story))
+            if lang == "hi":
+                text = (
+                    f"<b>{mention}</b>\n\n"
+                    f"<b>☆ लिंक अस्थायी रूप से अनुपलब्ध है</b>\n"
+                    f"<i>{s_name}</i>\n\n"
+                    f"✧ इस स्टोरी का लिंक वर्तमान में काम नहीं कर रहा है। एडमिन्स को सूचित किया गया है। कृपया ठीक होने तक प्रतीक्षा करें।"
+                )
+            else:
+                text = (
+                    f"<b>{mention}</b>\n\n"
+                    f"<b>☆ Link Temporarily Unavailable</b>\n"
+                    f"<i>{s_name}</i>\n\n"
+                    f"✧ This story exists in the database but the link is currently not working. Admins have been notified. Please wait until it is fixed."
+                )
+            await update.effective_chat.send_message(text=text, parse_mode="HTML")
+            try:
+                await update.message.delete()
+            except Exception:
+                pass
+            return
         user = update.effective_user
         mention = user.mention_html() if user else ""
         lang = get_chat_lang(update.effective_chat.id)
@@ -3757,7 +3812,8 @@ def start_bot():
     async def _post_init(application):
         if str(AUTO_SCAN).lower() == "true" and CHANNEL_ID:
             asyncio.create_task(auto_scan_loop(application.bot))
-        # Start background link checker
+        # Start background link checkers (HTTP-based + Telethon-based)
+        asyncio.create_task(link_check_loop(application.bot))
         asyncio.create_task(start_link_checker())
 
     app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
