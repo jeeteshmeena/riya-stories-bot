@@ -29,7 +29,7 @@ from telegram.ext import (
     InlineQueryHandler,
     ChosenInlineResultHandler,
     ChatMemberHandler,
-    PollAnswerHandler,
+    PollHandler,
     filters,
 )
 
@@ -2030,7 +2030,8 @@ async def trigger_community_poll(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     to_poll = voting_queue[:VOTING_SIZE_FOR_POLL]
     voting_queue = voting_queue[VOTING_SIZE_FOR_POLL:]
     
-    options = [q["name"] for q in to_poll]
+    # Truncate to 100 chars (Telegram API limit)
+    options = [q["name"][:100] for q in to_poll]
     
     # Send poll to REQUEST_GROUP if configured, otherwise to the requester's chat
     target_chat = int(REQUEST_GROUP) if REQUEST_GROUP else chat_id
@@ -2040,7 +2041,7 @@ async def trigger_community_poll(context: ContextTypes.DEFAULT_TYPE, chat_id: in
             chat_id=target_chat,
             question="Which story should be uploaded next? (Community Vote)",
             options=options,
-            is_anonymous=False,
+            is_anonymous=True, # Telegram channels *only* support anonymous polls!
             allows_multiple_answers=False,
         )
     except Exception as e:
@@ -2070,33 +2071,24 @@ async def trigger_community_poll(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     await log(context, f"POLL CREATED | poll_id={poll_id} options={options}")
 
 
-async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle poll answer updates and check for winners."""
+async def poll_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle poll state updates."""
     global active_polls, voting_queue
-    answer = update.poll_answer
-    poll_id = answer.poll_id
+    poll = update.poll
+    poll_id = poll.id
     
     if poll_id not in active_polls:
         return
 
     poll_data = active_polls[poll_id]
-    user_id = answer.user.id
     
-    # Reset user's previous vote if any
-    for opt_idx in poll_data["votes"]:
-        if user_id in poll_data["votes"][opt_idx]:
-            poll_data["votes"][opt_idx].remove(user_id)
-    
-    # Add new vote
-    if answer.option_ids:
-        opt_idx = str(answer.option_ids[0])
-        poll_data["votes"][opt_idx].append(user_id)
-        
-        # Check if winner
-        if len(poll_data["votes"][opt_idx]) >= VOTING_THRESHOLD:
-            await _declare_poll_winner(context, poll_id, int(opt_idx))
-    
-    save_voting_db({"queue": voting_queue, "polls": active_polls})
+    # Check max votes
+    for i, option in enumerate(poll.options):
+        if option.voter_count >= VOTING_THRESHOLD:
+            await _declare_poll_winner(context, poll_id, i)
+            # Re-save voting_db to permanently lock out the poll since it's removed
+            save_voting_db({"queue": voting_queue, "polls": active_polls})
+            break
 
 
 async def _declare_poll_winner(context, poll_id, winner_idx):
@@ -4747,7 +4739,7 @@ def start_bot():
 
     app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
-    app.add_handler(PollAnswerHandler(poll_answer_handler))
+    app.add_handler(PollHandler(poll_handler))
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_cmd))
