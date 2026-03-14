@@ -51,6 +51,8 @@ def extract_name(text):
             raw = match.group(1).strip()
             # drop any status in parentheses
             cleaned = re.sub(r"\(.*?\)", "", raw).strip()
+            # Drop any dangling leading symbols
+            cleaned = cleaned.lstrip(":-_!~|> \t")
             if cleaned and len(cleaned) > 2:  # Ensure meaningful title
                 return cleaned or None
 

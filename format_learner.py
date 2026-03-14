@@ -186,6 +186,8 @@ def extract_with_template(message, template: dict[str, Any]) -> dict[str, Any] |
         if m and m.groups():
             raw = m.group(1).strip()
             raw = re.sub(r"\(.*?\)", "", raw).strip()
+            # Strip dangling symbols explicitly (e.g. from labels like "Name :- ")
+            raw = raw.lstrip(":-_!~|> \t")
             title = raw or None
 
     if not title:
