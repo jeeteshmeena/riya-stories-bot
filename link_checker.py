@@ -158,15 +158,9 @@ class BackgroundLinkChecker:
             
             if message is None:
                 # Message deleted or inaccessible
-                await self._mark_link_broken(story_key, story, link_flags, "Message deleted or inaccessible")
-            elif hasattr(message, 'restriction_reason') and message.restriction_reason:
-                # Detected copyright or other restriction
-                reasons = [r.reason for r in message.restriction_reason]
-                reason_str = ", ".join(reasons)
-                await self._mark_link_broken(story_key, story, link_flags, f"Restricted: {reason_str}")
+                await self._mark_link_broken(story_key, story, link_flags, "Message deleted/not found")
             else:
-                # Message exists and is accessible
-                # check if previously marked as broken
+                # Message exists, check if previously marked as broken
                 if story_key in link_flags and link_flags[story_key].get("broken"):
                     await self._mark_link_fixed(story_key, story, link_flags)
                     
@@ -201,12 +195,12 @@ class BackgroundLinkChecker:
                 try:
                     await self.client.send_message(
                         LOG_CHANNEL,
-                        f"⚠️ **Automated Detection: Link Broken**\n\n"
-                        f"📖 Story: <b>{story.get('text', 'N/A')}</b>\n"
+                        f"⚠ **Automated Link Detection**\n\n"
+                        f"📖 Story: {story.get('text', 'N/A')}\n"
                         f"🔗 Link: {story.get('link')}\n"
-                        f"❌ Reason: <code>{reason}</code>\n"
+                        f"❌ Reason: {reason}\n"
                         f"⏰ Detected: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                        parse_mode="HTML"
+                        parse_mode="Markdown"
                     )
                 except Exception as e:
                     logger.error(f"Failed to send automated detection notification: {e}")
@@ -214,46 +208,50 @@ class BackgroundLinkChecker:
     async def _mark_link_fixed(self, story_key, story, link_flags):
         """Mark a previously broken link as fixed"""
         if story_key in link_flags and link_flags[story_key].get("broken"):
+            # Notify users who reported/voted for this link
             voters = link_flags[story_key].get("voters", [])
             chats = link_flags[story_key].get("chats", [])
-            story_name = story.get('text', 'N/A')
-            link = story.get('link')
             
-            # Send notifications to chats where the report/vote occurred
+            # Create user mentions in Markdown
+            voter_mentions = " ".join([f"[{v.get('name', str(v.get('id')))}](tg://user?id={v.get('id')})" for v in voters])
+            if voter_mentions:
+                voter_mentions = f"{voter_mentions}\n\n"
+            
+            notification_text = (
+                f"✅ **Link Fixed**\n\n"
+                f"{voter_mentions}"
+                f"📖 Story: {story.get('text', 'N/A')}\n"
+                f"🔗 Link: {story.get('link')}\n"
+                f"⏰ Fixed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"The link is now working again!"
+            )
+            
+            # Send notifications to chats where the vote occurred
             for chat_id in chats:
                 try:
-                    # premium logic: notify in participating chats
-                    text = (
-                        f"<b>✅ Story Link Fixed!</b>\n\n"
-                        f"📖 Story: <b>{story_name}</b>\n"
-                        f"🔗 New Link: <a href='{link}'>Click here to open</a>\n\n"
-                        f"The link has been automatically verified as working again. "
-                        f"Thanks to the {len(voters)} users who reported it! ★"
-                    )
-                    await self.client.send_message(chat_id, text, parse_mode="HTML")
+                    await self.client.send_message(chat_id, notification_text, parse_mode="Markdown")
                 except Exception as e:
                     logger.error(f"Failed to send fix notification to chat {chat_id}: {e}")
-            
-            # Since link_checker runs alongside stories_bot, it doesn't easily have
-            # access to the request_db notification function. 
-            # However, because scanning also triggers fix notifications, 
-            # we rely on the scan to handle the request_db side OR we could manually 
-            # load request_db here if needed. For now, the scan cycle will catch it.
-            
+                    
             # Remove the broken flag
             del link_flags[story_key]
-            logger.info(f"Link marked as fixed: {story_name}")
+            logger.info(f"Link marked as fixed: {story.get('text')}")
             
             # Notify admin channel
             if LOG_CHANNEL:
                 try:
+                    voter_mentions = ", ".join([f"@{v.get('name', str(v.get('id')))}" for v in voters[:5]])
+                    if len(voters) > 5:
+                        voter_mentions += f" and {len(voters) - 5} others"
+                        
                     await self.client.send_message(
                         LOG_CHANNEL,
                         f"✅ **Link Automatically Fixed**\n\n"
-                        f"📖 Story: <b>{story_name}</b>\n"
-                        f"🔗 Link: {link}\n"
-                        f"⏰ Fixed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-                        parse_mode="HTML"
+                        f"📖 Story: {story.get('text', 'N/A')}\n"
+                        f"🔗 Link: {story.get('link')}\n"
+                        f"⏰ Fixed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                        f"👥 Notified: {voter_mentions}",
+                        parse_mode="Markdown"
                     )
                 except Exception as e:
                     logger.error(f"Failed to send fix notification to admin channel: {e}")
