@@ -314,16 +314,16 @@ async def _enforce_cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if lang == "hi":
         text = (
-            f"<b>⛔ आप cooldown पर हैं</b>\n\n"
+            f"<b>☆ Cooldown Active / आप कोल्डाउन पर हैं</b>\n\n"
             f"{user.mention_html()}\n"
-            f"<i>कारण:</i> <b>{reason}</b>\n"
+            f"✧ <i>कारण:</i> <b>{reason}</b>\n"
             f"<i>कृपया लगभग {mins} मिनट बाद फिर से कोशिश करें।</i>"
         )
     else:
         text = (
-            f"<b>⛔ You are on cooldown</b>\n\n"
+            f"<b>☆ Cooldown Active</b>\n\n"
             f"{user.mention_html()}\n"
-            f"<i>Reason:</i> <b>{reason}</b>\n"
+            f"✧ <i>Reason:</i> <b>{reason}</b>\n"
             f"<i>Please try again after approximately {mins} minutes.</i>"
         )
 
@@ -1073,17 +1073,18 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_broken_reports = len([flag for flag in link_flags_data.values() if flag.get("broken", False)])
 
     text = (
-        f"<b>📊 Riya Bot Status</b>\n"
+        f"<b>★ Riya Bot Status</b>\n"
         f"━━━━━━━━━━━━━━━━━\n\n"
         f"👤 {mention}\n\n"
-        f"<b>⏱ Uptime:</b>  <i>{uptime_str}</i>\n"
-        f"<b>🕒 Time (IST):</b>  <code>{ist.strftime('%d-%m-%Y %H:%M:%S')}</code>\n\n"
-        f"<b>📚 Stories in DB:</b>  <i>{total_stories}</i>\n"
-        f"<b>📝 Story Requests:</b>  <i>{total_requests}</i>\n"
-        f"<b>⚠️ Broken Link Reports:</b>  <i>{total_broken_reports}</i>\n\n"
-        f"<b>🤖 Bot Status:</b>  <i>Running normally ✅</i>\n"
+        f"• <b>Uptime:</b>  <i>{uptime_str}</i>\n"
+        f"• <b>Time (IST):</b>  <code>{ist.strftime('%d-%m-%Y %H:%M:%S')}</code>\n\n"
+        f"◆ <b>Database</b>\n"
+        f"• <b>Total Stories:</b>  <i>{total_stories}</i>\n"
+        f"• <b>Requests:</b>  <i>{total_requests}</i>\n"
+        f"• <b>Broken Links:</b>  <i>{total_broken_reports}</i>\n\n"
+        f"✦ <b>Bot Status:</b>  <i>Running normally</i>\n"
         f"━━━━━━━━━━━━━━━━━\n"
-        f"<i>⏳ This message deletes in 60 seconds.</i>"
+        f"✧ <i>This message deletes in 60 seconds.</i>"
     )
 
     caller_id = user.id if user else 0
@@ -1482,17 +1483,17 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if lang == "hi":
             warn_text = """
-🎬 कृपया स्टोरी/सीरीज़ का नाम लिखें
+★ कृपया स्टोरी/सीरीज़ का नाम लिखें
 
-📝 उदाहरण:
+✧ उदाहरण:
 /request Vashikaran
 /request Saaya
 """
         else:
             warn_text = """
-🎬 Please provide the name of Story/Series
+★ Please provide the name of the Story/Series
 
-📝 Examples:
+✧ Examples:
 /request Vashikaran
 /request Saaya
 """
@@ -1531,7 +1532,7 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = f"""
 <b>{mention}</b>
 
-<b>इस स्टोरी को रिक्वेस्ट करने की जरूरत नहीं है।</b>
+<b>☆ यह स्टोरी पहले से उपलब्ध है</b>
 <i>यह पहले से हमारे डेटाबेस में मौजूद है।</i>
 
 <b>Link:</b> <tg-spoiler>{link}</tg-spoiler>
@@ -1540,7 +1541,7 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = f"""
 <b>{mention}</b>
 
-<b>No need to request this story.</b>
+<b>☆ Already in Database</b>
 <i>It already exists in our database.</i>
 
 <b>Link:</b> <tg-spoiler>{link}</tg-spoiler>
@@ -1576,9 +1577,9 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
             _set_cooldown(user.id, 30, "Repeated spam requests for the same voice/story")
             lang = get_chat_lang(update.effective_chat.id)
             if lang == "hi":
-                text = f"<b>⛔ आप cooldown पर हैं</b>\n\n{mention}\n<i>कारण:</i> <b>एक ही स्टोरी के लिए बार-बार स्पैम रिक्वेस्ट करना</b>\n<i>कृपया लगभग 30 मिनट बाद फिर से कोशिश करें।</i>"
+                text = f"<b>☆ Cooldown Active / आप कोल्डाउन पर हैं</b>\n\n{mention}\n✧ <i>कारण:</i> <b>एक ही स्टोरी के लिए बार-बार स्पैम रिक्वेस्ट करना</b>\n<i>कृपया लगभग 30 मिनट बाद फिर से कोशिश करें।</i>"
             else:
-                text = f"<b>⛔ You are on cooldown</b>\n\n{mention}\n<i>Reason:</i> <b>Repeated spam requests for the same story</b>\n<i>Please try again after approximately 30 minutes.</i>"
+                text = f"<b>☆ Cooldown Active</b>\n\n{mention}\n✧ <i>Reason:</i> <b>Repeated spam requests for the same story</b>\n<i>Please try again after approximately 30 minutes.</i>"
             await update.effective_chat.send_message(text=text, parse_mode="HTML")
             return
 
@@ -1587,14 +1588,14 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = f"""
 <b>{mention}</b>
 
-<i>आप पहले ही <b>{story}</b> रिक्वेस्ट कर चुके हैं।  
+<i>☆ आप पहले ही <b>{story}</b> रिक्वेस्ट कर चुके हैं।  
 कृपया डुप्लीकेट रिक्वेस्ट न भेजें।</i>
 """
         else:
             text = f"""
 <b>{mention}</b>
 
-<i>You have already requested <b>{story}</b>.  
+<i>☆ You have already requested <b>{story}</b>.  
 Please avoid sending duplicate requests.</i>
 """
         await update.effective_chat.send_message(text=text, parse_mode="HTML")
@@ -1623,10 +1624,10 @@ Please avoid sending duplicate requests.</i>
 Story Request
 
 Name: {story}
-User ID: {user.id}
-Username: {username}
+• User ID: {user.id}
+• Username: {username}
 
-Total Requests: {count}
+• Total Requests: {count}
 """,
         reply_markup=kb
     )
@@ -1638,7 +1639,7 @@ Total Requests: {count}
             text = f"""
 <b>{mention}</b>
 
-<b>आपकी <i>{story}</i> की रिक्वेस्ट भेज दी गई है।  
+<b>✦ आपकी <i>{story}</i> की रिक्वेस्ट भेज दी गई है।  
 हम इसे उपलब्ध कराने की पूरी कोशिश करेंगे।  
 जैसे ही मिलेगी, जल्द अपलोड कर दी जाएगी।</b>
 """
@@ -1646,7 +1647,7 @@ Total Requests: {count}
             text = f"""
 <b>{mention}</b>
 
-<b>Your request for <i>{story}</i> has been sent.  
+<b>✦ Your request for <i>{story}</i> has been sent.  
 We will try our best to provide this story.  
 If we find it, it will be uploaded soon.</b>
 """
@@ -1740,13 +1741,13 @@ async def _notify_fulfilled_requests(context: ContextTypes.DEFAULT_TYPE):
             lang = get_chat_lang(chat_id)
             if lang == "hi":
                 text = (
-                    f"<b>✅ {mentions}</b>\n\n"
+                    f"<b>✦ {mentions}</b>\n\n"
                     f"<i>{title}</i>\n\n"
                     f"<b>यहाँ पढ़ें:</b> {link}"
                 )
             else:
                 text = (
-                    f"<b>✅ {mentions}</b>\n\n"
+                    f"<b>✦ {mentions}</b>\n\n"
                     f"<i>{title}</i>\n\n"
                     f"<b>Read here:</b> {link}"
                 )
@@ -1880,15 +1881,15 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     keyboard.append([InlineKeyboardButton(s, callback_data=f"srch|{key}")])
             lang = get_chat_lang(update.effective_chat.id)
             no_msg = await msg.reply_text(
-                "❓ Did you mean one of these?" if lang != "hi" else "❓ क्या आप इनमें से कोई स्टोरी कहना चाहते थे?",
+                "✧ Did you mean one of these?" if lang != "hi" else "✧ क्या आप इनमें से कोई स्टोरी कहना चाहते थे?",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
         else:
             lang = get_chat_lang(update.effective_chat.id)
             no_msg = await msg.reply_text(
-                ("❌ No story found with that name.\n\nCheck spelling or use /stories to see available titles."
+                ("☆ No story found with that name.\n\nCheck spelling or use /stories to see available titles."
                  if lang != "hi"
-                 else "❌ इस नाम की कोई स्टोरी नहीं मिली।\n\nस्पेलिंग चेक करें या उपलब्ध टाइटल देखने के लिए /stories उपयोग करें।")
+                 else "☆ इस नाम की कोई स्टोरी नहीं मिली।\n\nस्पेलिंग चेक करें या उपलब्ध टाइटल देखने के लिए /stories उपयोग करें।")
             )
         async def _del_no():
             await asyncio.sleep(30)
@@ -1935,9 +1936,9 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_broken:
         lang = get_chat_lang(update.effective_chat.id)
         if lang == "hi":
-            broken_msg = f"<b>⚠️ लिंक अस्थायी रूप से अनुपलब्ध है</b>\n\n<i>{story_name}</i>\n\nइस स्टोरी के लिंक में वर्तमान में कोई समस्या है (जैसे कॉपीराइट या डिलीट होना) और एडमिन्स को सूचित कर दिया गया है। कृपया समस्या के ठीक होने तक प्रतीक्षा करें।"
+            broken_msg = f"<b>☆ लिंक अस्थायी रूप से अनुपलब्ध है</b>\n\n<i>{story_name}</i>\n\nइस स्टोरी के लिंक में वर्तमान में कोई समस्या है (जैसे कॉपीराइट या डिलीट होना) और एडमिन्स को सूचित कर दिया गया है। कृपया समस्या के ठीक होने तक प्रतीक्षा करें।"
         else:
-            broken_msg = f"<b>⚠️ Link Temporarily Unavailable</b>\n\n<i>{story_name}</i>\n\nThere is currently an issue with this story's link (like copyright or deletion) and admins have been notified. Please wait until it is fixed."
+            broken_msg = f"<b>☆ Link Temporarily Unavailable</b>\n\n<i>{story_name}</i>\n\nThere is currently an issue with this story's link (like copyright or deletion) and admins have been notified. Please wait until it is fixed."
         
         sent = await msg.reply_text(broken_msg, parse_mode="HTML")
         async def _del_broken():
@@ -2068,7 +2069,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Language fallback logic for PMs since we don't have their original chat ID context here
         # We will attempt to send them a direct message
         if action == "req_rej":
-            msg_text = f"<b>❌ Request Rejected</b>\n\nYour request for <i>{req_story}</i> has been rejected by administrators.\n(Reason: Fake, unavailable, or violates rules)\n\n<b>❌ रिक्वेस्ट रिजेक्ट</b>\nआपकी <i>{req_story}</i> की रिक्वेस्ट रिजेक्ट कर दी गई है।"
+            msg_text = f"<b>☆ Request Rejected</b>\n\nYour request for <i>{req_story}</i> has been rejected by administrators.\n(Reason: Fake, unavailable, or violates rules)\n\n<b>☆ रिक्वेस्ट रिजेक्ट</b>\nआपकी <i>{req_story}</i> की रिक्वेस्ट रिजेक्ट कर दी गई है।"
             try:
                 await context.bot.send_message(req_uid, msg_text, parse_mode="HTML")
             except:
@@ -2076,7 +2077,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif action == "req_warn":
             _set_cooldown(req_uid, 30, f"Fake/Spam request warning for: {req_story}")
-            msg_text = f"<b>⚠ WARNING / चेतावनी</b>\n\nYou have been placed on a 30-minute cooldown by administrators for sending fake or spam requests (<i>{req_story}</i>).\n\nफेक या स्पैम रिक्वेस्ट भेजने के कारण एडमिन्स ने आपको 30 मिनट के cooldown पर रखा है।"
+            msg_text = f"<b>☆ WARNING / चेतावनी</b>\n\nYou have been placed on a 30-minute cooldown by administrators for sending fake or spam requests (<i>{req_story}</i>).\n\nफेक या स्पैम रिक्वेस्ट भेजने के कारण एडमिन्स ने आपको 30 मिनट के cooldown पर रखा है।"
             try:
                 await context.bot.send_message(req_uid, msg_text, parse_mode="HTML")
             except:
@@ -2406,7 +2407,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lang = get_chat_lang(chat_id)
         if lang == "hi":
             text = (
-                f"<b>⚠ लिंक रिपोर्त करना चाहते हैं?</b>\n\n"
+                f"<b>★ लिंक रिपोर्ट</b>\n\n"
                 f"<i>{story_name}</i>\n\n"
                 "अगर यह स्टोरी लिंक सच में काम नहीं कर रहा है, तो नीचे कन्फर्म करें।"
             )
@@ -2414,7 +2415,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cancel_label = "❌ कैंसल"
         else:
             text = (
-                f"<b>⚠ Report link not working?</b>\n\n"
+                f"<b>★ Report Broken Link</b>\n\n"
                 f"<i>{story_name}</i>\n\n"
                 "If this story link is really broken, please confirm below."
             )
@@ -2569,17 +2570,17 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         lang = get_chat_lang(chat_id)
         if lang == "hi":
-            title = "<b>⚠ लिंक वेरीफिकेशन वोट</b>"
+            title = "<b>★ लिंक वेरीफिकेशन वोट</b>"
             body = f"<i>{story_name}</i>\n\n"
-            body += f"<b>वोट का उद्देश्य:</b> यह जांचना के लिए कि स्टोरी लिंक काम कर रहा है या टूटा हुआ है\n\n"
-            votes_line = f"<b>वोट:</b> {current} / {required} (कुल {required - current} और वोट चाहिए)"
+            body += f"✧ <b>उद्देश्य:</b> यह जांचना के लिए कि स्टोरी लिंक काम कर रहा है या टूटा हुआ है\n\n"
+            votes_line = f"• <b>वोट:</b> {current} / {required} (कुल {required - current} और वोट चाहिए)"
             broken_label = "❌ लिंक नहीं चल रहा"
             ok_label = "🔗 चल रहा है"
         else:
-            title = "<b>⚠ Link Verification Vote</b>"
+            title = "<b>★ Link Verification Vote</b>"
             body = f"<i>{story_name}</i>\n\n"
-            body += f"<b>Purpose:</b> To verify if the story link is working or broken\n\n"
-            votes_line = f"<b>Votes:</b> {current} / {required} ({required - current} more votes needed)"
+            body += f"✧ <b>Purpose:</b> To verify if the story link is working or broken\n\n"
+            votes_line = f"• <b>Votes:</b> {current} / {required} ({required - current} more votes needed)"
             broken_label = "🔗 Broken"
             ok_label = "🔗 Working"
 
@@ -2649,17 +2650,17 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         lang = get_chat_lang(chat_id)
         if lang == "hi":
-            title = "<b>⚠ लिंक वेरीफिकेशन वोट</b>"
+            title = "<b>★ लिंक वेरीफिकेशन वोट</b>"
             body = f"<i>{story_name}</i>\n\n"
-            body += f"<b>वोट का उद्देश्य:</b> यह जांचना के लिए कि स्टोरी लिंक काम कर रहा है या टूटा हुआ है\n\n"
-            votes_line = f"<b>वोट:</b> {current} / {required} (कुल {required - current} और वोट चाहिए)"
+            body += f"✧ <b>उद्देश्य:</b> यह जांचना के लिए कि स्टोरी लिंक काम कर रहा है या टूटा हुआ है\n\n"
+            votes_line = f"• <b>वोट:</b> {current} / {required} (कुल {required - current} और वोट चाहिए)"
             broken_label = "❌ लिंक नहीं चल रहा"
             ok_label = "🔗 चल रहा है"
         else:
-            title = "<b>⚠ Link Verification Vote</b>"
+            title = "<b>★ Link Verification Vote</b>"
             body = f"<i>{story_name}</i>\n\n"
-            body += f"<b>Purpose:</b> To verify if the story link is working or broken\n\n"
-            votes_line = f"<b>Votes:</b> {current} / {required} ({required - current} more votes needed)"
+            body += f"✧ <b>Purpose:</b> To verify if the story link is working or broken\n\n"
+            votes_line = f"• <b>Votes:</b> {current} / {required} ({required - current} more votes needed)"
             broken_label = "🔗 Broken"
             ok_label = "🔗 Working"
 
@@ -2694,14 +2695,14 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             mentions = " ".join(_user_mention_by_id(uid, name) for uid, name in voter_items)
             if lang == "hi":
                 final_text = (
-                    f"<b>✅ लिंक टूटा हुआ कन्फर्म हो गया</b>\n\n"
+                    f"<b>✦ लिंक टूटा हुआ कन्फर्म हो गया</b>\n\n"
                     f"{mentions}\n\n"
                     f"<i>{story_name}</i>\n"
                     f"<b>Link:</b> {link}"
                 )
             else:
                 final_text = (
-                    f"<b>✅ Link confirmed broken</b>\n\n"
+                    f"<b>✦ Link Confirmed Broken</b>\n\n"
                     f"{mentions}\n\n"
                     f"<i>{story_name}</i>\n"
                     f"<b>Link:</b> {link}"
@@ -2824,7 +2825,7 @@ async def chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE)
         set_chat_lang(chat.id, "en")
 
         text = (
-            "<b>👋 Thanks for adding Riya Bot</b>\n\n"
+            "<b>★ Thanks for adding Riya Bot</b>\n\n"
             "<i>To work properly, Riya needs:</i>\n"
             "• Permission to read messages\n"
             "• Permission to send messages\n"
@@ -2878,7 +2879,7 @@ async def announce_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
     lang = get_chat_lang(update.effective_chat.id)
-    await update.message.reply_text(f"✅ Announcement sent to {count} chats." if lang != "hi" else f"✅ अनाउंसमेंट {count} चैट्स को भेज दिया गया।")
+    await update.message.reply_text(f"✦ Announcement sent to {count} chats." if lang != "hi" else f"✦ अनाउंसमेंट {count} चैट्स को भेज दिया गया।")
 
 
 async def setlang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2897,7 +2898,7 @@ async def setlang_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /setlang en|hi" if lang0 != "hi" else "उपयोग: /setlang en|hi")
         return
     set_chat_lang(update.effective_chat.id, lang)
-    await update.message.reply_text("✅ Updated." if lang == "en" else "✅ भाषा अपडेट हो गई।")
+    await update.message.reply_text("✦ Updated." if lang == "en" else "✦ भाषा अपडेट हो गई।")
 
 
 async def copyright_mute_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
