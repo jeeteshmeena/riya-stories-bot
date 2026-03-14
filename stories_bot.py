@@ -626,8 +626,8 @@ def _nav_row(caller_id: int, back: str | None = None) -> list:
     """Standard bottom navigation row: [Back] [✕ Close]"""
     row = []
     if back:
-        row.append(InlineKeyboardButton("⬅ Back", callback_data=f"menu|{back}|{caller_id}"))
-    row.append(InlineKeyboardButton("✕ Close", callback_data=f"menu|close|{caller_id}"))
+        row.append(InlineKeyboardButton("➦ Back", callback_data=f"menu|{back}|{caller_id}"))
+    row.append(InlineKeyboardButton("✖ Close", callback_data=f"menu|close|{caller_id}"))
     return row
 
 
@@ -647,18 +647,18 @@ def _menu_main(caller_id: int, lang: str = "en") -> tuple:
         )
     markup = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("★ Favourites",  callback_data=f"menu|saved|{caller_id}"),
-            InlineKeyboardButton("✦ New Series",   callback_data=f"menu|new|{caller_id}"),
+            InlineKeyboardButton("♥ Favourites",  callback_data=f"menu|saved|{caller_id}"),
+            InlineKeyboardButton("✸ New Series",   callback_data=f"menu|new|{caller_id}"),
         ],
         [
-            InlineKeyboardButton("🔥 Trending",    callback_data=f"menu|trending|{caller_id}"),
-            InlineKeyboardButton("ℹ️ About",        callback_data=f"menu|about|{caller_id}"),
+            InlineKeyboardButton("✺ Trending",    callback_data=f"menu|trending|{caller_id}"),
+            InlineKeyboardButton("❁ About",        callback_data=f"menu|about|{caller_id}"),
         ],
         [
-            InlineKeyboardButton("🌐 Language",    callback_data=f"menu|lang|{caller_id}"),
-            InlineKeyboardButton("🚧 Help",         callback_data=f"menu|help|{caller_id}"),
+            InlineKeyboardButton("✧ Language",    callback_data=f"menu|lang|{caller_id}"),
+            InlineKeyboardButton("✦ Help",         callback_data=f"menu|help|{caller_id}"),
         ],
-        [InlineKeyboardButton("✕ Close", callback_data=f"menu|close|{caller_id}")],
+        [InlineKeyboardButton("✖ Close", callback_data=f"menu|close|{caller_id}")],
     ])
     return text, markup
 
@@ -956,7 +956,7 @@ Riya v10
 Riya v10
 """
 
-    keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="cmd|start")]]
+    keyboard = [[InlineKeyboardButton("➦ Back to Menu", callback_data="cmd|start")]]
     reply = await update.message.reply_text(text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def _delete_cmd():
@@ -992,7 +992,7 @@ async def how(update: Update, context: ContextTypes.DEFAULT_TYPE):
 When the story gets uploaded, you will be notified automatically.
 """
 
-    keyboard = [[InlineKeyboardButton("🔙 Back to Menu", callback_data="cmd|start")]]
+    keyboard = [[InlineKeyboardButton("➦ Back to Menu", callback_data="cmd|start")]]
     msg = await update.message.reply_text(text=text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
 
     async def _delete_later():
@@ -1190,7 +1190,7 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     caller_id = user.id if user else 0
     delete_btn = InlineKeyboardMarkup(
-        [[InlineKeyboardButton("🗑 Delete", callback_data=f"status_delete|{caller_id}")]]
+        [[InlineKeyboardButton("🗑️ Delete", callback_data=f"status_delete|{caller_id}")]]
     )
 
     reply = await chat.send_message(text=text, parse_mode="HTML", reply_markup=delete_btn)
@@ -1559,11 +1559,11 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_pages = (len(story_index) + STORIES_PER_PAGE - 1) // STORIES_PER_PAGE
     nav = []
     if has_prev:
-        nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"stories_p|{page-1}|{caller_id}"))
+        nav.append(InlineKeyboardButton("◄ Prev", callback_data=f"stories_p|{page-1}|{caller_id}"))
     nav.append(InlineKeyboardButton(f"1/{total_pages}", callback_data="noop"))
     if has_next:
-        nav.append(InlineKeyboardButton("Next ▶", callback_data=f"stories_p|{page+1}|{caller_id}"))
-    keyboard = [nav, [InlineKeyboardButton("✕ Delete", callback_data=f"story_delete|{caller_id}")]]
+        nav.append(InlineKeyboardButton("Next ►", callback_data=f"stories_p|{page+1}|{caller_id}"))
+    keyboard = [nav, [InlineKeyboardButton("🗑️ Delete", callback_data=f"story_delete|{caller_id}")]]
 
     cmd_msg = update.message
 
@@ -1772,8 +1772,8 @@ Please avoid sending duplicate requests.</i>
     safe_story = story[:40] # Prevent callback data from exceeding 64 bytes
     kb = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("✕ REJECT", callback_data=f"req_rej|{user.id}|{safe_story}"),
-            InlineKeyboardButton("⚠ WARN", callback_data=f"req_warn|{user.id}|{safe_story}")
+            InlineKeyboardButton("✖ REJECT", callback_data=f"req_rej|{user.id}|{safe_story}"),
+            InlineKeyboardButton("◌ WARN", callback_data=f"req_warn|{user.id}|{safe_story}")
         ]
     ])
 
@@ -2038,7 +2038,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     keyboard.append([InlineKeyboardButton(f"Join {title}", url=invite_link)])
             except Exception:
                 pass
-        keyboard.append([InlineKeyboardButton("✅ I've Joined", callback_data="check_sub")])
+        keyboard.append([InlineKeyboardButton("✦ I've Joined", callback_data="check_sub")])
         if keyboard:
             await msg.reply_text("<b>⚠️ Access Denied</b>\n\nPlease join our channels to search stories.", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
             return
@@ -2478,9 +2478,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 <tg-spoiler>This reply will be deleted automatically in 5 minutes.</tg-spoiler>
 """
         keyboard = [
-            [InlineKeyboardButton("OPEN STORY", url=result["link"])],
-            [InlineKeyboardButton("⚠ Link Not Working?", callback_data=f"lnw|{story_key}")],
-            [InlineKeyboardButton("Delete", callback_data="delete")]
+            [InlineKeyboardButton("➔ Open Story", url=result["link"])],
+            [InlineKeyboardButton("◌ Link Not Working?", callback_data=f"lnw|{story_key}")],
+            [InlineKeyboardButton("🗑️ Delete", callback_data="delete")]
         ]
         photo = result.get("photo") or result.get("image")
         try:
@@ -2548,11 +2548,11 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_pages = (len(story_index) + STORIES_PER_PAGE - 1) // STORIES_PER_PAGE
         nav = []
         if has_prev:
-            nav.append(InlineKeyboardButton("◀ Prev", callback_data=f"stories_p|{page-1}|{caller_id}"))
+            nav.append(InlineKeyboardButton("◄ Prev", callback_data=f"stories_p|{page-1}|{caller_id}"))
         nav.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"))
         if has_next:
-            nav.append(InlineKeyboardButton("Next ▶", callback_data=f"stories_p|{page+1}|{caller_id}"))
-        rows = [nav, [InlineKeyboardButton("✕ Delete", callback_data=f"story_delete|{caller_id}")]]
+            nav.append(InlineKeyboardButton("Next ►", callback_data=f"stories_p|{page+1}|{caller_id}"))
+        rows = [nav, [InlineKeyboardButton("🗑️ Delete", callback_data=f"story_delete|{caller_id}")]]
         try:
             await query.message.edit_text(
                 text=text,
@@ -3046,7 +3046,7 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for story in results:
         res = get_story(clean_story(story).lower())
         link = res.get("link") if res else ""
-        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("OPEN STORY", url=link)]]) if link else None
+        keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("➔ Open Story", url=link)]]) if link else None
 
         articles.append(
             InlineQueryResultArticle(
@@ -3216,10 +3216,10 @@ _CFG_DIV = "━━━━━━━━━━━━━━━━"
 
 
 def _cfg_nav(caller_id: int, back: str = "main") -> list:
-    """Standard config nav row: [⬅ Back][✕ Delete]"""
+    """Standard config nav row: [➦ Back][✖ Close]"""
     return [
-        InlineKeyboardButton("⬅ Back",    callback_data=f"cfg|{back}||{caller_id}"),
-        InlineKeyboardButton("✕ Delete",  callback_data=f"cfg|close||{caller_id}"),
+        InlineKeyboardButton("➦ Back",    callback_data=f"cfg|{back}||{caller_id}"),
+        InlineKeyboardButton("✖ Close",  callback_data=f"cfg|close||{caller_id}"),
     ]
 
 
@@ -3261,7 +3261,7 @@ def _cfg_main_panel(caller_id: int, lang: str = "en") -> tuple:
         ],
         [
             InlineKeyboardButton("✧ Refresh",        callback_data=f"cfg|main||{caller_id}"),
-            InlineKeyboardButton("✕ Delete",          callback_data=f"cfg|close||{caller_id}"),
+            InlineKeyboardButton("✖ Close",          callback_data=f"cfg|close||{caller_id}"),
         ],
     ])
     return header, markup
@@ -3321,8 +3321,8 @@ def _cfg_sources_panel(caller_id: int, lang: str = "en") -> tuple:
     )
     markup = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("＋ Add",    callback_data=f"cfg|add_source||{caller_id}"),
-            InlineKeyboardButton("－ Remove", callback_data=f"cfg|rm_source||{caller_id}"),
+            InlineKeyboardButton("✚ Add",    callback_data=f"cfg|add_source||{caller_id}"),
+            InlineKeyboardButton("✖ Remove", callback_data=f"cfg|rm_source||{caller_id}"),
         ],
         _cfg_nav(caller_id, back="main"),
     ])
@@ -3385,11 +3385,11 @@ def _cfg_formats_panel(caller_id: int, lang: str = "en") -> tuple:
     )
     markup = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("＋ Add Format",   callback_data=f"cfg|fmt_learn||{caller_id}"),
+            InlineKeyboardButton("✚ Add Format",   callback_data=f"cfg|fmt_learn||{caller_id}"),
             InlineKeyboardButton("◇ View",          callback_data=f"cfg|fmt_view||{caller_id}"),
         ],
         [
-            InlineKeyboardButton("✕ Remove",        callback_data=f"cfg|fmt_rm||{caller_id}"),
+            InlineKeyboardButton("✖ Remove",        callback_data=f"cfg|fmt_rm||{caller_id}"),
             InlineKeyboardButton("⬡ Test",          callback_data=f"cfg|fmt_test||{caller_id}"),
         ],
         _cfg_nav(caller_id, back="main"),
@@ -3495,7 +3495,7 @@ def _cfg_fmt_rm_panel(caller_id: int) -> tuple:
         f"{_CFG_DIV}"
     )
     rows = [
-        [InlineKeyboardButton(f"✕ Channel {cid}", callback_data=f"cfg|fmt_do_rm|{cid}|{caller_id}")]
+        [InlineKeyboardButton(f"✖ Channel {cid}", callback_data=f"cfg|fmt_do_rm|{cid}|{caller_id}")]
         for cid in fmts
     ]
     rows.append(_cfg_nav(caller_id, back="formats"))
@@ -4033,7 +4033,7 @@ async def handle_config_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "Add one in Sources first, then try again."
             )
 
-        markup = InlineKeyboardMarkup(ch_rows + [[InlineKeyboardButton("✕ Cancel", callback_data=f"cfg|formats||{caller_id}")]])
+        markup = InlineKeyboardMarkup(ch_rows + [[InlineKeyboardButton("✖ Cancel", callback_data=f"cfg|formats||{caller_id}")]])
         await msg.reply_text(
             "<b>★ Add Format — Step 2</b>\n"
             "━━━━━━━━━━━━━━━━\n\n"
