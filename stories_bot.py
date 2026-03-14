@@ -2418,7 +2418,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conf = await query.message.reply_text(text=text, parse_mode="HTML", reply_markup=kb)
 
         async def _del_conf():
-            await asyncio.sleep(3600)
+            await asyncio.sleep(300) # 5m
             try:
                 await conf.delete()
             except Exception:
@@ -2595,9 +2595,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.pin_chat_message(chat_id=chat_id, message_id=sent.message_id, disable_notification=True)
             except Exception:
                 pass
-            # auto-unpin and delete vote after 24h if not resolved
+            # auto-unpin and delete vote after 6h if not resolved
             async def _cleanup_vote(m_id, v_id, c_id):
-                await asyncio.sleep(86400)
+                await asyncio.sleep(21600) # 6h
                 v = active_link_votes.pop(v_id, None)
                 try:
                     await context.bot.unpin_chat_message(chat_id=c_id, message_id=m_id)
@@ -2691,9 +2691,18 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"<b>Link:</b> {link}"
                 )
             try:
-                await context.bot.send_message(chat_id=chat_id, text=final_text, parse_mode="HTML")
+                final_res_msg = await context.bot.send_message(chat_id=chat_id, text=final_text, parse_mode="HTML")
             except Exception:
-                pass
+                final_res_msg = None
+
+            if final_res_msg:
+                async def _del_final():
+                    await asyncio.sleep(43200) # 12h
+                    try:
+                        await final_res_msg.delete()
+                    except:
+                        pass
+                asyncio.create_task(_del_final())
 
             # Delete the vote message immediately to prevent further voting
             try:
