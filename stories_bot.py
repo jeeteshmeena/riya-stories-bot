@@ -3629,6 +3629,7 @@ async def config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
     """Handle all cfg| callbacks — always edits the same message."""
+    global MAINTENANCE_MODE, MAINTENANCE_UNTIL
     data = query.data
     parts = data.split("|")
     # Format: cfg|section|action|caller_id
@@ -3856,7 +3857,6 @@ async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
 
     # maint_on: duration tap immediately activates maintenance
     if section == "maint_on":
-        global MAINTENANCE_MODE, MAINTENANCE_UNTIL
         try:
             mins_val = int(action)
         except (ValueError, TypeError):
@@ -3880,7 +3880,6 @@ async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
 
     # maint_off: immediately disables maintenance
     if section == "maint_off":
-        global MAINTENANCE_MODE, MAINTENANCE_UNTIL
         _end_maintenance()
         await query.answer("🟢 Maintenance mode disabled.", show_alert=True)
         text, markup = _cfg_maintenance_panel(caller_id)
@@ -3896,7 +3895,6 @@ async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if section == "maint_toggle":
-        global MAINTENANCE_MODE, MAINTENANCE_UNTIL
         if MAINTENANCE_MODE:
             _end_maintenance()
             await query.answer("🟢 Maintenance mode disabled.", show_alert=True)
