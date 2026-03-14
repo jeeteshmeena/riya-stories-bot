@@ -1686,7 +1686,7 @@ Please avoid sending duplicate requests.</i>
         ]
     ])
 
-    await context.bot.send_message(
+    sent_req = await context.bot.send_message(
         chat_id=REQUEST_GROUP,
         text=f"""
 Story Request
@@ -1696,9 +1696,15 @@ Name: {story}
 • Username: {username}
 
 • Total Requests: {count}
-""",
-        reply_markup=kb
+"""
     )
+    
+    # Store the message ID so we can aggressively delete it later if REJECT is pressed
+    # We use a memory cache
+    global _req_msg_cache
+    if "_req_msg_cache" not in globals():
+        _req_msg_cache = {}
+    _req_msg_cache[safe_story] = sent_req.message_id
 
     if count == 1:
 
@@ -1744,7 +1750,8 @@ If we find it, it will be uploaded soon.</b>
 
     await update.effective_chat.send_message(
         text=text,
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=kb
     )
 
     # persist requests state
@@ -2133,6 +2140,16 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.delete()
         except:
             pass
+            
+        # Delete from request channel if we have the message ID stored
+        if action == "req_rej":
+            global _req_msg_cache
+            if "_req_msg_cache" in globals() and req_story in _req_msg_cache:
+                try:
+                    await context.bot.delete_message(chat_id=REQUEST_GROUP, message_id=_req_msg_cache[req_story])
+                    _req_msg_cache.pop(req_story, None)
+                except Exception:
+                    pass
 
         # Language fallback logic for PMs since we don't have their original chat ID context here
         # We will attempt to send them a direct message
