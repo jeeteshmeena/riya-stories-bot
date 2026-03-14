@@ -79,15 +79,23 @@ def add_story(story):
     db = load_db()
 
     name = story["name"]
+    is_new = False
+    link_changed = False
 
     if name not in db:
         db[name] = story
+        is_new = True
     else:
-        # latest message logic
-        if story.get("message_id", 0) > db[name].get("message_id", 0):
+        # Check if link has changed (potential fix or update)
+        if story.get("link") != db[name].get("link"):
+            link_changed = True
+        
+        # Always update to latest message if available
+        if story.get("message_id", 0) >= db[name].get("message_id", 0):
             db[name] = story
 
     save_db(db)
+    return is_new, link_changed
 
 
 def get_story(name):

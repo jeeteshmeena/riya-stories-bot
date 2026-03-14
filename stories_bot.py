@@ -124,6 +124,85 @@ COPYRIGHT_DEFAULT_COOLDOWN_MIN = 1440  # 24h
 chat_languages = load_languages()  # chat_id(str) -> 'en'/'hi'
 link_flags = load_link_flags()  # story_key -> {'broken': bool, 'link': str, 'voters': [{'id','name'}], 'chats': [int]}
 active_link_votes = {}  # vote_id -> {'story_key', 'chat_id', 'message_id', 'voters': {user_id: name}, 'link', 'story_name'}
+
+async def _notify_request_available(bot, story_key, story_name, link, is_fix=False):
+    """Notify users who requested a story or reported a link when it becomes available/fixed."""
+    # 1. Handle Requests
+    requests = request_db.get(story_key)
+    if requests:
+        lang_map = load_languages()
+        for chat_id_str, user_ids in requests.items():
+            try:
+                chat_id = int(chat_id_str)
+                lang = lang_map.get(chat_id_str, "en")
+                
+                mentions = []
+                for uid in user_ids:
+                    mentions.append(f"<a href='tg://user?id={uid}'>U</a>")
+                mentions_str = " ".join(mentions)
+
+                if lang == "hi":
+                    msg = (
+                        f"<b>🎊 अच्छी खबर!</b>\n\n"
+                        f"आपकी रिक्वेस्ट की गई स्टोरी <b>{story_name}</b> अब उपलब्ध है।\n\n"
+                        f"<b>लिंक:</b> <a href='{link}'>यहाँ क्लिक करें</a>\n\n"
+                        f"cc: {mentions_str}"
+                    )
+                else:
+                    msg = (
+                        f"<b>🎊 Great news!</b>\n\n"
+                        f"The story you requested, <b>{story_name}</b>, is now available.\n\n"
+                        f"<b>Link:</b> <a href='{link}'>Click here to open</a>\n\n"
+                        f"cc: {mentions_str}"
+                    )
+                
+                await bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML")
+                await asyncio.sleep(0.1) # small throttle
+            except Exception as e:
+                logger.debug(f"Failed to notify request in {chat_id_str}: {e}")
+        
+        # Clear the requests for this story once notified
+        if story_key in request_db:
+            del request_db[story_key]
+            save_requests({"requests": request_db})
+
+    # 2. Handle Broken Link Fix Notifications
+    flag = link_flags.get(story_key)
+    if flag and flag.get("broken") and is_fix:
+        chats = flag.get("chats", [])
+        voters = flag.get("voters", [])
+        
+        for chat_id in chats:
+            try:
+                lang = get_chat_lang(chat_id)
+                
+                # Filter voters for this specific chat
+                vcount = len(voters)
+                
+                if lang == "hi":
+                    msg = (
+                        f"<b>✅ स्टोरी लिंक ठीक हो गया!</b>\n\n"
+                        f"📖 स्टोरी: <b>{story_name}</b>\n"
+                        f"🔗 नया लिंक: <a href='{link}'>यहाँ क्लिक करें</a>\n\n"
+                        f"उन {vcount} यूज़र्स का धन्यवाद जिन्होंने इसे रिपोर्ट किया था।"
+                    )
+                else:
+                    msg = (
+                        f"<b>✅ Story link is fixed!</b>\n\n"
+                        f"📖 Story: <b>{story_name}</b>\n"
+                        f"🔗 New Link: <a href='{link}'>Click here to open</a>\n\n"
+                        f"Thanks to the {vcount} users who reported this."
+                    )
+                
+                await bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML")
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                logger.debug(f"Failed to notify link fix in {chat_id}: {e}")
+        
+        # Clear the broken flag
+        if story_key in link_flags:
+            del link_flags[story_key]
+            save_link_flags(link_flags)
 bot_config = load_config()
 stats_db = load_stats()  # {"searches": {}, "users": {}, "trending": {}}
 favorites_db = load_favorites()  # { user_id_str: [story_key1, ...] }
@@ -397,7 +476,7 @@ async def auto_scan_loop(bot=None):
         try:
             await asyncio.sleep(600)  # wait 10 min before first run
             logger.info("Auto scan started...")
-            result = await scan_channel(CHANNEL_ID, bot=bot, log_channel=LOG_CHANNEL)
+            result = await scan_channel(CHANNEL_ID, bot=bot, log_channel=LOG_CHANNEL, story_cb=_notify_request_available)
             names = result.get("names", [])
             # Only update indexes if we got a successful result - never wipe on failure
             if names:
@@ -1267,6 +1346,7 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     progress_cb=_progress_cb,
                     cleanup=False,
                     formats_by_channel=formats_by_channel,
+                    story_cb=_notify_request_available
                 )
                 all_names.extend(result.get("names", []))
                 all_keys.update(result.get("keys", []))
@@ -1891,11 +1971,22 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     photo = result.get("photo") or result.get("image")
+    # ── REFINED: Link Broken Warning ─────────────────────────────────────
+    flag = link_flags.get(story_key)
+    broken_warning = ""
+    if flag and flag.get("broken"):
+        lang = get_chat_lang(chat_id)
+        reason = flag.get("reason", "unknown issue")
+        if lang == "hi":
+            broken_warning = f"\n\n<b>⚠️ ध्यान दें:</b> <i>इस स्टोरी लिंक में समस्या हो सकती है। ({reason})</i>\nकृपया हमारे एडमिन द्वारा इसे ठीक करने का इंतजार करें।"
+        else:
+            broken_warning = f"\n\n<b>⚠️ Note:</b> <i>This story link may have issues. ({reason})</i>\nPlease wait until our admins update the link."
+
     story_type_line = f"\n<b>Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
     caption = f"""Hey {mention} 👋
 <b>I found this story</b> 👇
 
-<i>Name:-</i> <b>{story_name}</b>{story_type_line}
+<i>Name:-</i> <b>{story_name}</b>{story_type_line}{broken_warning}
 
 <tg-spoiler>This reply will be deleted automatically in 5 minutes.</tg-spoiler>
 """
@@ -2256,10 +2347,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         owner = message_owner.get(query.message.message_id)
         if owner is not None and owner != user.id:
             lang = get_chat_lang(query.message.chat.id)
-            if lang == "hi":
-                warn_text = "<b>केवल वही यूज़र लिंक रिपोर्ट कर सकता है, जिसने स्टोरी सर्च की हो।</b>"
-            else:
-                warn_text = "⛔ Only the user who searched for this story can report the link."
+            warn_text = "⛔ Only the user who searched for this story can report the link." if lang != "hi" else "⛔ केवल वही यूज़र लिंक रिपोर्ट कर सकता है जिसने स्टोरी सर्च की हो।"
             await query.answer(warn_text, show_alert=True)
             return
 
@@ -2272,27 +2360,30 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = user.id
         story_name = clean_story(story.get("text", story.get("name", "")))
         
-        # Anti-spam: Check if user already reported this story
+        # ── REFINED: Confirmed Broken Logic ──────────────────────────────────
         existing_flag = link_flags.get(story_key)
         if existing_flag and existing_flag.get("broken"):
-            # Story already confirmed as broken
+            # Check if THIS user was a voter in the original report
+            voters = existing_flag.get("voters", [])
+            voter_ids = [v.get("id") for v in voters] if isinstance(voters, list) else []
+            
             lang = get_chat_lang(chat_id)
-            if lang == "hi":
-                txt = f"<b>आप पहले ही इस स्टोरी की रिपोर्ट कर चुके हैं।</b>\n\n<i>यह स्टोरी पहले से ही टूटी हुई के रूप में मार्क कर दी गई है। कृपया समाधान का इंतजार करें।</i>"
+            if user_id in voter_ids:
+                # User already participated
+                txt = "★ You have already participated in the report for this story." if lang != "hi" else "★ आप पहले ही इस स्टोरी की रिपोर्ट में भाग ले चुके हैं।"
             else:
-                txt = f"<b>You have already submitted a report for this story.</b>\n\n<i>This story is already marked as broken. Please wait while the issue is being resolved.</i>"
+                # New user trying to report confirmed broken link
+                txt = "☆ This story has already been reported. Please wait for the admins to update the link." if lang != "hi" else "☆ यह स्टोरी पहले ही रिपोर्ट की जा चुकी है। कृपया एडमिन द्वारा लिंक अपडेट करने का इंतजार करें।"
+            
             await query.answer(txt, show_alert=True)
             return
 
-        # Check if user has already voted in this specific vote
+        # Check if user has already voted in this specific active vote
         vote_id = f"{chat_id}:{story_key}"
         existing_vote = active_link_votes.get(vote_id)
         if existing_vote and user_id in existing_vote.get("voters", {}):
             lang = get_chat_lang(chat_id)
-            if lang == "hi":
-                txt = f"<b>आप पहले ही इस वेरिफिकेशन में भाग ले चुके हैं।</b>\n\n<i>कृपया समस्या के समाधान का इंतजार करें।</i>"
-            else:
-                txt = f"<b>You have already participated in this verification.</b>\n\n<i>Please wait while the issue is being resolved.</i>"
+            txt = "★ You have already participated in this verification." if lang != "hi" else "★ आप पहले ही इस वेरिफिकेशन में भाग ले चुके हैं।"
             await query.answer(txt, show_alert=True)
             return
         
@@ -3586,7 +3677,8 @@ async def rescan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             log_channel=LOG_CHANNEL,
             progress_cb=_progress_cb,
             cleanup=False,
-            formats_by_channel=formats
+            formats_by_channel=formats,
+            story_cb=_notify_request_available
         )
         count = result.get("stories", 0)
         try:
