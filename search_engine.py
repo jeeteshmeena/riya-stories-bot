@@ -13,104 +13,100 @@ def clean_story(name):
     return name.strip()
 
 
-# We will cache precomputed words, lowering fuzz loops exponentially
-_search_cache = []
+# We caching everything inside dicts for O(1) alias/exact lookups
+_exact_cache = {}    # clean_query -> data
+_alias_cache = {}    # clean_alias -> data
+_list_cache = []     # for partial/did_you_mean containing original titles
 _search_cache_mtime = None
-STOP_WORDS = {"the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by", "se", "ke", "ki"}
 
 def _get_cache():
-    global _search_cache, _search_cache_mtime
+    global _exact_cache, _alias_cache, _list_cache, _search_cache_mtime
     db = load_db()
     
     if not db:
-        return []
+        return {}
     
-    # Check if DB changed
-    if _search_cache_mtime == database._DB_MTIME and len(_search_cache) == len(db):
-        return _search_cache
+    if _search_cache_mtime == database._DB_MTIME and len(_exact_cache) == len(db):
+        return _exact_cache
 
-    new_cache = []
+    new_exact = {}
+    new_alias = {}
+    new_list = []
+    
     for name, data in db.items():
-        story_name = clean_story(data.get("text", data.get("name", name))).lower()
-        words = set(story_name.split()) - STOP_WORDS
-        new_cache.append({
-            "key": name,
-            "data": data,
-            "story_name": story_name,
-            "words": words
-        })
+        # name is already clean and lowered in DB key
+        story_name_clean = name 
+        new_exact[story_name_clean] = data
+        new_list.append(data.get("text", name))
         
-    _search_cache = new_cache
-    _search_cache_mtime = database._DB_MTIME
-    return _search_cache
-
-
-def fuzzy_search(query):
-    query = clean_story(query).lower()
-    if not query or len(query) < 2:
-        return None
-    
-    query_words = set(query.split()) - STOP_WORDS
-    
-    cache = _get_cache()
-    
-    # Filter candidates via set intersection (O(1) lookups)
-    candidates = []
-    if query_words:
-        for item in cache:
-            if item["words"] & query_words:
-                candidates.append(item)
-    
-    # Fallback to full list if no tokens matched (e.g. single small word searches)
-    if not candidates:
-        candidates = cache
-        
-    best = None
-    score = 0
-    
-    for item in candidates:
-        story_name = item["story_name"]
-        
-        partial_ratio = fuzz.partial_ratio(query, story_name)
-        token_sort_ratio = fuzz.token_sort_ratio(query, story_name)
-        token_set_ratio = fuzz.token_set_ratio(query, story_name)
-        combined_score = max(partial_ratio, token_sort_ratio, token_set_ratio)
-        
-        if combined_score > score and combined_score >= 90:
-            story_words = item["words"]
-            if query_words and story_words:
-                overlap = len(query_words & story_words) / len(query_words)
-                if overlap >= 0.7:
-                    score = combined_score
-                    best = item["data"]
-            elif not query_words and combined_score >= 95:
-                # small queries fallback
-                score = combined_score
-                best = item["data"]
+        # aliases
+        aliases = data.get("aliases", [])
+        for al in aliases:
+            al_clean = clean_story(al).lower()
+            if al_clean:
+                new_alias[al_clean] = data
                 
-    return best
+    _exact_cache = new_exact
+    _alias_cache = new_alias
+    _list_cache = new_list
+    _search_cache_mtime = database._DB_MTIME
+    return _exact_cache
 
 
-def fuzzy_search_contains(query, limit=10):
+def search_story_exact_or_alias(query):
     """
-    Search for stories containing the query (for suggestions).
-    Uses stricter matching to avoid unrelated results.
+    1. Exact story title match
+    2. Alias match
     """
+    _get_cache() # ensure cache is warm
+    q = clean_story(query).lower()
+    if not q:
+        return None
+        
+    if q in _exact_cache:
+        return _exact_cache[q]
+        
+    if q in _alias_cache:
+        return _alias_cache[q]
+        
+    return None
+
+def get_suggestions(query, limit=5):
+    """
+    Return similar titles from the database, not random fuzzy results.
+    Only titles starting with or containing the query, or passing a strict threshold.
+    """
+    _get_cache()
     if not query or len(query.strip()) < 2:
         return []
         
-    query = query.lower().strip()
-    results = []
+    q = query.lower().strip()
+    qc = clean_story(q).lower()
     
-    for item in _get_cache():
-        display_text = item["story_name"]
+    results = []
+    for title in _list_cache:
+        title_lower = title.lower()
+        title_clean = clean_story(title).lower()
         
-        # Only include if there's a meaningful match
-        if (query in display_text or display_text in query or
-            fuzz.partial_ratio(query, display_text) >= 75):
-            results.append(item["data"].get("text", item["key"]))
+        if qc and (qc in title_clean or title_clean in qc):
+            results.append(title)
+            continue
             
-    # Sort by relevance and limit
-    results.sort(key=lambda x: fuzz.partial_ratio(query, x.lower()), reverse=True)
-    return results[:limit]
+        ratio = fuzz.ratio(qc, title_clean)
+        if ratio >= 80:
+            results.append(title)
+            
+    # sort by edit distance practically
+    results.sort(key=lambda t: fuzz.ratio(qc, clean_story(t).lower()), reverse=True)
+    
+    # Remove duplicates, keeping order
+    seen = set()
+    final = []
+    for r in results:
+        if r not in seen:
+            seen.add(r)
+            final.append(r)
+            
+    return final[:limit]
+
 

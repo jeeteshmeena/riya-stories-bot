@@ -79,23 +79,22 @@ def add_story(story):
     db = load_db()
 
     name = story["name"]
-    is_new = False
-    link_changed = False
 
     if name not in db:
         db[name] = story
-        is_new = True
     else:
-        # Check if link has changed (potential fix or update)
-        if story.get("link") != db[name].get("link"):
-            link_changed = True
-        
-        # Always update to latest message if available
-        if story.get("message_id", 0) >= db[name].get("message_id", 0):
+        # latest message logic
+        if story.get("message_id", 0) > db[name].get("message_id", 0):
+            existing_aliases = db[name].get("aliases", [])
+            if existing_aliases:
+                story["aliases"] = existing_aliases
             db[name] = story
+        else:
+            # Even if we don't update the story, ensure any new aliases from somewhere are saved? 
+            # Well, scanning doesn't bring new aliases.
+            pass
 
     save_db(db)
-    return is_new, link_changed
 
 
 def get_story(name):

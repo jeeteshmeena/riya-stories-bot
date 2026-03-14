@@ -48,12 +48,13 @@ from config import (
     GROUP_ID,
 )
 from scanner_client import scan_channel
-from search_engine import fuzzy_search
+from search_engine import search_story_exact_or_alias, get_suggestions
 from filters_text import is_valid_query
 from link_checker import start_link_checker
 from database import (
     get_story,
     load_db,
+    save_db,
     load_claims,
     save_claims,
     load_requests,
@@ -254,19 +255,13 @@ def _looks_like_existing_story_query(text: str) -> bool:
         return False
 
     # exact/contains matches first
-    if fast_search(q):
+    if search_story_exact_or_alias(q):
         return True
-    if fast_search_contains(q, limit=1):
+    
+    if len(get_suggestions(q, limit=1)) > 0:
         return True
-
-    # fuzzy with token overlap safeguard
-    fuzzy = fuzzy_search(q)
-    if not fuzzy:
-        return False
-    name_tokens = set(clean_story(fuzzy.get("name", fuzzy.get("text", ""))).lower().split())
-    query_tokens = set(clean_story(q).lower().split())
-    stop = {"se", "ke", "ki", "the", "a", "an", "pls", "please", "anyone", "episode", "link"}
-    return bool((name_tokens - stop) & (query_tokens - stop))
+    
+    return False
 
 
 def _get_cooldown(user_id: int):
@@ -1562,8 +1557,8 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
     story_raw = " ".join(context.args).strip()
     story = clean_story(story_raw).lower()
 
-    # if story already exists in DB, no need to request
-    existing = get_story(story)
+    # if story already exists in DB or matches alias, no need to request
+    existing = search_story_exact_or_alias(story)
     if existing:
         link = existing.get("link", "")
         story_key = existing.get("key", story)
@@ -1779,21 +1774,7 @@ async def _notify_fulfilled_requests(context: ContextTypes.DEFAULT_TYPE):
         if not isinstance(chats, dict):
             continue
             
-        story = None
-        # attempt exact match
-        if req_key in db:
-            story = db.get(req_key)
-        else:
-            # attempt fast search or fuzzy search
-            from search_engine import fast_search_contains, fuzzy_search
-            fuzzy_res = fuzzy_search(req_key)
-            if fuzzy_res:
-                name_tokens = set(clean_story(fuzzy_res.get("name", fuzzy_res.get("text", ""))).lower().split())
-                query_tokens = set(clean_story(req_key).lower().split())
-                stop = {"se", "ke", "ki", "the", "a", "an", "pls", "please", "anyone", "episode"}
-                # If there's high matching, accept it
-                if name_tokens and query_tokens and (name_tokens - stop) & (query_tokens - stop):
-                    story = fuzzy_res
+        story = search_story_exact_or_alias(req_key)
 
         if not story or not story.get("link"):
             continue
@@ -1923,32 +1904,19 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     cooldown_db[user.id] = now
 
-    # Try exact match first, then substring match (only from DB)
-    fast_results = fast_search(query_text)
-    if not fast_results:
-        fast_results = fast_search_contains(query_text, limit=1)
+    # Try exact match or alias match from Search Engine
+    result = search_story_exact_or_alias(query_text)
 
-    result = None
-    if fast_results:
-        candidate_name = fast_results[0]
-        result = get_story(clean_story(candidate_name).lower())
-    else:
-        # fuzzy search with safeguards: allow small typos but avoid unrelated matches
-        fuzzy = fuzzy_search(query_text)
-        if fuzzy:
-            name_tokens = set(clean_story(fuzzy.get("name", fuzzy.get("text", ""))).lower().split())
-            query_tokens = set(clean_story(query_text).lower().split())
-            stop = {"se", "ke", "ki", "the", "a", "an", "pls", "please", "anyone", "episode"}
-            if name_tokens and query_tokens and (name_tokens - stop) & (query_tokens - stop):
-                result = fuzzy
-
+    # If no story found, show suggestions
     if not result:
         await log(
             context,
             f"SEARCH MISS | user_id={user.id} username={user.username} query={query_text}"
         )
-        suggestions = fast_search_contains(query_text, limit=5)
-        if len(suggestions) >= 2:
+        
+        suggestions = get_suggestions(query_text, limit=5)
+        
+        if len(suggestions) > 0:
             keyboard = []
             for s in suggestions:
                 key = clean_story(s).lower()
@@ -1975,16 +1943,31 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(_del_no())
         return
 
-    if not result:
-        return
-
     # delete user query immediately on hit (as requested)
     try:
         await msg.delete()
     except Exception:
         pass
 
-    mention = user.mention_html()
+    target_mention = user.mention_html()
+    target_user_id = user.id
+    
+    if getattr(msg, "reply_to_message", None) and msg.reply_to_message.from_user:
+        target_mention = msg.reply_to_message.from_user.mention_html()
+        target_user_id = msg.reply_to_message.from_user.id
+    elif msg.entities:
+        for ent in msg.entities:
+            if ent.type == "mention":
+                mtxt = msg.text or ""
+                if mtxt:
+                    target_mention = mtxt[ent.offset : ent.offset + ent.length]
+                break
+            elif ent.type == "text_mention" and ent.user:
+                target_mention = ent.user.mention_html()
+                target_user_id = ent.user.id
+                break
+
+    mention = target_mention
 
     story_name = clean_story(result["text"])
     story_key = result.get("name") or clean_story(result["text"]).lower()
@@ -3894,6 +3877,9 @@ def start_bot():
     app.add_handler(CommandHandler("setlang", setlang_cmd))
     app.add_handler(CommandHandler("addsource", addsource_cmd))
     app.add_handler(CommandHandler("removesource", removesource_cmd))
+    app.add_handler(CommandHandler("addalias", addalias_cmd))
+    app.add_handler(CommandHandler("removealias", removealias_cmd))
+    app.add_handler(CommandHandler("listalias", listalias_cmd))
 
     # react when bot is added/removed
     app.add_handler(ChatMemberHandler(chat_member_update))
@@ -3979,6 +3965,88 @@ async def removesource_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     lang = get_chat_lang(update.effective_chat.id)
     await update.message.reply_text(f"✅ Source channel removed: {channel_id}" if lang != "hi" else f"✅ सोर्स चैनल हटाया गया: {channel_id}")
+
+
+async def addalias_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: add an alias to a story by replying to a wrong search message."""
+    if not is_admin(update.effective_user.id):
+        return await update.message.reply_text("⛔ Admin only.")
+        
+    if not update.message.reply_to_message:
+        return await update.message.reply_text("Reply to the wrong search message with /addalias <Story Name>")
+        
+    if not context.args:
+        return await update.message.reply_text("Usage: /addalias <Story Name>")
+        
+    alias_name = update.message.reply_to_message.text
+    if not alias_name:
+        return await update.message.reply_text("Original message has no text.")
+        
+    alias_name = alias_name.strip()
+    story_raw = " ".join(context.args).strip()
+    story_cleaned = clean_story(story_raw).lower()
+    
+    db = load_db()
+    if story_cleaned not in db:
+        return await update.message.reply_text(f"Story '{story_raw}' not found in database.")
+        
+    story_data = db[story_cleaned]
+    aliases = story_data.get("aliases", [])
+    if alias_name not in aliases:
+        aliases.append(alias_name)
+        story_data["aliases"] = aliases
+        db[story_cleaned] = story_data
+        save_db(db)
+        
+    await update.message.reply_text(f"✅ Alias '{alias_name}' added to story '{story_data.get('text', story_raw)}'.")
+
+async def removealias_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: remove an alias."""
+    if not is_admin(update.effective_user.id):
+        return await update.message.reply_text("⛔ Admin only.")
+        
+    if not context.args:
+        return await update.message.reply_text("Usage: /removealias <Alias>")
+        
+    alias_to_remove = " ".join(context.args).strip()
+    alias_cleaned = clean_story(alias_to_remove).lower()
+    
+    db = load_db()
+    found = False
+    for k, data in db.items():
+        aliases = data.get("aliases", [])
+        if any(clean_story(a).lower() == alias_cleaned for a in aliases):
+            # remove it
+            data["aliases"] = [a for a in aliases if clean_story(a).lower() != alias_cleaned]
+            db[k] = data
+            found = True
+            
+    if found:
+        save_db(db)
+        await update.message.reply_text(f"✅ Alias '{alias_to_remove}' removed globally.")
+    else:
+        await update.message.reply_text("Alias not found.")
+
+async def listalias_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only: list aliases for a story."""
+    if not is_admin(update.effective_user.id):
+        return await update.message.reply_text("⛔ Admin only.")
+        
+    if not context.args:
+        return await update.message.reply_text("Usage: /listalias <Story Name>")
+        
+    story_raw = " ".join(context.args).strip()
+    story_cleaned = clean_story(story_raw).lower()
+    
+    db = load_db()
+    if story_cleaned not in db:
+        return await update.message.reply_text("Story not found.")
+        
+    aliases = db[story_cleaned].get("aliases", [])
+    if aliases:
+        await update.message.reply_text("\n".join(["Aliases:"] + [f"- {a}" for a in aliases]))
+    else:
+        await update.message.reply_text("No aliases found for this story.")
 
 
 # -----------------------

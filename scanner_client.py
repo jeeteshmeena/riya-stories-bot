@@ -133,7 +133,7 @@ async def _resolve_entity(client, channel_id):
         )
 
 
-async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None, cleanup=True, formats_by_channel=None, story_cb=None):
+async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None, cleanup=True, formats_by_channel=None):
     """
     Scan channel for stories. If bot and log_channel are provided, extract and store
     photo file_ids for stories that have images.
@@ -194,16 +194,7 @@ async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None,
                 except Exception:
                     pass
 
-            is_new, link_changed = add_story(story)
-            
-            # ── NEW: Trigger notifications during scan ───────────────────────
-            if (is_new or link_changed) and bot and story_cb:
-                try:
-                    # story_cb should be an async function like notify_request_available
-                    await story_cb(bot, story["name"], story["text"], story["link"], is_fix=link_changed)
-                except Exception as cb_err:
-                    logger.warning(f"story_cb failed for {story['name']}: {cb_err}")
-
+            add_story(story)
             names.append(story["text"])
             keys_seen.append(story["name"])
             stories_found += 1
