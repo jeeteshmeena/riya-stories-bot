@@ -147,6 +147,25 @@ else:
     MAINTENANCE_MODE = False
     MAINTENANCE_UNTIL = 0.0
 
+# Global Scan Progress State
+SCAN_PROGRESS = {
+    "stories_found": 0,
+    "total_messages": 0,
+    "expected_total": 0, # Will be set to last_scan_count below
+    "eta_s": 0,
+    "last_story": "",
+    "start_ts": 0
+}
+SCAN_PROGRESS["expected_total"] = last_scan_count or 0
+
+_maint_cfg = bot_config.get("maintenance", {})
+if _maint_cfg.get("enabled") and (_maint_cfg.get("until", 0) == 0 or _maint_cfg.get("until", 0) > time.time()):
+    MAINTENANCE_MODE = True
+    MAINTENANCE_UNTIL = float(_maint_cfg.get("until", 0))
+else:
+    MAINTENANCE_MODE = False
+    MAINTENANCE_UNTIL = 0.0
+
 # Rate limit: min seconds between searches per user
 SEARCH_COOLDOWN = 2
 
@@ -373,14 +392,32 @@ async def _enforce_cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def _send_scan_busy_notice(msg, lang: str):
-    """Send scan busy notice, auto-delete after 24h."""
+    """Send scan busy notice with live ETA, auto-delete after 2 min."""
+    eta_s = int(SCAN_PROGRESS.get("eta_s", 0))
+    found = int(SCAN_PROGRESS.get("stories_found", 0))
+    expected = int(SCAN_PROGRESS.get("expected_total", 0))
+
+    eta_text = f"~{eta_s // 60:02d}:{eta_s % 60:02d}" if eta_s > 0 else "--:--"
+
+    # Simple progress bar
+    progress_bar = "░░░░░░░░░░"
+    if expected > 0:
+        filled = min(10, int((found / expected) * 10))
+        progress_bar = "▓" * filled + "░" * (10 - filled)
+        percent = min(100, int((found / expected) * 100))
+        progress_text = f"{progress_bar} {percent}%"
+    else:
+        progress_text = f"{progress_bar} 0%"
+
     if lang == "hi":
         text = (
             "<b>⏳ डेटाबेस अपडेट हो रहा है</b>\n"
             "━━━━━━━━━━━━━━━━\n\n"
             "<i>◎ Riya अभी डेटाबेस से स्टोरीज़ अपडेट कर रही है।</i>\n\n"
-            "▪ कृपया कुछ समय प्रतीक्षा करें।\n"
-            "▪ <b>अपडेट पूरा होने के बाद बॉट अपने आप काम करना शुरू कर देगा।</b>\n\n"
+            f"▪ <b>प्रगति:</b> <code>{progress_text}</code>\n"
+            f"▪ <b>मिली स्टोरीज़:</b> <code>{found}</code>\n"
+            f"▪ <b>अनुमानित समय:</b> <code>{eta_text}</code>\n\n"
+            "▪ <i>अपडेट पूरा होने के बाद बॉट अपने आप काम करना शुरू कर देगा।</i>\n\n"
             f"<code>{datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S')} UTC</code>"
         )
     else:
@@ -388,15 +425,17 @@ async def _send_scan_busy_notice(msg, lang: str):
             "<b>⏳ Database Updating</b>\n"
             "━━━━━━━━━━━━━━━━\n\n"
             "<i>◎ Riya is currently updating the story database.</i>\n\n"
-            "▪ Please wait for a few moments.\n"
-            "▪ <b>The bot will automatically start working again once the update is complete.</b>\n\n"
+            f"▪ <b>Progress:</b> <code>{progress_text}</code>\n"
+            f"▪ <b>Stories Found:</b> <code>{found}</code>\n"
+            f"▪ <b>ETA:</b> <code>{eta_text}</code>\n\n"
+            "▪ <i>The bot will automatically start working again once the update is complete.</i>\n\n"
             f"<code>{datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S')} UTC</code>"
         )
 
     notice = await msg.reply_text(text=text, parse_mode="HTML")
 
     async def _delete_notice():
-        await asyncio.sleep(86400)
+        await asyncio.sleep(120)  # Reduced from 24h to 2m
         try:
             await notice.delete()
         except Exception:
@@ -493,7 +532,7 @@ def init_search_index():
 
 async def auto_scan_loop(bot=None):
     """Periodically rescan channel and refresh search index (runs in background)."""
-    global story_index, last_scan_count
+    global story_index, last_scan_count, IS_SCANNING
     if not CHANNEL_ID or (str(AUTO_SCAN).lower() != "true"):
         return
     if not (SESSION_STRING and API_ID and API_HASH):
@@ -502,8 +541,45 @@ async def auto_scan_loop(bot=None):
     while True:
         try:
             await asyncio.sleep(600)  # wait 10 min before first run
+            
+            if IS_SCANNING:
+                continue # Skip if already scanning via command
+                
+            IS_SCANNING = True
             logger.info("Auto scan started...")
-            result = await scan_channel(CHANNEL_ID, bot=bot, log_channel=LOG_CHANNEL)
+            
+            scan_start_ts = time.time()
+            expected_total = last_scan_count or 0
+            
+            # Reset global progress for auto-scan
+            SCAN_PROGRESS.update({
+                "stories_found": 0,
+                "total_messages": 0,
+                "expected_total": expected_total,
+                "eta_s": 0,
+                "start_ts": scan_start_ts,
+                "last_story": ""
+            })
+
+            async def _auto_progress_cb(p):
+                now = time.time()
+                last_found = int(p.get("stories_found") or 0)
+                elapsed = max(now - scan_start_ts, 1)
+                rate = last_found / elapsed
+                remaining = max(expected_total - last_found, 0) if expected_total else 0
+                eta_s = int(remaining / rate) if (expected_total and rate > 0) else 0
+                
+                SCAN_PROGRESS["stories_found"] = last_found
+                SCAN_PROGRESS["total_messages"] = p.get("total_messages", 0)
+                SCAN_PROGRESS["eta_s"] = eta_s
+                SCAN_PROGRESS["last_story"] = (p.get("last_story") or "").strip()
+
+            result = await scan_channel(
+                CHANNEL_ID, 
+                bot=bot, 
+                log_channel=LOG_CHANNEL,
+                progress_cb=_auto_progress_cb
+            )
             names = result.get("names", [])
             # Only update indexes if we got a successful result - never wipe on failure
             if names:
@@ -516,6 +592,8 @@ async def auto_scan_loop(bot=None):
                 logger.warning("Auto scan returned no stories, keeping existing index")
         except Exception as e:
             logger.error("Auto scan error: %s", e)
+        finally:
+            IS_SCANNING = False
 
 
 async def _is_link_alive(url: str) -> bool:
@@ -1307,15 +1385,22 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
             last_story_name = (p.get("last_story") or "").strip()
             last_found = int(p.get("stories_found") or 0)
 
+            elapsed = max(now - scan_start_ts, 1)
+            rate = last_found / elapsed
+            remaining = max(expected_total - last_found, 0) if expected_total else 0
+            eta_s = int(remaining / rate) if (expected_total and rate > 0) else 0
+
+            # Update GLOBAL state for other users
+            SCAN_PROGRESS["stories_found"] = last_found
+            SCAN_PROGRESS["total_messages"] = p.get("total_messages", 0)
+            SCAN_PROGRESS["eta_s"] = eta_s
+            SCAN_PROGRESS["last_story"] = last_story_name
+
             # throttle UI edits (Telegram rate limits)
             if now - last_ui_update < 2.5:
                 return
             last_ui_update = now
 
-            elapsed = max(now - scan_start_ts, 1)
-            rate = last_found / elapsed
-            remaining = max(expected_total - last_found, 0) if expected_total else 0
-            eta_s = int(remaining / rate) if (expected_total and rate > 0) else 0
             eta_text = f"`~{eta_s//60:02d}:{eta_s%60:02d}`" if eta_s else "`--:--`"
 
             # premium-ish live UI: show last story and counts
@@ -4333,15 +4418,22 @@ async def rescan_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             last_story_name = (p.get("last_story") or "").strip()
             last_found = int(p.get("stories_found") or 0)
 
+            elapsed = max(now - rescan_start_ts, 1)
+            rate = last_found / elapsed
+            remaining = max(expected_total - last_found, 0) if expected_total else 0
+            eta_s = int(remaining / rate) if (expected_total and rate > 0) else 0
+
+            # Update GLOBAL state
+            SCAN_PROGRESS["stories_found"] = last_found
+            SCAN_PROGRESS["total_messages"] = p.get("total_messages", 0)
+            SCAN_PROGRESS["eta_s"] = eta_s
+            SCAN_PROGRESS["last_story"] = last_story_name
+
             # throttle: update at most once every 2.5 s
             if now - last_ui_update < 2.5:
                 return
             last_ui_update = now
 
-            elapsed = max(now - rescan_start_ts, 1)
-            rate = last_found / elapsed
-            remaining = max(expected_total - last_found, 0) if expected_total else 0
-            eta_s = int(remaining / rate) if (expected_total and rate > 0) else 0
             eta_text = f"`~{eta_s//60:02d}:{eta_s%60:02d}`" if eta_s else "`--:--`"
 
             # strip markdown chars from story name
