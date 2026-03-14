@@ -195,7 +195,7 @@ class BackgroundLinkChecker:
                 try:
                     await self.client.send_message(
                         LOG_CHANNEL,
-                        f"⚠ **Automated Link Detection**\n\n"
+                        f"★ **Automated Link Detection**\n\n"
                         f"📖 Story: {story.get('text', 'N/A')}\n"
                         f"🔗 Link: {story.get('link')}\n"
                         f"❌ Reason: {reason}\n"
@@ -218,7 +218,7 @@ class BackgroundLinkChecker:
                 voter_mentions = f"{voter_mentions}\n\n"
             
             notification_text = (
-                f"✅ **Link Fixed**\n\n"
+                f"✦ **Link Fixed**\n\n"
                 f"{voter_mentions}"
                 f"📖 Story: {story.get('text', 'N/A')}\n"
                 f"🔗 Link: {story.get('link')}\n"
@@ -246,7 +246,7 @@ class BackgroundLinkChecker:
                         
                     await self.client.send_message(
                         LOG_CHANNEL,
-                        f"✅ **Link Automatically Fixed**\n\n"
+                        f"✦ **Link Automatically Fixed**\n\n"
                         f"📖 Story: {story.get('text', 'N/A')}\n"
                         f"🔗 Link: {story.get('link')}\n"
                         f"⏰ Fixed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
