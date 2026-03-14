@@ -22,6 +22,7 @@ CONFIG_FILE = _data_path("config_db.json")
 FAVORITES_FILE = _data_path("favorites_db.json")
 STATS_FILE = _data_path("stats_db.json")
 SUBS_FILE = _data_path("subs_db.json")
+FORMATS_FILE = _data_path("learned_formats.json")
 
 _DB_CACHE = None
 _DB_MTIME = None
@@ -300,3 +301,20 @@ def load_subs():
 
 def save_subs(data):
     _save_json(SUBS_FILE, data)
+
+
+# -----------------------
+# Learned formats (per-channel auto-detected templates)
+# -----------------------
+
+def load_learned_formats() -> dict:
+    """
+    Returns: { str(channel_id): [template_dict, ...], ... }
+    """
+    raw = _load_json(FORMATS_FILE, {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def save_learned_formats(data: dict):
+    _save_json(FORMATS_FILE, data)
+

@@ -75,7 +75,9 @@ from database import (
     load_favorites, save_favorites,
     load_stats, save_stats,
     load_subs, save_subs,
+    load_learned_formats, save_learned_formats,
 )
+from format_learner import learn_format, build_preview, build_test_result, extract_with_template
 
 
 logging.basicConfig(level=logging.INFO)
@@ -134,6 +136,7 @@ bot_config = load_config()
 stats_db = load_stats()  # {"searches": {}, "users": {}, "trending": {}}
 favorites_db = load_favorites()  # { user_id_str: [story_key1, ...] }
 subs_db = load_subs()  # [ user_id1_str, ... ]
+learned_formats_db = load_learned_formats()  # { str(channel_id): [template_dict, ...] }
 
 # Restore maintenance state from config (survives restarts)
 _maint_cfg = bot_config.get("maintenance", {})
@@ -3303,62 +3306,133 @@ def _cfg_rm_source_panel(caller_id: int, lang: str = "en") -> tuple:
 
 
 def _cfg_formats_panel(caller_id: int, lang: str = "en") -> tuple:
-    formats = bot_config.get("formats", {})
-    if formats:
+    """Main Formats Management screen."""
+    fmts = learned_formats_db
+    total = sum(len(v) for v in fmts.values() if isinstance(v, list))
+    if total:
         lines = "\n".join(
-            f"✦ <code>{cid}</code>  →  <b>{len(fmts)} format(s)</b>"
-            for cid, fmts in formats.items()
+            f"✦ <code>{cid}</code>  →  <b>{len(v)} template(s)</b>"
+            for cid, v in fmts.items() if isinstance(v, list)
         )
-        body = lines
+        body = f"<b>{total} learned template(s)</b>\n\n{lines}"
     else:
-        body = "<i>✧ No custom formats configured.</i>"
+        body = "<i>☆ No formats learned yet.</i>"
+
     text = (
-        "<b>✦ Custom Formats</b>\n"
-        "<i>Per-channel message parsing rules.</i>\n"
+        "<b>★ Format Learning System</b>\n"
+        "<i>Teach the bot which posts are stories.</i>\n"
         f"{_CFG_DIV}\n\n"
-        f"{body}"
+        f"{body}\n\n"
+        "<i>✧ Forward an example story post to add a new format template.</i>"
     )
     markup = InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("＋ Add",    callback_data=f"cfg|add_fmt||{caller_id}"),
-            InlineKeyboardButton("－ Remove", callback_data=f"cfg|rm_fmt||{caller_id}"),
+            InlineKeyboardButton("＋ Add Format",   callback_data=f"cfg|fmt_learn||{caller_id}"),
+            InlineKeyboardButton("◇ View",          callback_data=f"cfg|fmt_view||{caller_id}"),
+        ],
+        [
+            InlineKeyboardButton("✕ Remove",        callback_data=f"cfg|fmt_rm||{caller_id}"),
+            InlineKeyboardButton("⬡ Test",          callback_data=f"cfg|fmt_test||{caller_id}"),
         ],
         _cfg_nav(caller_id, back="main"),
     ])
     return text, markup
 
 
-def _cfg_add_fmt_panel(caller_id: int) -> tuple:
+def _cfg_fmt_learn_panel(caller_id: int) -> tuple:
+    """Prompt admin to forward a sample post + send the channel ID."""
     text = (
-        "<b>✦ Add Custom Format</b>\n"
-        "<i>Send format as: channel_id|name_regex|link_regex</i>\n"
+        "<b>★ Add Format — Step 1</b>\n"
+        "<i>Teach the bot a new channel's story format.</i>\n"
         f"{_CFG_DIV}\n\n"
-        "Example:\n"
-        "<code>-1001234567890|^Story: (.+)$|https://t.me/(.+)</code>"
+        "<b>◆ Instructions:</b>\n"
+        "• First <b>forward</b> one example story post from the channel.\n"
+        "• Then send the <b>channel ID</b> (e.g. <code>-1001234567890</code>).\n\n"
+        "The bot will analyse the post and auto-learn the format.\n\n"
+        "<i>✧ No regex required — just forward a real post!</i>"
     )
     markup = InlineKeyboardMarkup([_cfg_nav(caller_id, back="formats")])
     return text, markup
 
 
-def _cfg_rm_fmt_panel(caller_id: int, lang: str = "en") -> tuple:
-    formats = bot_config.get("formats", {})
-    if not formats:
+def _cfg_fmt_view_panel(caller_id: int) -> tuple:
+    """Show all stored templates with their details."""
+    fmts = learned_formats_db
+    if not fmts:
         text = (
-            "<b>✦ Remove Format</b>\n"
+            "<b>★ View Formats</b>\n"
+            "<i>No formats learned yet.</i>\n"
+            f"{_CFG_DIV}\n\n"
+            "<i>☆ Add a format template first.</i>"
+        )
+        markup = InlineKeyboardMarkup([_cfg_nav(caller_id, back="formats")])
+        return text, markup
+
+    parts = []
+    for cid, templates in fmts.items():
+        if not isinstance(templates, list):
+            continue
+        for i, tmpl in enumerate(templates):
+            label = tmpl.get("label", f"ch{cid}_{i}")
+            has_title = "✦" if tmpl.get("title_pattern") else "✧"
+            has_link  = "✦" if tmpl.get("link_pattern")  else "✧"
+            has_media = "✦" if tmpl.get("has_media")      else "✧"
+            parts.append(
+                f"◆ <b>Channel</b> <code>{cid}</code> — <code>{label}</code>\n"
+                f"  {has_title} Title  {has_link} Link  {has_media} Media"
+            )
+    body = "\n\n".join(parts) if parts else "<i>☆ Empty.</i>"
+    text = (
+        "<b>★ Learned Formats</b>\n"
+        "<i>All stored channel format templates.</i>\n"
+        f"{_CFG_DIV}\n\n"
+        f"{body}"
+    )
+    markup = InlineKeyboardMarkup([_cfg_nav(caller_id, back="formats")])
+    return text, markup
+
+
+def _cfg_fmt_rm_panel(caller_id: int) -> tuple:
+    """List buttons to remove a template."""
+    fmts = learned_formats_db
+    if not fmts:
+        text = (
+            "<b>★ Remove Format</b>\n"
             "<i>No formats to remove.</i>\n"
             f"{_CFG_DIV}"
         )
         markup = InlineKeyboardMarkup([_cfg_nav(caller_id, back="formats")])
         return text, markup
+
     text = (
-        "<b>✦ Remove Format</b>\n"
-        "<i>Tap a channel to remove its format rules.</i>\n"
+        "<b>★ Remove Format</b>\n"
+        "<i>Tap a channel to remove all its templates.</i>\n"
         f"{_CFG_DIV}"
     )
-    rows = [[InlineKeyboardButton(f"✕ {cid}", callback_data=f"cfg|do_rm_fmt|{cid}|{caller_id}")] for cid in formats]
+    rows = [
+        [InlineKeyboardButton(f"✕ Channel {cid}", callback_data=f"cfg|fmt_do_rm|{cid}|{caller_id}")]
+        for cid in fmts
+    ]
     rows.append(_cfg_nav(caller_id, back="formats"))
     markup = InlineKeyboardMarkup(rows)
     return text, markup
+
+
+def _cfg_fmt_test_panel(caller_id: int) -> tuple:
+    """Prompt admin to forward a message for format testing."""
+    text = (
+        "<b>★ Test Format</b>\n"
+        "<i>Check if a message matches a stored template.</i>\n"
+        f"{_CFG_DIV}\n\n"
+        "<b>◆ Instructions:</b>\n"
+        "• <b>Forward</b> any message from a source channel.\n"
+        "• The bot will show extracted fields without saving.\n\n"
+        "<i>✧ This helps verify the format works before scanning.</i>"
+    )
+    markup = InlineKeyboardMarkup([_cfg_nav(caller_id, back="formats")])
+    return text, markup
+
+
 
 
 def _cfg_sysinfo_panel(caller_id: int) -> tuple:
@@ -3577,51 +3651,56 @@ async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
         await _edit_cfg(query, text, markup, loading=True)
         return
 
-    # ── Custom formats ────────────────────────────────────────────────────────
+    # ── Learned Format System ─────────────────────────────────────────────────
     if section == "formats":
         text, markup = _cfg_formats_panel(caller_id, lang)
         await _edit_cfg(query, text, markup)
         await query.answer()
         return
 
-    if section == "add_fmt":
-        text, markup = _cfg_add_fmt_panel(caller_id)
-        context.chat_data["config_state"] = "waiting_format"
+    if section == "fmt_learn":
+        # Show instructions + set state to wait for a forwarded sample + channel ID
+        text, markup = _cfg_fmt_learn_panel(caller_id)
+        context.chat_data["config_state"] = "waiting_fmt_sample"
         context.chat_data["config_caller_id"] = caller_id
         await _edit_cfg(query, text, markup)
         await query.answer()
         return
 
-    if section == "rm_fmt":
-        text, markup = _cfg_rm_fmt_panel(caller_id, lang)
+    if section == "fmt_view":
+        text, markup = _cfg_fmt_view_panel(caller_id)
         await _edit_cfg(query, text, markup)
         await query.answer()
         return
 
-    if section == "do_rm_fmt":
+    if section == "fmt_rm":
+        text, markup = _cfg_fmt_rm_panel(caller_id)
+        await _edit_cfg(query, text, markup)
+        await query.answer()
+        return
+
+    if section == "fmt_do_rm":
         cid_str = action
-        formats = bot_config.get("formats", {})
-        if cid_str in formats:
-            formats.pop(cid_str, None)
-            bot_config["formats"] = formats
-            save_config(bot_config)
-            await query.answer("✦ Formats removed.", show_alert=False)
+        if cid_str in learned_formats_db:
+            learned_formats_db.pop(cid_str, None)
+            save_learned_formats(learned_formats_db)
+            await query.answer("✦ Templates removed.", show_alert=False)
         else:
-            # Try int key
-            try:
-                cid_int = int(cid_str)
-                if cid_int in formats:
-                    formats.pop(cid_int, None)
-                    bot_config["formats"] = formats
-                    save_config(bot_config)
-                    await query.answer("✦ Formats removed.", show_alert=False)
-                else:
-                    await query.answer("✧ Not found.", show_alert=True)
-            except (ValueError, TypeError):
-                await query.answer("✧ Not found.", show_alert=True)
-        text, markup = _cfg_formats_panel(caller_id, lang)
+            await query.answer("✧ Channel not found.", show_alert=True)
+        text, markup = _cfg_fmt_rm_panel(caller_id)
         await _edit_cfg(query, text, markup, loading=True)
         return
+
+    if section == "fmt_test":
+        # Show instructions + set state to wait for a forwarded message
+        text, markup = _cfg_fmt_test_panel(caller_id)
+        context.chat_data["config_state"] = "waiting_fmt_test"
+        context.chat_data["config_caller_id"] = caller_id
+        await _edit_cfg(query, text, markup)
+        await query.answer()
+        return
+
+
 
     # ── System info ──────────────────────────────────────────────────────────
     if section == "sysinfo":
@@ -3722,45 +3801,157 @@ async def handle_config_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(response, parse_mode="HTML")
         return
     
-    if state == "waiting_format":
-        try:
-            parts = text.split("|")
-            if len(parts) != 3:
-                raise ValueError("Invalid format")
-            
-            channel_id, name_regex, link_regex = parts
-            channel_id = int(channel_id)
-            
-            if not name_regex.strip() or not link_regex.strip():
-                raise ValueError("Empty regex patterns")
-            
-            formats = bot_config.get("formats", {})
-            if channel_id not in formats:
-                formats[channel_id] = []
-            
-            formats[channel_id].append({
-                "name_re": name_regex.strip(),
-                "link_re": link_regex.strip()
-            })
-            
-            bot_config["formats"] = formats
-            save_config(bot_config)
-            
-            if lang == "hi":
-                response = f"<b>✅ कस्टम फॉर्मेट जोड़ा गया</b>\n\nचैनल <code>{channel_id}</code> के लिए फॉर्मेट सफलतापूर्वक जोड़ा गया।"
-            else:
-                response = f"<b>✅ Custom Format Added</b>\n\nFormat successfully added for channel <code>{channel_id}</code>."
-                
-        except (ValueError, IndexError) as e:
-            if lang == "hi":
-                response = "<b>❌ अमान्य फॉर्मेट</b>\n\nकृपया सही फॉर्मेट का उपयोग करें:\n<code>channel_id|name_regex|link_regex</code>"
-            else:
-                response = "<b>❌ Invalid Format</b>\n\nPlease use the correct format:\n<code>channel_id|name_regex|link_regex</code>"
-        
-        # Clear state
-        context.chat_data.pop("config_state", None)
-        await update.message.reply_text(response, parse_mode="HTML")
+    # ── Step 1a: Admin forwards a sample story post ──────────────────────────
+    if state == "waiting_fmt_sample":
+        msg = update.message
+        # If it's a forwarded message, use it as the sample; otherwise treat plain text as channel_id
+        fwd = getattr(msg, "forward_origin", None) or getattr(msg, "forward_from", None) or getattr(msg, "forward_from_chat", None)
+
+        if fwd or (msg.text and not msg.text.lstrip("-").isdigit()):
+            # Treat this as the sample post — store msgid + text in chat_data
+            sample_text = msg.text or msg.caption or ""
+            has_media = bool(msg.photo)
+            context.chat_data["fmt_sample_text"] = sample_text
+            context.chat_data["fmt_sample_has_media"] = has_media
+            context.chat_data["config_state"] = "waiting_fmt_channel_id"
+            await msg.reply_text(
+                "<b>★ Add Format — Step 2</b>\n"
+                "━━━━━━━━━━━━━━━━\n\n"
+                "✦ Sample post received!\n\n"
+                "Now send the <b>channel ID</b> of this channel:\n"
+                "<code>-1001234567890</code>\n\n"
+                "<i>✧ The channel must already be in your Sources list.</i>",
+                parse_mode="HTML"
+            )
+        else:
+            # They sent a channel ID directly; if we have a sample, process it
+            sample_text = context.chat_data.get("fmt_sample_text", "")
+            has_media   = context.chat_data.get("fmt_sample_has_media", False)
+            if not sample_text:
+                await msg.reply_text(
+                    "<b>☆ No sample found.</b>\n\n"
+                    "Please first forward an example story post, then send the channel ID.",
+                    parse_mode="HTML"
+                )
+                return
+            try:
+                ch_id_int = int(msg.text.strip())
+            except ValueError:
+                await msg.reply_text("❌ Invalid channel ID. Send a numeric ID like <code>-1001234567890</code>.", parse_mode="HTML")
+                return
+
+            # Build a fake message-like object for learn_format
+            class _FakeMsg:
+                def __init__(self, t, m):
+                    self.message = t
+                    self.text = t
+                    self.caption = t
+                    self.photo = m
+                    self.id = 0
+
+            tmpl = learn_format(_FakeMsg(sample_text, has_media), ch_id_int)
+            cid_str = str(ch_id_int)
+            if cid_str not in learned_formats_db:
+                learned_formats_db[cid_str] = []
+            learned_formats_db[cid_str].append(tmpl)
+            save_learned_formats(learned_formats_db)
+
+            # Show preview
+            preview = build_preview(tmpl, sample_text)
+            context.chat_data.pop("config_state", None)
+            context.chat_data.pop("fmt_sample_text", None)
+            context.chat_data.pop("fmt_sample_has_media", None)
+            await msg.reply_text(
+                f"<b>★ Format Learned!</b>\n"
+                f"━━━━━━━━━━━━━━━━\n\n"
+                f"✦ Template saved for channel <code>{ch_id_int}</code>.\n\n"
+                f"{preview}",
+                parse_mode="HTML"
+            )
         return
+
+    # ── Step 1b: Admin sends channel ID after sending sample ──────────────────
+    if state == "waiting_fmt_channel_id":
+        msg = update.message
+        sample_text = context.chat_data.get("fmt_sample_text", "")
+        has_media   = context.chat_data.get("fmt_sample_has_media", False)
+        if not sample_text:
+            await msg.reply_text("❌ Sample was lost. Please restart the Add Format flow.", parse_mode="HTML")
+            context.chat_data.pop("config_state", None)
+            return
+        try:
+            ch_id_int = int((msg.text or "").strip())
+        except ValueError:
+            await msg.reply_text("❌ Invalid channel ID. Send a numeric ID like <code>-1001234567890</code>.", parse_mode="HTML")
+            return
+
+        class _FakeMsg:
+            def __init__(self, t, m):
+                self.message = t
+                self.text = t
+                self.caption = t
+                self.photo = m
+                self.id = 0
+
+        tmpl = learn_format(_FakeMsg(sample_text, has_media), ch_id_int)
+        cid_str = str(ch_id_int)
+        if cid_str not in learned_formats_db:
+            learned_formats_db[cid_str] = []
+        learned_formats_db[cid_str].append(tmpl)
+        save_learned_formats(learned_formats_db)
+
+        preview = build_preview(tmpl, sample_text)
+        context.chat_data.pop("config_state", None)
+        context.chat_data.pop("fmt_sample_text", None)
+        context.chat_data.pop("fmt_sample_has_media", None)
+        await msg.reply_text(
+            f"<b>★ Format Learned!</b>\n"
+            f"━━━━━━━━━━━━━━━━\n\n"
+            f"✦ Template saved for channel <code>{ch_id_int}</code>.\n\n"
+            f"{preview}",
+            parse_mode="HTML"
+        )
+        return
+
+    # ── Test: Admin forwards a message to check against stored templates ──────
+    if state == "waiting_fmt_test":
+        msg = update.message
+        test_text = msg.text or msg.caption or ""
+        if not test_text:
+            await msg.reply_text("❌ Could not read the message text. Please forward a text/caption message.", parse_mode="HTML")
+            context.chat_data.pop("config_state", None)
+            return
+
+        # Try each stored template
+        matched_result = None
+        matched_label = None
+        for cid_str, templates in learned_formats_db.items():
+            if not isinstance(templates, list):
+                continue
+            for tmpl in templates:
+                result = build_test_result(test_text, tmpl)
+                if "★ Test Result: Matched" in result:
+                    matched_result = result
+                    matched_label = tmpl.get("label", cid_str)
+                    break
+            if matched_result:
+                break
+
+        if matched_result:
+            out = f"{matched_result}\n\n✦ <b>Matched template:</b> <code>{matched_label}</code>"
+        else:
+            out = (
+                "<b>☆ Test Result: No Match</b>\n"
+                "━━━━━━━━━━━━━━━━\n\n"
+                "✧ <i>This message does not match any stored template.</i>\n"
+                "✧ <i>It would be ignored during scan.</i>"
+            )
+
+        context.chat_data.pop("config_state", None)
+        await msg.reply_text(out, parse_mode="HTML")
+        return
+
+
 
 
 # -----------------------

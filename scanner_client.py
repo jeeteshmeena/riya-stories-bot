@@ -9,61 +9,55 @@ from telethon.tl.types import PeerChannel
 from config import API_ID, API_HASH, SESSION_STRING
 from telethon.sessions import StringSession
 
-from parser import parse_story
-from database import add_story, remove_stories_not_in
+from parser import parse_story, get_text
+from database import add_story, remove_stories_not_in, load_learned_formats
+from format_learner import extract_with_template
 
 logger = logging.getLogger(__name__)
 
 
-def _parse_with_formats(channel_id, message, formats_by_channel):
-    """Try custom regex formats for a channel when default parser fails."""
-    if not formats_by_channel:
+def _apply_learned_formats(channel_id, message, learned_formats_by_channel):
+    """
+    Try every learned template stored for *channel_id*.
+    Returns a story dict or None.
+    """
+    if not learned_formats_by_channel:
         return None
-    # Try both str and int keys
-    fmts = formats_by_channel.get(str(channel_id)) or []
-    if not fmts:
+
+    templates = (
+        learned_formats_by_channel.get(str(channel_id))
+        or learned_formats_by_channel.get(str(abs(int(channel_id))))
+        or []
+    )
+    if not templates:
         return None
-    from parser import get_text
+
     text = get_text(message)
     if not text:
         return None
-    for fmt in fmts:
-        name_re = fmt.get("name_re")
-        link_re = fmt.get("link_re")
-        if not name_re and not link_re:
-            continue
-        name = None
-        link = None
-        if name_re:
-            m = re.search(name_re, text, re.IGNORECASE | re.MULTILINE)
-            if m:
-                name = m.group(1).strip() if m.groups() else m.group(0).strip()
-        if link_re:
-            m2 = re.search(link_re, text, re.IGNORECASE | re.MULTILINE)
-            if m2:
-                link = m2.group(1).strip() if m2.groups() else m2.group(0).strip()
-        if not name or not link:
-            continue
-        key = re.sub(r"\s+", " ", name).strip().lower()
-        return {
-            "name": key,
-            "text": name,
-            "link": link,
-            "message_id": message.id,
-            "caption": text,
-            "story_type": None,
-        }
+
+    for tmpl in templates:
+        result = extract_with_template(text, tmpl)
+        if result:
+            result["message_id"] = message.id
+            result["caption"]    = text
+            result["story_type"] = result.pop("status", None)
+            result["source_channel"] = str(channel_id)
+            if not result.get("name"):
+                continue
+            return result
+
     return None
 
 
 async def _resolve_entity(client, channel_id):
     """
     Robustly resolve a channel entity for Telethon StringSession.
-    
+
     StringSession has NO persistent entity cache (unlike SqliteSession).
     So client.get_entity(int_id) will almost always fail with ValueError
     because there is no cached mapping of int -> access_hash.
-    
+
     The solution:
     1. First try get_entity() directly (works if entity is in session cache from get_dialogs).
     2. If that fails, call get_dialogs() to populate the in-memory cache with all
@@ -108,17 +102,14 @@ async def _resolve_entity(client, channel_id):
         logger.info(f"get_entity({channel_id}) still failed after get_dialogs: {e}, trying PeerChannel...")
 
     # Step 3: Construct PeerChannel from the raw ID
-    # Telegram channel IDs in bot API format are -100XXXXXXXXXX
-    # Telethon's PeerChannel expects just the XXXXXXXXXX part
     raw_id = channel_id
     if raw_id < 0:
-        # Strip the -100 prefix: -1001234567890 -> 1234567890
         raw_id_str = str(abs(raw_id))
         if raw_id_str.startswith("100") and len(raw_id_str) > 10:
             raw_id = int(raw_id_str[3:])
         else:
             raw_id = abs(raw_id)
-    
+
     try:
         peer = PeerChannel(channel_id=raw_id)
         entity = await client.get_entity(peer)
@@ -135,8 +126,15 @@ async def _resolve_entity(client, channel_id):
 
 async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None, cleanup=True, formats_by_channel=None):
     """
-    Scan channel for stories. If bot and log_channel are provided, extract and store
-    photo file_ids for stories that have images.
+    Scan channel for stories using the LEARNED FORMAT SYSTEM.
+
+    Parsing priority:
+      1. If a learned template exists for this channel  →  use it (strict match)
+      2. Else fall back to the legacy regex/keyword parser
+
+    If the message matches neither, it is IGNORED — this prevents random
+    channel posts (announcements, copyright notices…) from entering the DB.
+
     Returns dict with: messages, stories, names, keys.
     """
     client = TelegramClient(
@@ -147,6 +145,13 @@ async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None,
 
     await client.start()
 
+    # Load the learned formats fresh each scan
+    learned = load_learned_formats()
+    has_learned_template = bool(
+        learned.get(str(channel_id))
+        or learned.get(str(abs(int(channel_id) if str(channel_id).lstrip("-").isdigit() else 0)))
+    )
+
     total_messages = 0
     stories_found = 0
     names = []
@@ -155,19 +160,20 @@ async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None,
     scan_start = asyncio.get_event_loop().time()
 
     try:
-        # Resolve entity robustly
         entity = await _resolve_entity(client, channel_id)
-        logger.info(f"Starting scan of channel {channel_id} (resolved to {entity})")
+        logger.info(f"Starting scan of channel {channel_id} (has_learned={has_learned_template})")
 
         async for msg in client.iter_messages(entity, limit=None, reverse=True):
 
             total_messages += 1
+            story = None
 
-            story = parse_story(msg)
-
-            # fallback to custom formats if default parser fails
-            if not story:
-                story = _parse_with_formats(channel_id, msg, formats_by_channel)
+            if has_learned_template:
+                # STRICT mode — only learned-format posts are indexed
+                story = _apply_learned_formats(channel_id, msg, learned)
+            else:
+                # Fallback legacy path (no template configured yet)
+                story = parse_story(msg)
 
             if not story:
                 continue
@@ -241,4 +247,3 @@ async def scan_channel(channel_id, bot=None, log_channel=None, progress_cb=None,
         "names": unique_names,
         "keys": list(set(keys_seen))
     }
-
