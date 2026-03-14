@@ -1,0 +1,62 @@
+127: # Maintenance mode state
+128: MAINTENANCE_MODE = False          # True while bot is in maintenance
+129: MAINTENANCE_UNTIL: float = 0.0   # epoch timestamp when maintenance ends (0 = indefinite)
+141: # Restore maintenance state from config (survives restarts)
+142: _maint_cfg = bot_config.get("maintenance", {})
+144:     MAINTENANCE_MODE = True
+145:     MAINTENANCE_UNTIL = float(_maint_cfg.get("until", 0))
+147:     MAINTENANCE_MODE = False
+148:     MAINTENANCE_UNTIL = 0.0
+322:     # Maintenance mode check
+323:     if MAINTENANCE_MODE:
+326:             if MAINTENANCE_UNTIL > 0 and time.time() >= MAINTENANCE_UNTIL:
+327:                 _end_maintenance()
+330:                 await _send_maintenance_notice(target_msg, lang)
+404: def _end_maintenance():
+405:     """Disable maintenance mode and persist the off-state."""
+406:     global MAINTENANCE_MODE, MAINTENANCE_UNTIL
+407:     MAINTENANCE_MODE = False
+408:     MAINTENANCE_UNTIL = 0.0
+409:     bot_config["maintenance"] = {"enabled": False, "until": 0}
+413: async def _send_maintenance_notice(msg, lang: str):
+414:     """Send a premium maintenance notice to blocked users (auto-deleted after 2 min)."""
+415:     if MAINTENANCE_UNTIL > 0:
+416:         rem = max(0, int(MAINTENANCE_UNTIL - time.time()))
+445:             "<b>🔧 Riya — Maintenance Mode</b>\n"
+447:             "<i>Riya is currently undergoing scheduled maintenance.</i>\n\n"
+2983:     # Maintenance mode block (non-admins)
+2984:     if MAINTENANCE_MODE and not is_admin(update.inline_query.from_user.id):
+2985:         if MAINTENANCE_UNTIL > 0 and time.time() >= MAINTENANCE_UNTIL:
+2986:             _end_maintenance()
+2991:                         id="maintenance",
+2992:                         title="🔧 Maintenance Mode",
+2993:                         description="Riya is currently under maintenance. Please try again later.",
+2995:                             "🔧 Riya is currently under scheduled maintenance. We will be back shortly. Thank you for your patience! 🙏"
+3240:             InlineKeyboardButton("🔧 Maintenance",   callback_data=f"cfg|maintenance||{caller_id}"),
+3512:     maint_status = "🔴 ON" if MAINTENANCE_MODE else "🟢 OFF"
+3521:         f"✧ <b>Maintenance</b>  →  <code>{maint_status}</code>"
+3527: def _cfg_maintenance_panel(caller_id: int) -> tuple:
+3528:     """Build the maintenance mode config panel."""
+3529:     if MAINTENANCE_MODE:
+3530:         if MAINTENANCE_UNTIL > 0:
+3531:             rem = max(0, int(MAINTENANCE_UNTIL - time.time()))
+3542:         "<b>🔧 Maintenance Mode</b>\n"
+3543:         "<i>Control bot-wide maintenance and downtime.</i>\n"
+3547:         "Users receive a polished maintenance notice.</i>\n\n"
+3551:     toggle_label = "🔴 Disable" if MAINTENANCE_MODE else "🟢 Enable"
+3840:     # ── Maintenance mode ─────────────────────────────────────────────────────
+3841:     if section == "maintenance":
+3842:         text, markup = _cfg_maintenance_panel(caller_id)
+3848:         # Store chosen duration in chat_data and refresh maintenance panel
+3856:         text, markup = _cfg_maintenance_panel(caller_id)
+3861:         global MAINTENANCE_MODE, MAINTENANCE_UNTIL
+3862:         if MAINTENANCE_MODE:
+3864:             _end_maintenance()
+3865:             await query.answer("🟢 Maintenance mode disabled.", show_alert=True)
+3869:             MAINTENANCE_MODE = True
+3870:             MAINTENANCE_UNTIL = (time.time() + mins_val * 60) if mins_val > 0 else 0.0
+3871:             bot_config["maintenance"] = {"enabled": True, "until": MAINTENANCE_UNTIL}
+3874:             await query.answer(f"🔴 Maintenance mode ON for {dur_label}.", show_alert=True)
+3879:                     if MAINTENANCE_MODE:  # might already be turned off manually
+3880:                         _end_maintenance()
+3882:         text, markup = _cfg_maintenance_panel(caller_id)

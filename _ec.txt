@@ -1,0 +1,14 @@
+308: async def _enforce_cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+874:     if await _enforce_cooldown(update, context):
+912:     if await _enforce_cooldown(update, context):
+985:     if await _enforce_cooldown(update, context):
+1017:     if await _enforce_cooldown(update, context):
+1076:     if await _enforce_cooldown(update, context):
+1111:     if await _enforce_cooldown(update, context):
+1137:     if await _enforce_cooldown(update, context):
+1222:     if await _enforce_cooldown(update, context):
+1541:     if await _enforce_cooldown(update, context):
+1605:     if await _enforce_cooldown(update, context):
+1982:     if await _enforce_cooldown(update, context):
+2215:     if await _enforce_cooldown(update, context):
+4337:     if await _enforce_cooldown(update, context):
