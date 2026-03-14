@@ -109,6 +109,7 @@ message_owner = {}
 
 _requests_state = load_requests()
 request_db = _requests_state.get("requests", {})
+spam_requests_count = {}
 
 # Load persisted indexes so search works immediately after restart
 story_index = load_story_index()
@@ -1567,6 +1568,19 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
         request_db[story][chat_id] = set()
 
     if user.id in request_db[story][chat_id]:
+        
+        spam_key = f"{user.id}:{story}"
+        spam_requests_count[spam_key] = spam_requests_count.get(spam_key, 0) + 1
+        
+        if spam_requests_count[spam_key] >= 2:  # It warns them on the 3rd total attempt (1 original + 2 dupes)
+            _set_cooldown(user.id, 30, "Repeated spam requests for the same voice/story")
+            lang = get_chat_lang(update.effective_chat.id)
+            if lang == "hi":
+                text = f"<b>⛔ आप cooldown पर हैं</b>\n\n{mention}\n<i>कारण:</i> <b>एक ही स्टोरी के लिए बार-बार स्पैम रिक्वेस्ट करना</b>\n<i>कृपया लगभग 30 मिनट बाद फिर से कोशिश करें।</i>"
+            else:
+                text = f"<b>⛔ You are on cooldown</b>\n\n{mention}\n<i>Reason:</i> <b>Repeated spam requests for the same story</b>\n<i>Please try again after approximately 30 minutes.</i>"
+            await update.effective_chat.send_message(text=text, parse_mode="HTML")
+            return
 
         lang = get_chat_lang(update.effective_chat.id)
         if lang == "hi":
@@ -1594,10 +1608,17 @@ Please avoid sending duplicate requests.</i>
 
     username = f"@{user.username}" if user.username else "No username"
 
+    # Format story key safely for callback
+    safe_story = story[:40] # Prevent callback data from exceeding 64 bytes
+    kb = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✕ REJECT", callback_data=f"req_rej|{user.id}|{safe_story}"),
+            InlineKeyboardButton("⚠ WARN", callback_data=f"req_warn|{user.id}|{safe_story}")
+        ]
+    ])
+
     await context.bot.send_message(
-
         chat_id=REQUEST_GROUP,
-
         text=f"""
 Story Request
 
@@ -1606,7 +1627,8 @@ User ID: {user.id}
 Username: {username}
 
 Total Requests: {count}
-"""
+""",
+        reply_markup=kb
     )
 
     if count == 1:
@@ -2006,6 +2028,59 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.data.startswith("cfg_") or query.data.startswith("cfg|"):
         await query.answer()
         await _handle_config_callback(query, context)
+        return
+
+    # -----------------------
+    # Admin Request Management (Reject / Warn)
+    # -----------------------
+    if query.data.startswith("req_rej|") or query.data.startswith("req_warn|"):
+        if not is_admin(user.id):
+            await query.answer("⛔ Admin only.", show_alert=True)
+            return
+
+        parts = query.data.split("|", 2)
+        if len(parts) < 3:
+            return
+            
+        action = parts[0]
+        req_uid = int(parts[1])
+        req_story = parts[2]
+        
+        # Clean from request_db
+        to_delete = []
+        for db_story in list(request_db.keys()):
+            if db_story.startswith(req_story): # Matches sliced callback data
+                for chat_id_str, uids in list(request_db[db_story].items()):
+                    if req_uid in uids:
+                        uids.remove(req_uid)
+                to_delete.append(db_story)
+                
+        for k in to_delete:
+            if not any(request_db[k].values()):
+                request_db.pop(k, None)
+        save_requests({"requests": request_db})
+        
+        try:
+            await query.message.delete()
+        except:
+            pass
+
+        # Language fallback logic for PMs since we don't have their original chat ID context here
+        # We will attempt to send them a direct message
+        if action == "req_rej":
+            msg_text = f"<b>❌ Request Rejected</b>\n\nYour request for <i>{req_story}</i> has been rejected by administrators.\n(Reason: Fake, unavailable, or violates rules)\n\n<b>❌ रिक्वेस्ट रिजेक्ट</b>\nआपकी <i>{req_story}</i> की रिक्वेस्ट रिजेक्ट कर दी गई है।"
+            try:
+                await context.bot.send_message(req_uid, msg_text, parse_mode="HTML")
+            except:
+                pass
+
+        elif action == "req_warn":
+            _set_cooldown(req_uid, 30, f"Fake/Spam request warning for: {req_story}")
+            msg_text = f"<b>⚠ WARNING / चेतावनी</b>\n\nYou have been placed on a 30-minute cooldown by administrators for sending fake or spam requests (<i>{req_story}</i>).\n\nफेक या स्पैम रिक्वेस्ट भेजने के कारण एडमिन्स ने आपको 30 मिनट के cooldown पर रखा है।"
+            try:
+                await context.bot.send_message(req_uid, msg_text, parse_mode="HTML")
+            except:
+                pass
         return
 
     # ── NEW: menu|<section>|<caller_id>  ──────────────────────────────────────
