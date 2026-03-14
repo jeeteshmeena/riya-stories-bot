@@ -29,7 +29,7 @@ from telegram.ext import (
     InlineQueryHandler,
     ChosenInlineResultHandler,
     ChatMemberHandler,
-    PollHandler,
+    PollAnswerHandler,
     filters,
 )
 
@@ -2033,15 +2033,15 @@ async def trigger_community_poll(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     # Truncate to 100 chars (Telegram API limit)
     options = [q["name"][:100] for q in to_poll]
     
-    # Send poll to REQUEST_GROUP if configured, otherwise to the requester's chat
-    target_chat = int(REQUEST_GROUP) if REQUEST_GROUP else chat_id
+    # Send poll directly to the group where the threshold was triggered
+    target_chat = chat_id
     
     try:
         poll_msg = await context.bot.send_poll(
             chat_id=target_chat,
             question="Which story should be uploaded next? (Community Vote)",
             options=options,
-            is_anonymous=True, # Telegram channels *only* support anonymous polls!
+            is_anonymous=False,
             allows_multiple_answers=False,
         )
     except Exception as e:
@@ -2084,24 +2084,44 @@ async def trigger_community_poll(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     await log(context, f"POLL CREATED | poll_id={poll_id} options={options}")
 
 
-async def poll_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle poll state updates."""
+async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle individual user votes on community polls."""
     global active_polls, voting_queue
-    poll = update.poll
-    poll_id = poll.id
+    answer = update.poll_answer
+    poll_id = answer.poll_id
+    user_id = answer.user.id
     
     if poll_id not in active_polls:
         return
 
     poll_data = active_polls[poll_id]
     
-    # Check max votes
-    for i, option in enumerate(poll.options):
-        if option.voter_count >= VOTING_THRESHOLD:
-            await _declare_poll_winner(context, poll_id, i)
-            # Re-save voting_db to permanently lock out the poll since it's removed
-            save_voting_db({"queue": voting_queue, "polls": active_polls})
+    # Record this user's selected option(s)
+    # answer.option_ids is a list; for single-choice polls it has one element
+    if answer.option_ids:
+        option_idx = str(answer.option_ids[0])
+        # Remove from all options first (handles changing vote)
+        for opt_votes in poll_data["votes"].values():
+            if user_id in opt_votes:
+                opt_votes.remove(user_id)
+        if option_idx in poll_data["votes"]:
+            poll_data["votes"][option_idx].append(user_id)
+    else:
+        # User retracted vote
+        for opt_votes in poll_data["votes"].values():
+            if user_id in opt_votes:
+                opt_votes.remove(user_id)
+    
+    # Check if any option has reached the threshold
+    winner_idx = None
+    for idx, voters in poll_data["votes"].items():
+        if len(voters) >= VOTING_THRESHOLD:
+            winner_idx = int(idx)
             break
+    
+    if winner_idx is not None:
+        await _declare_poll_winner(context, poll_id, winner_idx)
+        save_voting_db({"queue": voting_queue, "polls": active_polls})
 
 
 async def _declare_poll_winner(context, poll_id, winner_idx):
@@ -3298,7 +3318,12 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"👥 Voters:\n{voters_txt}"
                 )
                 try:
-                    await context.bot.send_message(chat_id=COPYRIGHT_CHANNEL, text=report, parse_mode="HTML")
+                    sent_report = await context.bot.send_message(chat_id=COPYRIGHT_CHANNEL, text=report, parse_mode="HTML")
+                    # Cache message ID so /cleardata can delete it later
+                    global _copy_msg_cache
+                    if "_copy_msg_cache" not in globals():
+                        _copy_msg_cache = {}
+                    _copy_msg_cache[story_key] = (int(COPYRIGHT_CHANNEL), sent_report.message_id)
                 except Exception as e:
                     logger.warning("Failed to send link broken report: %s", e)
 
@@ -4752,7 +4777,7 @@ def start_bot():
 
     app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
-    app.add_handler(PollHandler(poll_handler))
+    app.add_handler(PollAnswerHandler(poll_answer_handler))
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_cmd))
@@ -4995,37 +5020,70 @@ async def listalias_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cleardata_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin-only: clear all requests, link reports, and voting loops."""
+    """Admin-only: clear all requests, link reports, and voting loops, and delete channel messages."""
     global request_db, voting_queue, active_polls, link_flags, active_link_votes, spam_requests_count
     
     if not is_admin(update.effective_user.id):
         return await update.message.reply_text("⛔ Admin only.")
+    
+    status_msg = await update.message.reply_text("⏳ Clearing all data...")
         
     try:
-        # Clear request mapping DB
+        deleted_requests = 0
+        deleted_reports = 0
+        
+        # --- Delete Request Channel messages ---
+        if REQUEST_GROUP:
+            # Use the in-memory cache (_req_msg_cache)
+            req_cache = globals().get("_req_msg_cache", {})
+            for story_key, msg_id in list(req_cache.items()):
+                try:
+                    await context.bot.delete_message(chat_id=REQUEST_GROUP, message_id=msg_id)
+                    deleted_requests += 1
+                except Exception:
+                    pass  # Message may have been manually deleted already
+            req_cache.clear()
+        
+        # --- Delete Copyright Channel messages ---
+        copy_cache = globals().get("_copy_msg_cache", {})
+        for story_key, (ch_id, msg_id) in list(copy_cache.items()):
+            try:
+                await context.bot.delete_message(chat_id=ch_id, message_id=msg_id)
+                deleted_reports += 1
+            except Exception:
+                pass  # Message may have been manually deleted already
+        copy_cache.clear()
+        
+        # --- Clear request DB ---
         request_db.clear()
         save_requests({"requests": request_db})
         
-        # Clear voting queue
+        # --- Clear voting queue ---
         voting_queue.clear()
         active_polls.clear()
         save_voting_db({"queue": voting_queue, "polls": active_polls})
         
-        # Clear link flags (broken report votes)
+        # --- Clear link flags ---
         link_flags.clear()
         save_link_flags(link_flags)
         
-        # Clear in-memory caches
-        if "active_link_votes" in globals():
-            active_link_votes.clear()
-        if "spam_requests_count" in globals():
-            spam_requests_count.clear()
+        # --- Clear in-memory caches ---
+        active_link_votes.clear()
+        spam_requests_count.clear()
             
-        await update.message.reply_text("✅ All temporary queues cleared!\n\n- Story requests fully reset.\n- Voting queue & polls reset.\n- Link Not Working reports reset.", parse_mode="HTML")
-        await log(context, f"ADMIN CLEARDATA | user_id={update.effective_user.id}")
+        summary = (
+            f"✅ <b>All data cleared!</b>\n\n"
+            f"▪ Request channel messages deleted: <b>{deleted_requests}</b>\n"
+            f"▪ Copyright channel reports deleted: <b>{deleted_reports}</b>\n"
+            f"▪ Story request DB: reset\n"
+            f"▪ Voting queue &amp; polls: reset\n"
+            f"▪ Link Not Working reports: reset"
+        )
+        await status_msg.edit_text(summary, parse_mode="HTML")
+        await log(context, f"ADMIN CLEARDATA | user_id={update.effective_user.id} | req_msgs={deleted_requests} copy_msgs={deleted_reports}")
         
     except Exception as e:
-        await update.message.reply_text(f"❌ Error clearing data: {e}")
+        await status_msg.edit_text(f"❌ Error clearing data: {e}")
 
 # -----------------------
 # main
