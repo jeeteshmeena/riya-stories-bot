@@ -29,6 +29,7 @@ from telegram.ext import (
     InlineQueryHandler,
     ChosenInlineResultHandler,
     ChatMemberHandler,
+    ChatMemberHandler,
     PollAnswerHandler,
     filters,
 )
@@ -2033,7 +2034,7 @@ async def trigger_community_poll(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     # Truncate to 100 chars (Telegram API limit)
     options = [q["name"][:100] for q in to_poll]
     
-    # Send poll directly to the group where the threshold was triggered
+    # Send poll to the requester's chat
     target_chat = chat_id
     
     try:
@@ -2085,7 +2086,7 @@ async def trigger_community_poll(context: ContextTypes.DEFAULT_TYPE, chat_id: in
 
 
 async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle individual user votes on community polls."""
+    """Handle non-anonymous poll state updates."""
     global active_polls, voting_queue
     answer = update.poll_answer
     poll_id = answer.poll_id
@@ -2096,32 +2097,22 @@ async def poll_answer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     poll_data = active_polls[poll_id]
     
-    # Record this user's selected option(s)
-    # answer.option_ids is a list; for single-choice polls it has one element
-    if answer.option_ids:
-        option_idx = str(answer.option_ids[0])
-        # Remove from all options first (handles changing vote)
-        for opt_votes in poll_data["votes"].values():
-            if user_id in opt_votes:
-                opt_votes.remove(user_id)
-        if option_idx in poll_data["votes"]:
-            poll_data["votes"][option_idx].append(user_id)
-    else:
-        # User retracted vote
-        for opt_votes in poll_data["votes"].values():
-            if user_id in opt_votes:
-                opt_votes.remove(user_id)
-    
-    # Check if any option has reached the threshold
-    winner_idx = None
-    for idx, voters in poll_data["votes"].items():
+    # Remove user from previous vote
+    for vote_list in poll_data["votes"].values():
+        if user_id in vote_list:
+            vote_list.remove(user_id)
+            
+    # Add to new option
+    for option_id in answer.option_ids:
+        poll_data["votes"][str(option_id)].append(user_id)
+        
+    # Check max votes
+    for option_id, voters in poll_data["votes"].items():
         if len(voters) >= VOTING_THRESHOLD:
-            winner_idx = int(idx)
+            await _declare_poll_winner(context, poll_id, int(option_id))
+            # Re-save voting_db to permanently lock out the poll since it's removed
+            save_voting_db({"queue": voting_queue, "polls": active_polls})
             break
-    
-    if winner_idx is not None:
-        await _declare_poll_winner(context, poll_id, winner_idx)
-        save_voting_db({"queue": voting_queue, "polls": active_polls})
 
 
 async def _declare_poll_winner(context, poll_id, winner_idx):
@@ -3318,12 +3309,11 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"👥 Voters:\n{voters_txt}"
                 )
                 try:
-                    sent_report = await context.bot.send_message(chat_id=COPYRIGHT_CHANNEL, text=report, parse_mode="HTML")
-                    # Cache message ID so /cleardata can delete it later
+                    sent_copy = await context.bot.send_message(chat_id=COPYRIGHT_CHANNEL, text=report, parse_mode="HTML")
                     global _copy_msg_cache
                     if "_copy_msg_cache" not in globals():
                         _copy_msg_cache = {}
-                    _copy_msg_cache[story_key] = (int(COPYRIGHT_CHANNEL), sent_report.message_id)
+                    _copy_msg_cache[story_key] = sent_copy.message_id
                 except Exception as e:
                     logger.warning("Failed to send link broken report: %s", e)
 
@@ -5020,70 +5010,61 @@ async def listalias_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cleardata_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin-only: clear all requests, link reports, and voting loops, and delete channel messages."""
+    """Admin-only: clear all requests, link reports, and voting loops."""
     global request_db, voting_queue, active_polls, link_flags, active_link_votes, spam_requests_count
     
     if not is_admin(update.effective_user.id):
         return await update.message.reply_text("⛔ Admin only.")
-    
-    status_msg = await update.message.reply_text("⏳ Clearing all data...")
         
     try:
-        deleted_requests = 0
-        deleted_reports = 0
+        # Erase Telegram Channel Messages (if cached)
+        deleted_reqs = 0
+        deleted_copies = 0
         
-        # --- Delete Request Channel messages ---
-        if REQUEST_GROUP:
-            # Use the in-memory cache (_req_msg_cache)
-            req_cache = globals().get("_req_msg_cache", {})
-            for story_key, msg_id in list(req_cache.items()):
+        global _req_msg_cache
+        if "_req_msg_cache" in globals() and REQUEST_GROUP:
+            for req_msg_id in list(_req_msg_cache.values()):
                 try:
-                    await context.bot.delete_message(chat_id=REQUEST_GROUP, message_id=msg_id)
-                    deleted_requests += 1
+                    await context.bot.delete_message(chat_id=REQUEST_GROUP, message_id=req_msg_id)
+                    deleted_reqs += 1
                 except Exception:
-                    pass  # Message may have been manually deleted already
-            req_cache.clear()
-        
-        # --- Delete Copyright Channel messages ---
-        copy_cache = globals().get("_copy_msg_cache", {})
-        for story_key, (ch_id, msg_id) in list(copy_cache.items()):
-            try:
-                await context.bot.delete_message(chat_id=ch_id, message_id=msg_id)
-                deleted_reports += 1
-            except Exception:
-                pass  # Message may have been manually deleted already
-        copy_cache.clear()
-        
-        # --- Clear request DB ---
+                    pass
+            _req_msg_cache.clear()
+            
+        global _copy_msg_cache
+        if "_copy_msg_cache" in globals() and COPYRIGHT_CHANNEL:
+            for copy_msg_id in list(_copy_msg_cache.values()):
+                try:
+                    await context.bot.delete_message(chat_id=COPYRIGHT_CHANNEL, message_id=copy_msg_id)
+                    deleted_copies += 1
+                except Exception:
+                    pass
+            _copy_msg_cache.clear()
+
+        # Clear request mapping DB
         request_db.clear()
         save_requests({"requests": request_db})
         
-        # --- Clear voting queue ---
+        # Clear voting queue
         voting_queue.clear()
         active_polls.clear()
         save_voting_db({"queue": voting_queue, "polls": active_polls})
         
-        # --- Clear link flags ---
+        # Clear link flags (broken report votes)
         link_flags.clear()
         save_link_flags(link_flags)
         
-        # --- Clear in-memory caches ---
-        active_link_votes.clear()
-        spam_requests_count.clear()
+        # Clear in-memory caches
+        if "active_link_votes" in globals():
+            active_link_votes.clear()
+        if "spam_requests_count" in globals():
+            spam_requests_count.clear()
             
-        summary = (
-            f"✅ <b>All data cleared!</b>\n\n"
-            f"▪ Request channel messages deleted: <b>{deleted_requests}</b>\n"
-            f"▪ Copyright channel reports deleted: <b>{deleted_reports}</b>\n"
-            f"▪ Story request DB: reset\n"
-            f"▪ Voting queue &amp; polls: reset\n"
-            f"▪ Link Not Working reports: reset"
-        )
-        await status_msg.edit_text(summary, parse_mode="HTML")
-        await log(context, f"ADMIN CLEARDATA | user_id={update.effective_user.id} | req_msgs={deleted_requests} copy_msgs={deleted_reports}")
+        await update.message.reply_text(f"✅ All temporary queues cleared!\n\n- Story requests fully reset ({deleted_reqs} msgs deleted).\n- Voting queue & polls reset.\n- Link Not Working reports reset ({deleted_copies} msgs deleted).", parse_mode="HTML")
+        await log(context, f"ADMIN CLEARDATA | user_id={update.effective_user.id}")
         
     except Exception as e:
-        await status_msg.edit_text(f"❌ Error clearing data: {e}")
+        await update.message.reply_text(f"❌ Error clearing data: {e}")
 
 # -----------------------
 # main
