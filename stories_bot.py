@@ -82,6 +82,7 @@ from database import (
 )
 from format_learner import learn_format, build_preview, build_test_result, extract_with_template
 from external_check import verify_story_external
+from post_builder import post_builder_handler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -715,7 +716,7 @@ def _menu_main(caller_id: int, lang: str = "en") -> tuple:
             "<i>✺ Search stories, explore, and more.</i>\n"
             f"{_DIVIDER}"
         )
-    markup = InlineKeyboardMarkup([
+    btn_rows = [
         [
             InlineKeyboardButton("♥ Favourites",  callback_data=f"menu|saved|{caller_id}"),
             InlineKeyboardButton("✸ New Series",   callback_data=f"menu|new|{caller_id}"),
@@ -727,9 +728,13 @@ def _menu_main(caller_id: int, lang: str = "en") -> tuple:
         [
             InlineKeyboardButton("✧ Language",    callback_data=f"menu|lang|{caller_id}"),
             InlineKeyboardButton("✦ Help",         callback_data=f"menu|help|{caller_id}"),
-        ],
-        [InlineKeyboardButton("✖ Close", callback_data=f"menu|close|{caller_id}")],
-    ])
+        ]
+    ]
+    if is_admin(caller_id):
+        btn_rows.append([InlineKeyboardButton("🛠 Create Post", callback_data=f"menu|createpost|{caller_id}")])
+    btn_rows.append([InlineKeyboardButton("✖ Close", callback_data=f"menu|close|{caller_id}")])
+
+    markup = InlineKeyboardMarkup(btn_rows)
     return text, markup
 
 
@@ -4962,6 +4967,9 @@ def start_bot():
 
     app.add_handler(InlineQueryHandler(inline_search))
     app.add_handler(ChosenInlineResultHandler(chosen_inline_result))
+    
+    # PB Hook
+    app.add_handler(post_builder_handler)
 
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler)
