@@ -406,56 +406,8 @@ async def _enforce_cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 async def _send_scan_busy_notice(msg, lang: str):
-    """Send scan busy notice with live ETA, auto-delete after 2 min."""
-    eta_s = int(SCAN_PROGRESS.get("eta_s", 0))
-    found = int(SCAN_PROGRESS.get("stories_found", 0))
-    expected = int(SCAN_PROGRESS.get("expected_total", 0))
-
-    eta_text = f"~{eta_s // 60:02d}:{eta_s % 60:02d}" if eta_s > 0 else "--:--"
-
-    # Simple progress bar
-    progress_bar = "░░░░░░░░░░"
-    if expected > 0:
-        filled = min(10, int((found / expected) * 10))
-        progress_bar = "▓" * filled + "░" * (10 - filled)
-        percent = min(100, int((found / expected) * 100))
-        progress_text = f"{progress_bar} {percent}%"
-    else:
-        progress_text = f"{progress_bar} 0%"
-
-    if lang == "hi":
-        text = (
-            "<b>⏳ डेटाबेस अपडेट हो रहा है</b>\n"
-            "━━━━━━━━━━━━━━━━\n\n"
-            "<i>◎ Riya अभी डेटाबेस से स्टोरीज़ अपडेट कर रही है।</i>\n\n"
-            f"▪ <b>प्रगति:</b> <code>{progress_text}</code>\n"
-            f"▪ <b>मिली स्टोरीज़:</b> <code>{found}</code>\n"
-            f"▪ <b>अनुमानित समय:</b> <code>{eta_text}</code>\n\n"
-            "▪ <i>अपडेट पूरा होने के बाद बॉट अपने आप काम करना शुरू कर देगा।</i>\n\n"
-            f"<code>{datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S')} UTC</code>"
-        )
-    else:
-        text = (
-            "<b>⏳ Database Updating</b>\n"
-            "━━━━━━━━━━━━━━━━\n\n"
-            "<i>◎ Riya is currently updating the story database.</i>\n\n"
-            f"▪ <b>Progress:</b> <code>{progress_text}</code>\n"
-            f"▪ <b>Stories Found:</b> <code>{found}</code>\n"
-            f"▪ <b>ETA:</b> <code>{eta_text}</code>\n\n"
-            "▪ <i>The bot will automatically start working again once the update is complete.</i>\n\n"
-            f"<code>{datetime.utcnow().strftime('%d-%m-%Y %H:%M:%S')} UTC</code>"
-        )
-
-    notice = await msg.reply_text(text=text, parse_mode="HTML")
-
-    async def _delete_notice():
-        await asyncio.sleep(120)  # Reduced from 24h to 2m
-        try:
-            await notice.delete()
-        except Exception:
-            pass
-
-    asyncio.create_task(_delete_notice())
+    """Silently ignore messages during scan as requested by user. Removed auto-delete behavior."""
+    pass
 
 
 def _looks_like_existing_story_query(query: str) -> bool:
@@ -572,9 +524,14 @@ async def auto_scan_loop(bot=None):
     if not (SESSION_STRING and API_ID and API_HASH):
         logger.warning("Auto-scan skipped: SESSION_STRING, API_ID, API_HASH required for Telethon")
         return
+    first_run = True
     while True:
         try:
-            await asyncio.sleep(600)  # wait 10 min before first run
+            if first_run:
+                await asyncio.sleep(600)  # wait 10 min before first run
+                first_run = False
+            else:
+                await asyncio.sleep(14400)  # Wait 4 hours (6x per 24h)
             
             if IS_SCANNING:
                 continue # Skip if already scanning via command
@@ -620,8 +577,9 @@ async def auto_scan_loop(bot=None):
                 story_index = names
                 build_search_index(story_index)
                 save_story_index(story_index)
-                last_scan_count = result.get("stories", len(story_index))
+                last_scan_count = len(story_index)
                 logger.info("Auto scan done | stories=%d", last_scan_count)
+                if bot: asyncio.create_task(update_all_indexes(bot))
             else:
                 logger.warning("Auto scan returned no stories, keeping existing index")
         except Exception as e:
@@ -1533,7 +1491,8 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         build_search_index(story_index)
         save_story_index(story_index)
 
-        last_scan_count = total_stories_found
+        last_scan_count = len(story_index)
+        asyncio.create_task(update_all_indexes(context.bot))
 
         # clear link flags for stories whose link has been updated/confirmed again
         db = load_db()
@@ -2331,6 +2290,12 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Strip any leading @mention from query (e.g. "@username StoryName" → "StoryName")
     # Also extract the tagged user so we can reply to them
     query_text = raw_text
+
+    if query_text.isdigit():
+        idx = int(query_text) - 1
+        if 0 <= idx < len(story_index):
+            query_text = story_index[idx]
+
     _tagged_user_mention: str | None = None
     _tagged_user_id: int | None = None
     if msg.entities:
@@ -4751,6 +4716,117 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await handle_config_input(update, context)
     return await search(update, context)
 
+async def update_all_indexes(bot):
+    idx_list = bot_config.get("index_messages", [])
+    if not idx_list:
+        return
+        
+    db = load_db()
+    lines = []
+    for i, name in enumerate(story_index, 1):
+        db_story = db.get(name) or {}
+        link = db_story.get("link", "")
+        safe_name = html.escape(clean_story(name))
+        if link:
+            lines.append(f"<code>{i}.</code> <a href='{link}'>{safe_name}</a>")
+        else:
+            lines.append(f"<code>{i}.</code> {safe_name}")
+            
+    msgs_text = []
+    current_msg = "<b>📚 Complete Story Index</b>\n━━━━━━━━━━━━━━━━\n\n"
+    for line in lines:
+        if len(current_msg) + len(line) > 3500:
+            msgs_text.append(current_msg)
+            current_msg = ""
+        current_msg += line + "\n"
+    if current_msg:
+        msgs_text.append(current_msg)
+        
+    if not msgs_text:
+        msgs_text = ["<i>No stories indexed yet.</i>"]
+        
+    for item in idx_list:
+        chat_id = item.get("chat_id")
+        msg_ids = item.get("msg_ids", [])
+        
+        new_ids = []
+        for i, text in enumerate(msgs_text):
+            if i < len(msg_ids):
+                try:
+                    await bot.edit_message_text(chat_id=chat_id, message_id=msg_ids[i], text=text, parse_mode="HTML", disable_web_page_preview=True)
+                    new_ids.append(msg_ids[i])
+                except Exception:
+                    try:
+                        sent = await bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", disable_web_page_preview=True)
+                        new_ids.append(sent.message_id)
+                    except Exception:
+                        pass
+            else:
+                try:
+                    sent = await bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", disable_web_page_preview=True)
+                    new_ids.append(sent.message_id)
+                except Exception:
+                    pass
+        
+        for j in range(len(msgs_text), len(msg_ids)):
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=msg_ids[j])
+            except Exception:
+                pass
+                
+        item["msg_ids"] = new_ids
+        
+    save_config(bot_config)
+
+
+async def storylist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    
+    msgs_text = []
+    db = load_db()
+    lines = []
+    for i, name in enumerate(story_index, 1):
+        db_story = db.get(name) or {}
+        link = db_story.get("link", "")
+        safe_name = html.escape(clean_story(name))
+        if link:
+            lines.append(f"<code>{i}.</code> <a href='{link}'>{safe_name}</a>")
+        else:
+            lines.append(f"<code>{i}.</code> {safe_name}")
+            
+    current_msg = "<b>📚 Complete Story Index</b>\n━━━━━━━━━━━━━━━━\n\n"
+    for line in lines:
+        if len(current_msg) + len(line) > 3500:
+            msgs_text.append(current_msg)
+            current_msg = ""
+        current_msg += line + "\n"
+    if current_msg:
+        msgs_text.append(current_msg)
+        
+    if not msgs_text:
+        msgs_text = ["<i>No stories indexed yet.</i>"]
+        
+    msg_ids = []
+    for text in msgs_text:
+        try:
+            sent = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", disable_web_page_preview=True)
+            msg_ids.append(sent.message_id)
+            await asyncio.sleep(0.5)
+        except Exception as e:
+            logger.error(f"Failed to send list: {e}")
+            
+    idx_list = bot_config.get("index_messages", [])
+    found = False
+    for item in idx_list:
+        if item.get("chat_id") == chat_id:
+            item["msg_ids"] = msg_ids
+            found = True
+            break
+    if not found:
+        idx_list.append({"chat_id": chat_id, "msg_ids": msg_ids})
+    bot_config["index_messages"] = idx_list
+    save_config(bot_config)
+
 check_cooldowns = {}
 
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4846,6 +4922,7 @@ def start_bot():
     app.add_handler(CommandHandler("scan", scan))
     app.add_handler(CommandHandler("check", check_command))
     app.add_handler(CommandHandler("stories", stories))
+    app.add_handler(CommandHandler("storylist", storylist_cmd))
     app.add_handler(CommandHandler("request", request_story))
     app.add_handler(CommandHandler("about", about))
     app.add_handler(CommandHandler("how", how))
