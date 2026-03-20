@@ -1604,10 +1604,16 @@ def _stories_page(page=0):
     end = start + STORIES_PER_PAGE
     chunk = story_index[start:end]
     lines = []
+    db = load_db()
     for i, name in enumerate(chunk, start + 1):
         title = clean_story(name)
-        # per‑story monospace so each can be copied individually
-        lines.append(f"<code>{i} {title}</code>")
+        db_story = db.get(name, {})
+        link = db_story.get("link", "")
+        # per‑story monospace so each can be copied individually, embedded in link
+        if link:
+            lines.append(f"{i}. <a href='{link}'><code>{title}</code></a>")
+        else:
+            lines.append(f"{i}. <code>{title}</code>")
     total = len(story_index)
     header = (
         f"<b>✦ Story List  ·  {total} titles</b>\n"
@@ -1646,7 +1652,13 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nav.append(InlineKeyboardButton(f"1/{total_pages}", callback_data="noop"))
     if has_next:
         nav.append(InlineKeyboardButton("Next ►", callback_data=f"stories_p|{page+1}|{caller_id}"))
-    keyboard = [nav, [InlineKeyboardButton("🗑️ Delete", callback_data=f"story_delete|{caller_id}")]]
+    keyboard = [
+        nav, 
+        [
+            InlineKeyboardButton("🗑️ Delete", callback_data=f"story_delete|{caller_id}"),
+            InlineKeyboardButton("WTF", callback_data=f"story_wtf|{caller_id}")
+        ]
+    ]
 
     cmd_msg = update.message
 
@@ -2857,6 +2869,25 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
         await query.answer()
+        return
+
+    if query.data.startswith("story_wtf|"):
+        try:
+            caller_id = int(query.data.split("|")[1])
+        except:
+            caller_id = 0
+            
+        if user.id != caller_id and not is_admin(user.id):
+            await query.answer("⛔ Only the user who opened /stories (or an admin) can do this.", show_alert=True)
+            return
+            
+        await query.answer("Preparing complete index...")
+        try:
+            await query.message.delete()
+        except:
+            pass
+            
+        await storylist_cmd(update, context)
         return
 
     if query.data == "delete":
@@ -4795,9 +4826,9 @@ async def storylist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         link = db_story.get("link", "")
         safe_name = html.escape(clean_story(name))
         if link:
-            lines.append(f"<code>{i}.</code> <a href='{link}'>{safe_name}</a>")
+            lines.append(f"{i}. <a href='{link}'><code>{safe_name}</code></a>")
         else:
-            lines.append(f"<code>{i}.</code> {safe_name}")
+            lines.append(f"{i}. <code>{safe_name}</code>")
             
     current_msg = "<b>📚 Complete Story Index</b>\n━━━━━━━━━━━━━━━━\n\n"
     for line in lines:

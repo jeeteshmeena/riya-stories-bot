@@ -69,14 +69,6 @@ def build_format_1(data):
     return text
 
 def build_format_2(data):
-    # Secret Ameerzada • Pocket FM
-    # > _Description_
-    # Episodes - 1116
-    # Status - Completed
-    # All Stories Available on Stories🫶🏻.
-    # link
-    # link
-    
     name = data.get("name", "Unknown")
     platform = data.get("platform", "Unknown")
     desc = data.get("desc", "")
@@ -85,9 +77,7 @@ def build_format_2(data):
     link = data.get("link", "")
     availability = data.get("availability", "All Stories Available on Stories🫶🏻.")
     
-    # Use blockquote (requires HTML parse_mode)
     safe_desc = html.escape(desc)
-    # Adding italic
     desc_block = f"<blockquote><i>{safe_desc}</i></blockquote>\n\n" if desc else ""
     
     text = f"<b>{html.escape(name)} • {html.escape(platform)}</b>\n\n"
@@ -98,27 +88,75 @@ def build_format_2(data):
     text += f"{link}\n{link}"
     return text
 
+def build_format_3(data):
+    name = data.get("name", "Unknown")
+    status = data.get("status", "Ongoing")
+    genre = data.get("genre", "Unknown")
+    link = data.get("link", "")
+    
+    text = f"❤️‍🔥 <b>{html.escape(name)}</b> ❤️‍🔥\n\n"
+    text += f"🔹 <b>Status:</b> <b>{status}</b>\n"
+    text += f"🔹 <b>Genre:</b> {html.escape(genre)}\n\n"
+    text += f"📥 <b>Download Now</b> 👇\n"
+    text += f"{link}"
+    return text
+
+def build_format_4(data):
+    name = data.get("name", "Unknown")
+    platform = data.get("platform", "Unknown")
+    episodes = data.get("episodes", "0")
+    status = data.get("status", "Ongoing")
+    link = data.get("link", "")
+    username = data.get("username", DEFAULT_JOIN_USERNAME)
+    
+    text = f"🎬 <b>Name:</b> <b>{html.escape(name)}</b>\n"
+    text += f"🎧 <b>Platform:</b> {html.escape(platform)}\n"
+    text += f"🔢 <b>Episodes:</b> {episodes} ({status})\n\n"
+    text += f"🔗 <b>Link:</b> {link}\n\n"
+    text += f"Join: {username}"
+    return text
+
+def build_format_5(data):
+    name = data.get("name", "Unknown")
+    desc = data.get("desc", "")
+    genre = data.get("genre", "Unknown")
+    status = data.get("status", "Ongoing")
+    link = data.get("link", "")
+    
+    text = f"📖 <b>{html.escape(name)}</b>\n\n"
+    if desc:
+        text += f"<blockquote><i>{html.escape(desc)}</i></blockquote>\n\n"
+    text += f"🎭 <b>Genre:</b> {html.escape(genre)}\n"
+    text += f"📌 <b>Status:</b> <b>{status}</b>\n\n"
+    text += f"🔗 Read Here: {link}"
+    return text
+
 async def start_builder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not is_admin_local(user.id):
-        await update.message.reply_text("⛔ Admin only feature.")
+        if update.callback_query:
+            await update.callback_query.answer("⛔ Admin only feature.", show_alert=True)
+        else:
+            await update.message.reply_text("⛔ Admin only feature.")
         return ConversationHandler.END
         
-    # Reset state
     context.user_data['pb_data'] = {}
     
     keyboard = [
-        [InlineKeyboardButton("Format 1 (Channel)", callback_data="pb_fmt|1")],
-        [InlineKeyboardButton("Format 2 (Detail)", callback_data="pb_fmt|2")],
-        [InlineKeyboardButton("Both", callback_data="pb_fmt|both")],
+        [InlineKeyboardButton("1 (Channel)", callback_data="pb_fmt|1"), InlineKeyboardButton("2 (Detail)", callback_data="pb_fmt|2")],
+        [InlineKeyboardButton("3 (Minimal)", callback_data="pb_fmt|3"), InlineKeyboardButton("4 (Banner)", callback_data="pb_fmt|4")],
+        [InlineKeyboardButton("5 (Story Focus)", callback_data="pb_fmt|5"), InlineKeyboardButton("Both 1&2", callback_data="pb_fmt|both")],
         [InlineKeyboardButton("Cancel", callback_data="pb_cancel")]
     ]
-    await update.message.reply_text(
-        "<b>🛠 Story Post Builder</b>\n\n"
-        "Welcome to the Post Builder! Pick a format to begin:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="HTML"
-    )
+    
+    text = "<b>🛠 Story Post Builder</b>\n\nWelcome to the Post Builder! Pick a format to begin:"
+    
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        
     return SELECT_FORMAT
 
 async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -161,7 +199,7 @@ async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['pb_data']['status'] = status
     
     fmt = context.user_data['pb_data']['format']
-    if fmt in ["1", "both"]:
+    if fmt in ["1", "3", "5", "both"]:
         keyboard = [
             [InlineKeyboardButton("Crime", callback_data="pb_genre|Crime"), InlineKeyboardButton("Romance", callback_data="pb_genre|Romance")],
             [InlineKeyboardButton("Horror", callback_data="pb_genre|Horror"), InlineKeyboardButton("Thriller", callback_data="pb_genre|Thriller")],
@@ -170,7 +208,6 @@ async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🎭 <b>Step 3: Select or Type Genre</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         return SELECT_GENRE
     else:
-        # Format 2 doesn't use genre, jump to Link
         await query.edit_message_text("🔗 <b>Step 4: Enter Telegram Link</b>", parse_mode="HTML")
         return ENTER_LINK
 
@@ -214,11 +251,12 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return UPLOAD_IMAGE
         
     fmt = context.user_data['pb_data']['format']
-    if fmt in ["2", "both"]:
+    if fmt in ["2", "4", "5", "both"]:
         await update.message.reply_text("📝 <b>Step 6: Enter Description</b>\n\n(It will be auto-formatted as a blockquote italic)", parse_mode="HTML")
         return ENTER_DESC
-    else:
-        # Format 1 jump to Username
+    elif fmt in ["1", "3"]:
+        if fmt == "3":
+            return await generate_preview(update.message, context)
         keyboard = [
             [InlineKeyboardButton(f"Use Default ({DEFAULT_JOIN_USERNAME})", callback_data="pb_user|default")],
             [InlineKeyboardButton("Type Custom Username", callback_data="pb_user_custom")]
@@ -233,6 +271,11 @@ async def handle_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_episodes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['pb_data']['episodes'] = update.message.text
+    fmt = context.user_data['pb_data']['format']
+    
+    if fmt == "5":
+        return await generate_preview(update.message, context)
+        
     keyboard = [
         [InlineKeyboardButton("Pocket FM", callback_data="pb_plat|Pocket FM"), InlineKeyboardButton("Kuku FM", callback_data="pb_plat|Kuku FM")],
         [InlineKeyboardButton("Headfone", callback_data="pb_plat|Headfone"), InlineKeyboardButton("Type Custom", callback_data="pb_plat_custom")]
@@ -250,6 +293,10 @@ async def handle_platform_btn(update: Update, context: ContextTypes.DEFAULT_TYPE
     _, plat = query.data.split("|")
     context.user_data['pb_data']['platform'] = plat
     
+    fmt = context.user_data['pb_data']['format']
+    if fmt == "2":
+        return await generate_preview(query.message, context)
+        
     keyboard = [
         [InlineKeyboardButton(f"Use Default ({DEFAULT_JOIN_USERNAME})", callback_data="pb_user|default")],
         [InlineKeyboardButton("Type Custom Username", callback_data="pb_user_custom")]
@@ -260,6 +307,11 @@ async def handle_platform_btn(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_platform_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plat = update.message.text
     context.user_data['pb_data']['platform'] = plat
+    
+    fmt = context.user_data['pb_data']['format']
+    if fmt == "2":
+        return await generate_preview(update.message, context)
+        
     keyboard = [
         [InlineKeyboardButton(f"Use Default ({DEFAULT_JOIN_USERNAME})", callback_data="pb_user|default")],
         [InlineKeyboardButton("Type Custom Username", callback_data="pb_user_custom")]
@@ -290,6 +342,12 @@ async def generate_preview(message, context: ContextTypes.DEFAULT_TYPE):
         previews.append(build_format_1(data))
     if fmt in ["2", "both"]:
         previews.append(build_format_2(data))
+    if fmt == "3":
+        previews.append(build_format_3(data))
+    if fmt == "4":
+        previews.append(build_format_4(data))
+    if fmt == "5":
+        previews.append(build_format_5(data))
         
     data['cached_previews'] = previews
     
