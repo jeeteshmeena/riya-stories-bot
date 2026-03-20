@@ -81,7 +81,7 @@ from database import (
     load_voting_db, save_voting_db,
 )
 from format_learner import learn_format, build_preview, build_test_result, extract_with_template
-
+from external_check import verify_story_external
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -4751,6 +4751,78 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await handle_config_input(update, context)
     return await search(update, context)
 
+check_cooldowns = {}
+
+async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    chat = update.effective_chat
+    
+    if await _enforce_cooldown(update, context):
+        return
+        
+    if not is_admin(user.id):
+        now = time.time()
+        user_history = check_cooldowns.get(user.id, [])
+        user_history = [ts for ts in user_history if now - ts < 60]
+        if len(user_history) >= 5:
+            await update.message.reply_text("⛔ You have reached the limit of 5 checks per minute. Please wait.")
+            return
+        user_history.append(now)
+        check_cooldowns[user.id] = user_history
+        
+    query = ""
+    if context.args:
+        query = " ".join(context.args)
+    elif update.message.reply_to_message and update.message.reply_to_message.text:
+        lines = update.message.reply_to_message.text.split('\n')
+        if lines:
+            query = lines[0].strip()
+            
+    if not query:
+        lang = get_chat_lang(chat.id)
+        if lang == "hi":
+            await update.message.reply_text("कृपया /check <स्टोरी का नाम> का उपयोग करें या किसी संदेश का उत्तर दें।")
+        else:
+            await update.message.reply_text("Please provide a story name:\nUsage: /check <story name>\nOr reply to a message.")
+        return
+        
+    query = clean_story(query)
+    if len(query) < 2:
+        await update.message.reply_text("Query too short.")
+        return
+        
+    wait_msg = await update.message.reply_text("<i>⏳ Verifying externally...</i>", parse_mode="HTML")
+    
+    try:
+        result = await verify_story_external(query)
+        
+        if result["status"] == "found":
+            resp = (
+                "<b>★ Story Verification</b>\n\n"
+                f"✦ <b>Title:</b> {result['title']}\n"
+                f"✧ <b>Platform:</b> {result['platform']}\n\n"
+                "➤ <b>Link:</b>\n"
+                f"{result['link']}  ◇ <b>Status:</b>\n"
+                "Available on official platform"
+            )
+        elif result["status"] == "not_found":
+            resp = (
+                "<b>☆ Story Not Found</b>\n\n"
+                "✧ This story is not available on supported platforms\n\n"
+                "➤ Use /request to request it"
+            )
+        else:
+            resp = (
+                "<b>☆ Verification Failed</b>\n\n"
+                "✧ Unable to fetch results\n"
+                "➤ Try again later"
+            )
+            
+        await wait_msg.edit_text(text=resp, parse_mode="HTML", disable_web_page_preview=True)
+    except Exception as e:
+        logger.error(f"External check error: {e}")
+        await wait_msg.edit_text(text="<b>☆ Verification Failed</b>\n\n✧ Unable to fetch results\n➤ Try again later", parse_mode="HTML")
+
 def start_bot():
 
     global app
@@ -4772,6 +4844,7 @@ def start_bot():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_cmd))
     app.add_handler(CommandHandler("scan", scan))
+    app.add_handler(CommandHandler("check", check_command))
     app.add_handler(CommandHandler("stories", stories))
     app.add_handler(CommandHandler("request", request_story))
     app.add_handler(CommandHandler("about", about))
