@@ -1,5 +1,8 @@
+import os
 import re
 import html
+import asyncio
+import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InputMediaPhoto
 from telegram.ext import (
     ContextTypes,
@@ -10,24 +13,24 @@ from telegram.ext import (
     filters
 )
 
-# Conversation states
 (
     SELECT_FORMAT,
     ENTER_NAME,
-    SELECT_STATUS,
-    SELECT_GENRE,
-    ENTER_LINK,
-    UPLOAD_IMAGE,
-    ENTER_DESC,
-    ENTER_EPISODES,
     SELECT_PLATFORM,
+    HANDLE_DESC_CHOICE,
+    ENTER_DESC,
+    HANDLE_IMG_CHOICE,
+    UPLOAD_IMAGE,
+    ENTER_GENRE,
+    ENTER_LINK,
+    ENTER_EPISODES,
+    SELECT_STATUS,
     ENTER_USERNAME,
     SELECT_DESTINATION,
     CUSTOM_DESTINATION,
     CONFIRM_POST
-) = range(13)
+) = range(15)
 
-# Emojis for formats
 STATUS_EMOJIS = {"Completed": "✅", "Ongoing": "⏳", "RIP": "💀"}
 DEFAULT_JOIN_USERNAME = "@StoriesByJeetXNew"
 DEFAULT_FORMAT_1_EMOJI = "🫠"
@@ -43,6 +46,37 @@ def is_admin_local(user_id):
     if str(user_id) in moderators or user_id in moderators:
         return True
     return False
+
+async def _fetch_serper_desc(query: str):
+    api_key = os.getenv("SERPER_API_KEY")
+    if not api_key: return ""
+    payload = {"q": query + " story description site:pocketfm.com OR site:kukufm.com OR site:headfone.co.in", "gl": "in"}
+    headers = {'X-API-KEY': api_key, 'Content-Type': 'application/json'}
+    try:
+        resp = await asyncio.to_thread(requests.post, "https://google.serper.dev/search", json=payload, headers=headers, timeout=10)
+        data = resp.json()
+        organic = data.get("organic", [])
+        for res in organic:
+            snip = res.get("snippet", "")
+            if snip:
+                return re.sub(r'\s+', ' ', snip).strip()
+    except: pass
+    return ""
+
+async def _fetch_serper_image(query: str):
+    api_key = os.getenv("SERPER_API_KEY")
+    if not api_key: return None
+    payload = {"q": query + " cover image site:pocketfm.com OR site:kukufm.com OR site:headfone.co.in", "gl": "in"}
+    headers = {'X-API-KEY': api_key, 'Content-Type': 'application/json'}
+    try:
+        resp = await asyncio.to_thread(requests.post, "https://google.serper.dev/images", json=payload, headers=headers, timeout=10)
+        data = resp.json()
+        images = data.get("images", [])
+        if images:
+            return images[0].get("imageUrl")
+    except: pass
+    return None
+
 
 def build_format_1(data):
     emoji = DEFAULT_FORMAT_1_EMOJI
@@ -79,14 +113,13 @@ def build_format_2(data):
 
 def build_format_3(data):
     name = data.get("name", "Unknown")
-    status = data.get("status", "Ongoing")
     genre = data.get("genre", "Unknown")
+    status = data.get("status", "Ongoing")
     link = data.get("link", "")
-    text = f"❤️‍🔥 <b>{html.escape(name)}</b> ❤️‍🔥\n\n"
-    text += f"🔹 <b>Status:</b> <b>{status}</b>\n"
-    text += f"🔹 <b>Genre:</b> {html.escape(genre)}\n\n"
-    text += f"📥 <b>Download Now</b> 👇\n"
-    text += f"{link}"
+    text = f"✨ <b>{html.escape(name)}</b> ✨\n\n"
+    text += f"◃ <b>Genre:</b> {html.escape(genre)}\n"
+    text += f"◃ <b>Status:</b> <b>{status}</b>\n\n"
+    text += f"🔗 <b>Download / Read:</b>\n{link}"
     return text
 
 def build_format_4(data):
@@ -94,78 +127,32 @@ def build_format_4(data):
     platform = data.get("platform", "Unknown")
     episodes = data.get("episodes", "0")
     status = data.get("status", "Ongoing")
+    genre = data.get("genre", "Unknown")
+    desc = data.get("desc", "")
     link = data.get("link", "")
-    username = data.get("username", DEFAULT_JOIN_USERNAME)
-    text = f"🎬 <b>Name:</b> <b>{html.escape(name)}</b>\n"
-    text += f"🎧 <b>Platform:</b> {html.escape(platform)}\n"
-    text += f"🔢 <b>Episodes:</b> {episodes} ({status})\n\n"
-    text += f"🔗 <b>Link:</b> {link}\n\n"
-    text += f"Join: {username}"
+    safe_desc = html.escape(desc)
+    desc_block = f"<blockquote expandable><i>{safe_desc}</i></blockquote>\n" if desc else ""
+    text = f"╔════════════════════╗\n"
+    text += f"  <b>{html.escape(name)}</b>\n"
+    text += f"╚════════════════════╝\n\n"
+    text += f"» <b>Platform:</b> {html.escape(platform)}\n"
+    text += f"» <b>Episodes:</b> {episodes}\n"
+    text += f"» <b>Genre:</b> {html.escape(genre)}\n"
+    text += f"» <b>Progress:</b> <b>{status}</b>\n\n"
+    if desc_block:
+        text += f"<b>Synopsis:</b>\n{desc_block}\n"
+    text += f"📥 <b>Access Now:</b>\n{link}"
     return text
 
 def build_format_5(data):
     name = data.get("name", "Unknown")
-    desc = data.get("desc", "")
-    genre = data.get("genre", "Unknown")
-    status = data.get("status", "Ongoing")
-    link = data.get("link", "")
-    text = f"📖 <b>{html.escape(name)}</b>\n\n"
-    if desc:
-        text += f"<blockquote expandable><i>{html.escape(desc)}</i></blockquote>\n\n"
-    text += f"🎭 <b>Genre:</b> {html.escape(genre)}\n"
-    text += f"📌 <b>Status:</b> <b>{status}</b>\n\n"
-    text += f"🔗 Read Here: {link}"
-    return text
-
-def build_format_6(data):
-    name = data.get("name", "Unknown")
-    genre = data.get("genre", "Unknown")
-    status = data.get("status", "Ongoing")
     episodes = data.get("episodes", "0")
-    desc = data.get("desc", "")
-    link = data.get("link", "")
-    safe_desc = html.escape(desc)
-    desc_block = f"<blockquote expandable><i>{safe_desc}</i></blockquote>\n\n" if desc else ""
-    text = f"<b>🪷 {html.escape(name)}</b>\n"
-    text += f"━━━━━━━━━━━━━━━━\n"
-    text += f"▸ <b>Genre :</b> {html.escape(genre)}\n"
-    text += f"▸ <b>Episodes :</b> {episodes}\n"
-    text += f"▸ <b>Status :</b> <b>{status}</b>\n"
-    text += f"━━━━━━━━━━━━━━━━\n"
-    text += f"📖 <b>Story Summary:</b>\n"
-    text += f"{desc_block}"
-    text += f"▶️ <b>Read/Listen Now:</b>\n{link}"
-    return text
-
-def build_format_7(data):
-    name = data.get("name", "Unknown")
-    platform = data.get("platform", "Unknown")
-    genre = data.get("genre", "Unknown")
     status = data.get("status", "Ongoing")
-    desc = data.get("desc", "")
     link = data.get("link", "")
-    username = data.get("username", DEFAULT_JOIN_USERNAME)
-    safe_desc = html.escape(desc)
-    desc_block = f"<blockquote expandable><i>{safe_desc}</i></blockquote>\n\n" if desc else ""
-    text = f"🎞 <b>{html.escape(name)}</b> 🎞\n"
-    text += f"<i>{html.escape(platform)} Exclusive</i>\n\n"
-    text += f"<b>Category:</b> {html.escape(genre)}  |  <b>Progress:</b> <b>{status}</b>\n\n"
-    text += f"{desc_block}"
-    text += f"🔗 <b>Full Episodes Link:</b>\n{link}\n\n"
-    text += f"━━━━━━━━━━━━━━━━\n"
-    text += f"👥 <b>Join channel for updates:</b> {username}"
-    return text
-
-def build_format_8(data):
-    name = data.get("name", "Unknown")
-    genre = data.get("genre", "Unknown")
-    status = data.get("status", "Ongoing")
-    episodes = data.get("episodes", "0")
-    link = data.get("link", "")
-    text = f"<b>⊛ {html.escape(name)}</b>\n\n"
-    text += f"<b>[ {html.escape(genre)} • {status} • {episodes} Eps ]</b>\n\n"
+    text = f"📱 <b>{html.escape(name)}</b> ◂ <b>[ {status} • {episodes} ]</b>\n\n"
     text += f"{link}"
     return text
+
 
 async def start_builder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -179,11 +166,10 @@ async def start_builder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['pb_data'] = {}
     
     keyboard = [
-        [InlineKeyboardButton("1 (Channel)", callback_data="pb_fmt|1"), InlineKeyboardButton("2 (Detail)", callback_data="pb_fmt|2")],
-        [InlineKeyboardButton("3 (Minimal)", callback_data="pb_fmt|3"), InlineKeyboardButton("4 (Banner)", callback_data="pb_fmt|4")],
-        [InlineKeyboardButton("5 (Focus)", callback_data="pb_fmt|5"), InlineKeyboardButton("6 (VIP)", callback_data="pb_fmt|6")],
-        [InlineKeyboardButton("7 (Cinematic)", callback_data="pb_fmt|7"), InlineKeyboardButton("8 (Dark)", callback_data="pb_fmt|8")],
+        [InlineKeyboardButton("Format 1", callback_data="pb_fmt|1"), InlineKeyboardButton("Format 2", callback_data="pb_fmt|2")],
         [InlineKeyboardButton("Both 1 & 2", callback_data="pb_fmt|both")],
+        [InlineKeyboardButton("Minimal Clean", callback_data="pb_fmt|3"), InlineKeyboardButton("Premium Box", callback_data="pb_fmt|4")],
+        [InlineKeyboardButton("Compact Mobile", callback_data="pb_fmt|5")],
         [InlineKeyboardButton("Cancel", callback_data="pb_cancel")]
     ]
     
@@ -191,7 +177,10 @@ async def start_builder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        try:
+            await update.callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        except:
+            await update.callback_query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     else:
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         
@@ -207,7 +196,6 @@ async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
     _, fmt = query.data.split("|")
     context.user_data['pb_data']['format'] = fmt
-    
     await query.edit_message_text("📝 <b>Step 1: Enter Story Name</b>\n\nType the name below:", parse_mode="HTML")
     return ENTER_NAME
 
@@ -216,143 +204,10 @@ async def handle_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['pb_data']['name'] = name
     
     keyboard = [
-        [
-            InlineKeyboardButton("Completed", callback_data="pb_status|Completed"),
-            InlineKeyboardButton("Ongoing", callback_data="pb_status|Ongoing")
-        ],
-        [InlineKeyboardButton("RIP", callback_data="pb_status|RIP")],
-        [InlineKeyboardButton("Cancel", callback_data="pb_cancel")]
-    ]
-    await update.message.reply_text("📶 <b>Step 2: Select Status</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-    return SELECT_STATUS
-
-async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "pb_cancel":
-        await query.edit_message_text("Cancelled.")
-        return ConversationHandler.END
-        
-    _, status = query.data.split("|")
-    context.user_data['pb_data']['status'] = status
-    
-    fmt = context.user_data['pb_data']['format']
-    if fmt in ["1", "3", "5", "6", "7", "8", "both"]:
-        keyboard = [
-            [InlineKeyboardButton("Crime", callback_data="pb_genre|Crime"), InlineKeyboardButton("Romance", callback_data="pb_genre|Romance")],
-            [InlineKeyboardButton("Horror", callback_data="pb_genre|Horror"), InlineKeyboardButton("Thriller", callback_data="pb_genre|Thriller")],
-            [InlineKeyboardButton("Type Custom", callback_data="pb_genre_custom")]
-        ]
-        await query.edit_message_text("🎭 <b>Step 3: Select or Type Genre</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-        return SELECT_GENRE
-    else:
-        await query.edit_message_text("🔗 <b>Step 4: Enter Telegram Link</b>", parse_mode="HTML")
-        return ENTER_LINK
-
-async def handle_genre_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "pb_cancel":
-        await query.edit_message_text("Cancelled.")
-        return ConversationHandler.END
-    elif query.data == "pb_genre_custom":
-        await query.edit_message_text("Please type the custom genre name:")
-        return SELECT_GENRE
-        
-    context.user_data['pb_data']['genre'] = query.data.split("|")[1]
-    await query.edit_message_text(f"Genre selected: {context.user_data['pb_data']['genre']}\n\n🔗 <b>Step 4: Enter Telegram Link</b>", parse_mode="HTML")
-    return ENTER_LINK
-
-async def handle_genre_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['pb_data']['genre'] = update.message.text
-    await update.message.reply_text("🔗 <b>Step 4: Enter Telegram Link</b>", parse_mode="HTML")
-    return ENTER_LINK
-
-async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['pb_data']['link'] = update.message.text
-    await update.message.reply_text("🖼 <b>Step 5: Upload Image(s)</b>\n\nSend a photo for the post. You can send multiple. Press 'Done' when finished, or /skip for text-only.", parse_mode="HTML")
-    # Initialize array
-    context.user_data['pb_data']['photo_ids'] = []
-    return UPLOAD_IMAGE
-
-async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # This captures multiple messages natively
-    if update.message.photo:
-        context.user_data['pb_data']['photo_ids'].append(update.message.photo[-1].file_id)
-        keyboard = [[InlineKeyboardButton("✅ Done Adding Images", callback_data="pb_img_done")]]
-        await update.message.reply_text("Image saved! Send more images if needed, or click 'Done'.", reply_markup=InlineKeyboardMarkup(keyboard))
-        return UPLOAD_IMAGE
-    elif update.message.text == "/skip":
-        # Do not append anything
-        pass
-    else:
-        await update.message.reply_text("Please send a valid photo, press Done below, or /skip.")
-        return UPLOAD_IMAGE
-
-    return await handle_image_next(update, context)
-
-async def handle_image_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    return await handle_image_next(update, context, query)
-
-async def handle_image_next(update: Update, context: ContextTypes.DEFAULT_TYPE, query=None):
-    fmt = context.user_data['pb_data']['format']
-    msg = query.message if query else update.message
-    
-    if fmt in ["2", "4", "5", "6", "7", "both"]:
-        text = "📝 <b>Step 6: Enter Description</b>\n\n(It will be auto-formatted as a blockquote italic)"
-        if query: await query.edit_message_text(text, parse_mode="HTML")
-        else: await msg.reply_text(text, parse_mode="HTML")
-        return ENTER_DESC
-    elif fmt in ["1", "3", "8"]:
-        if fmt == "3":
-            return await generate_preview(msg, context, query)
-        elif fmt == "8":
-            text = "🔢 <b>Step 7: Enter Episodes Count</b>"
-            if query: await query.edit_message_text(text, parse_mode="HTML")
-            else: await msg.reply_text(text, parse_mode="HTML")
-            return ENTER_EPISODES
-            
-        keyboard = [
-            [InlineKeyboardButton(f"Use Default ({DEFAULT_JOIN_USERNAME})", callback_data="pb_user|default")],
-            [InlineKeyboardButton("Type Custom Username", callback_data="pb_user_custom")]
-        ]
-        text = "👤 <b>Step 9: Confirm Join Username</b>"
-        if query: await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-        else: await msg.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-        return ENTER_USERNAME
-
-async def handle_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['pb_data']['desc'] = update.message.text
-    fmt = context.user_data['pb_data']['format']
-    
-    if fmt == "5":
-        return await generate_preview(update.message, context)
-        
-    if fmt == "7":
-        keyboard = [
-            [InlineKeyboardButton("Pocket FM", callback_data="pb_plat|Pocket FM"), InlineKeyboardButton("Kuku FM", callback_data="pb_plat|Kuku FM")],
-            [InlineKeyboardButton("Headfone", callback_data="pb_plat|Headfone"), InlineKeyboardButton("Type Custom", callback_data="pb_plat_custom")]
-        ]
-        await update.message.reply_text("🎵 <b>Step 8: Select Platform</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-        return SELECT_PLATFORM
-        
-    await update.message.reply_text("🔢 <b>Step 7: Enter Episodes Count</b>\n\nE.g.: 1116", parse_mode="HTML")
-    return ENTER_EPISODES
-
-async def handle_episodes(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['pb_data']['episodes'] = update.message.text
-    fmt = context.user_data['pb_data']['format']
-    
-    if fmt in ["6", "8"]:
-        return await generate_preview(update.message, context)
-        
-    keyboard = [
         [InlineKeyboardButton("Pocket FM", callback_data="pb_plat|Pocket FM"), InlineKeyboardButton("Kuku FM", callback_data="pb_plat|Kuku FM")],
         [InlineKeyboardButton("Headfone", callback_data="pb_plat|Headfone"), InlineKeyboardButton("Type Custom", callback_data="pb_plat_custom")]
     ]
-    await update.message.reply_text("🎵 <b>Step 8: Select Platform</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    await update.message.reply_text("🎵 <b>Step 2: Select Platform</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     return SELECT_PLATFORM
 
 async def handle_platform_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -364,48 +219,257 @@ async def handle_platform_btn(update: Update, context: ContextTypes.DEFAULT_TYPE
         
     _, plat = query.data.split("|")
     context.user_data['pb_data']['platform'] = plat
-    
-    fmt = context.user_data['pb_data']['format']
-    if fmt == "2":
-        return await generate_preview(query.message, context, query)
-        
-    keyboard = [
-        [InlineKeyboardButton(f"Use Default ({DEFAULT_JOIN_USERNAME})", callback_data="pb_user|default")],
-        [InlineKeyboardButton("Type Custom Username", callback_data="pb_user_custom")]
-    ]
-    await query.edit_message_text("👤 <b>Step 9: Confirm Join Username</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-    return ENTER_USERNAME
+    return await continue_to_desc(update, context, query)
 
 async def handle_platform_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    plat = update.message.text
-    context.user_data['pb_data']['platform'] = plat
+    context.user_data['pb_data']['platform'] = update.message.text
+    return await continue_to_desc(update, context)
+
+async def continue_to_desc(update: Update, context: ContextTypes.DEFAULT_TYPE, query=None):
+    msg = query.message if query else update.message
+    data = context.user_data['pb_data']
+    name = data.get('name', '')
+    platform = data.get('platform', '')
     
-    fmt = context.user_data['pb_data']['format']
-    if fmt == "2":
-        return await generate_preview(update.message, context)
+    try:
+        if query: await query.message.delete()
+    except: pass
+    
+    wait_msg = await msg.reply_text("⏳ <i>Searching for description...</i>", parse_mode="HTML")
+    desc_found = await _fetch_serper_desc(f"{name} {platform}")
+    try: await wait_msg.delete()
+    except: pass
+    
+    if desc_found:
+        data['temp_found_desc'] = desc_found
+        text = f"★ <b>Description Found</b>\n✧ Source: {platform}\n\n<blockquote>{html.escape(desc_found)}</blockquote>"
+        keyboard = [
+            [InlineKeyboardButton("✅ Use This", callback_data="pb_desc|use"), InlineKeyboardButton("📝 Short Version", callback_data="pb_desc|short")],
+            [InlineKeyboardButton("✍️ Manual Enter", callback_data="pb_desc|manual")]
+        ]
+        await msg.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        return HANDLE_DESC_CHOICE
+    else:
+        await msg.reply_text("❌ <b>No description found.</b>\n\n✍️ <b>Step 3: Manual Description</b>\n\nPlease enter the description manually (or /skip):", parse_mode="HTML")
+        return ENTER_DESC
+
+async def handle_desc_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    choice = query.data.split("|")[1]
+    
+    try: await query.message.delete()
+    except: pass
+    
+    if choice == "use":
+        context.user_data['pb_data']['desc'] = context.user_data['pb_data']['temp_found_desc']
+        return await continue_to_image(update, context, query)
+    elif choice == "short":
+        desc = context.user_data['pb_data']['temp_found_desc']
+        words = desc.split()
+        short_desc = " ".join(words[:25]) + ("..." if len(words) > 25 else "")
+        context.user_data['pb_data']['desc'] = short_desc
+        return await continue_to_image(update, context, query)
+    elif choice == "manual":
+        await query.message.reply_text("✍️ <b>Step 3: Manual Description</b>\n\nEnter the description:", parse_mode="HTML")
+        return ENTER_DESC
+
+async def handle_desc_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.text != "/skip":
+        context.user_data['pb_data']['desc'] = update.message.text
+    else:
+        context.user_data['pb_data']['desc'] = ""
+    return await continue_to_image(update, context)
+
+async def continue_to_image(update: Update, context: ContextTypes.DEFAULT_TYPE, query=None):
+    msg = query.message if query else update.message
+    data = context.user_data['pb_data']
+    name = data.get('name', '')
+    platform = data.get('platform', '')
+    
+    wait_msg = await msg.reply_text("⏳ <i>Searching for cover image...</i>", parse_mode="HTML")
+    img_url = await _fetch_serper_image(f"{name} {platform}")
+    try: await wait_msg.delete()
+    except: pass
+    
+    if img_url:
+        data['temp_found_img'] = img_url
+        text = f"★ <b>Image Found</b>\n✧ Source: {platform}"
+        keyboard = [
+            [InlineKeyboardButton("✅ Use This", callback_data="pb_imgc|use"), InlineKeyboardButton("🔄 Change / Manual", callback_data="pb_imgc|manual")]
+        ]
+        try:
+            await context.bot.send_photo(chat_id=msg.chat_id, photo=img_url, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+            return HANDLE_IMG_CHOICE
+        except Exception:
+            await msg.reply_text("❌ <b>Image found, but failed to load.</b>\n\n🖼 <b>Step 4: Upload Image(s)</b>\nPlease upload manually (or /skip):", parse_mode="HTML")
+            context.user_data['pb_data']['photo_ids'] = []
+            return UPLOAD_IMAGE
+    else:
+        await msg.reply_text("❌ <b>No image found.</b>\n\n🖼 <b>Step 4: Upload Image(s)</b>\nPlease upload manually (or /skip):", parse_mode="HTML")
+        context.user_data['pb_data']['photo_ids'] = []
+        return UPLOAD_IMAGE
+
+async def handle_img_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    choice = query.data.split("|")[1]
+    
+    try: await query.message.delete()
+    except: pass
+    
+    if choice == "use":
+        context.user_data['pb_data']['photo_ids'] = [context.user_data['pb_data']['temp_found_img']]
+        keyboard = [
+            [InlineKeyboardButton("➡️ Continue to Content Setup", callback_data="pb_img_done"), InlineKeyboardButton("➕ Add More Images", callback_data="pb_img_more")]
+        ]
+        await query.message.reply_text("✅ Image selected. Click continue, or add more images.", reply_markup=InlineKeyboardMarkup(keyboard))
+        return UPLOAD_IMAGE
+    elif choice == "manual":
+        context.user_data['pb_data']['photo_ids'] = []
+        await query.message.reply_text("🖼 <b>Step 4: Upload Image(s)</b>\n\nSend a photo for the post (or multiple).", parse_mode="HTML")
+        return UPLOAD_IMAGE
+
+async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        try: await query.message.delete()
+        except: pass
         
+        if query.data == "pb_img_done":
+            return await continue_to_genre(update, context, query)
+        elif query.data == "pb_img_more":
+            await query.message.reply_text("Send more photos now, then press '✅ Done Adding Images' when complete.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Done Adding Images", callback_data="pb_img_done")]]))
+            return UPLOAD_IMAGE
+            
+    if update.message and update.message.photo:
+        context.user_data['pb_data']['photo_ids'].append(update.message.photo[-1].file_id)
+        keyboard = [[InlineKeyboardButton("✅ Done Adding Images", callback_data="pb_img_done")]]
+        await update.message.reply_text("Image saved! Send more images if needed, or click 'Done'.", reply_markup=InlineKeyboardMarkup(keyboard))
+        return UPLOAD_IMAGE
+    elif update.message and update.message.text == "/skip":
+        return await continue_to_genre(update, context)
+    else:
+        if update.message:
+            await update.message.reply_text("Please send a valid photo, press Done below, or /skip.")
+        return UPLOAD_IMAGE
+
+async def continue_to_genre(update: Update, context: ContextTypes.DEFAULT_TYPE, query=None):
+    msg = query.message if query else update.message
+    keyboard = [
+        [InlineKeyboardButton("Crime", callback_data="pb_genre|Crime"), InlineKeyboardButton("Romance", callback_data="pb_genre|Romance")],
+        [InlineKeyboardButton("Horror", callback_data="pb_genre|Horror"), InlineKeyboardButton("Thriller", callback_data="pb_genre|Thriller")],
+        [InlineKeyboardButton("Type Custom", callback_data="pb_genre_custom")]
+    ]
+    await msg.reply_text("🎭 <b>Step 5: Select or Type Genre</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    return ENTER_GENRE
+
+async def handle_genre_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "pb_genre_custom":
+        await query.edit_message_text("Please type the custom genre name:")
+        return ENTER_GENRE
+        
+    context.user_data['pb_data']['genre'] = query.data.split("|")[1]
+    await query.edit_message_text(f"Genre selected: {context.user_data['pb_data']['genre']}\n\n🔗 <b>Step 6: Enter Telegram Link</b>", parse_mode="HTML")
+    return ENTER_LINK
+
+async def handle_genre_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['pb_data']['genre'] = update.message.text
+    await update.message.reply_text("🔗 <b>Step 6: Enter Telegram Link</b>", parse_mode="HTML")
+    return ENTER_LINK
+
+async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['pb_data']['link'] = update.message.text
+    await update.message.reply_text("🔢 <b>Step 7: Enter Episodes Count</b>", parse_mode="HTML")
+    return ENTER_EPISODES
+
+async def handle_episodes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['pb_data']['episodes'] = update.message.text
+    keyboard = [
+        [InlineKeyboardButton("Completed", callback_data="pb_status|Completed"), InlineKeyboardButton("Ongoing", callback_data="pb_status|Ongoing")],
+        [InlineKeyboardButton("RIP", callback_data="pb_status|RIP")]
+    ]
+    await update.message.reply_text("📶 <b>Step 8: Select Status</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    return SELECT_STATUS
+
+async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data['pb_data']['status'] = query.data.split("|")[1]
+    
+    try: await query.message.delete()
+    except: pass
+    
     keyboard = [
         [InlineKeyboardButton(f"Use Default ({DEFAULT_JOIN_USERNAME})", callback_data="pb_user|default")],
         [InlineKeyboardButton("Type Custom Username", callback_data="pb_user_custom")]
     ]
-    await update.message.reply_text("👤 <b>Step 9: Confirm Join Username</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    await query.message.reply_text("👤 <b>Step 9: Confirm Join Username</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     return ENTER_USERNAME
 
 async def handle_username_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     if query.data == "pb_user_custom":
-        await query.edit_message_text("Please type the custom username (e.g. @MyChannel):")
+        await query.message.reply_text("Please type the custom username (e.g. @MyChannel):")
         return ENTER_USERNAME
         
     context.user_data['pb_data']['username'] = DEFAULT_JOIN_USERNAME
-    return await generate_preview(query.message, context, query)
+    try: await query.message.delete()
+    except: pass
+    return await continue_to_destination(update, context, query)
 
 async def handle_username_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['pb_data']['username'] = update.message.text
-    return await generate_preview(update.message, context)
+    return await continue_to_destination(update, context)
 
-async def generate_preview(message, context: ContextTypes.DEFAULT_TYPE, query=None):
+async def continue_to_destination(update: Update, context: ContextTypes.DEFAULT_TYPE, query=None):
+    msg = query.message if query else update.message
+    from database import load_config
+    bot_config = load_config()
+    destinations = bot_config.get("post_channels", [])
+    
+    keyboard = []
+    for d in destinations:
+        keyboard.append([KeyboardButton(d)])
+    keyboard.append([KeyboardButton("➕ Add New Channel")])
+    keyboard.append([KeyboardButton("✖ Skip (Post to this chat)")])
+    
+    text = "🎯 <b>Step 10: Select Target Channel</b>\nWhere should this be auto-posted upon confirmation?"
+    await msg.reply_text(text, reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True), parse_mode="HTML")
+    return SELECT_DESTINATION
+
+async def handle_destination(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    dest = update.message.text
+    if dest == "➕ Add New Channel":
+        await update.message.reply_text("Send the Channel Username (e.g. @MyChannel) or ID (e.g. -1001234567):", reply_markup=ReplyKeyboardRemove())
+        return CUSTOM_DESTINATION
+        
+    if dest != "✖ Skip (Post to this chat)":
+        context.user_data['pb_data']['destination'] = dest
+        
+    msg = await update.message.reply_text("Channel configured.", reply_markup=ReplyKeyboardRemove())
+    return await generate_preview(msg, context)
+
+async def handle_custom_destination(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    dest = update.message.text
+    from database import load_config, save_config
+    bot_config = load_config()
+    destinations = bot_config.get("post_channels", [])
+    if dest not in destinations:
+        destinations.append(dest)
+        bot_config["post_channels"] = destinations
+        save_config(bot_config)
+        
+    context.user_data['pb_data']['destination'] = dest
+    msg = await update.message.reply_text(f"✅ Channel {dest} saved for future use.", reply_markup=ReplyKeyboardRemove())
+    return await generate_preview(msg, context)
+
+async def generate_preview(message, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data.get('pb_data', {})
     fmt = data.get('format')
     
@@ -417,16 +481,9 @@ async def generate_preview(message, context: ContextTypes.DEFAULT_TYPE, query=No
         elif f == "3": previews.append(build_format_3(data))
         elif f == "4": previews.append(build_format_4(data))
         elif f == "5": previews.append(build_format_5(data))
-        elif f == "6": previews.append(build_format_6(data))
-        elif f == "7": previews.append(build_format_7(data))
-        elif f == "8": previews.append(build_format_8(data))
         
     data['cached_previews'] = previews
-    
-    if query:
-        await query.edit_message_text("🔎 <b>PREVIEW GENERATED</b>\nReview your posts below.", parse_mode="HTML")
-    else:
-        await message.reply_text("🔎 <b>PREVIEW GENERATED</b>\nReview your posts below.", parse_mode="HTML")
+    await message.reply_text("🔎 <b>PREVIEW GENERATED</b>\nReview your posts below.", parse_mode="HTML")
     
     for p in previews:
         photo_ids = data.get('photo_ids', [])
@@ -445,78 +502,29 @@ async def generate_preview(message, context: ContextTypes.DEFAULT_TYPE, query=No
         else:
             await context.bot.send_message(chat_id=message.chat_id, text=p, parse_mode="HTML", disable_web_page_preview=True)
             
-    # Move to destination picker
-    from database import load_config
-    bot_config = load_config()
-    destinations = bot_config.get("post_channels", [])
-    
-    keyboard = []
-    for d in destinations:
-        keyboard.append([KeyboardButton(d)])
-    keyboard.append([KeyboardButton("➕ Add New Channel")])
-    keyboard.append([KeyboardButton("✖ Skip (Post here only)")])
-    
-    await message.reply_text(
-        "🎯 <b>Select Destination Channel</b>\nWhere should this be auto-posted?", 
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True),
-        parse_mode="HTML"
-    )
-    return SELECT_DESTINATION
-
-async def handle_destination(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    dest = update.message.text
-    if dest == "➕ Add New Channel":
-        await update.message.reply_text("Send the Channel Username (e.g. @MyChannel) or ID (e.g. -1001234567):", reply_markup=ReplyKeyboardRemove())
-        return CUSTOM_DESTINATION
-        
-    if dest != "✖ Skip (Post here only)":
-        context.user_data['pb_data']['destination'] = dest
-        
-    await ask_final_confirm(update.message)
-    return CONFIRM_POST
-
-async def handle_custom_destination(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    dest = update.message.text
-    # Save globally
-    from database import load_config, save_config
-    bot_config = load_config()
-    destinations = bot_config.get("post_channels", [])
-    if dest not in destinations:
-        destinations.append(dest)
-        bot_config["post_channels"] = destinations
-        save_config(bot_config)
-        
-    context.user_data['pb_data']['destination'] = dest
-    await update.message.reply_text(f"✅ Channel {dest} saved for future use.")
-    await ask_final_confirm(update.message)
-    return CONFIRM_POST
-    
-async def ask_final_confirm(message):
     keyboard = [
         [InlineKeyboardButton("✅ Confirm & Send", callback_data="pb_final_send")],
-        [InlineKeyboardButton("Edit (Restart)", callback_data="pb_final_edit"), InlineKeyboardButton("Cancel", callback_data="pb_cancel")]
+        [InlineKeyboardButton("🔄 Edit (Restart)", callback_data="pb_final_edit"), InlineKeyboardButton("❌ Cancel", callback_data="pb_cancel")]
     ]
-    await message.reply_text("Ready to post? Select below:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    await message.reply_text("<b>Ready to post?</b>\nYour post is prepared. Select below:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    return CONFIRM_POST
 
 async def handle_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     if query.data == "pb_cancel":
-        await query.edit_message_text("Cancelled.", reply_markup=None)
-        # We might have left a ReplyKeyboardMarkup dangling if they skipped via text and didn't remove it. 
-        # But we did one_time_keyboard=True so it should hide.
+        await query.edit_message_text("Cancelled.")
         context.user_data.pop('pb_data', None)
         return ConversationHandler.END
         
     elif query.data == "pb_final_edit":
         context.user_data['pb_data'] = {}
         keyboard = [
-            [InlineKeyboardButton("1 (Channel)", callback_data="pb_fmt|1"), InlineKeyboardButton("2 (Detail)", callback_data="pb_fmt|2")],
-            [InlineKeyboardButton("3 (Minimal)", callback_data="pb_fmt|3"), InlineKeyboardButton("4 (Banner)", callback_data="pb_fmt|4")],
-            [InlineKeyboardButton("5 (Focus)", callback_data="pb_fmt|5"), InlineKeyboardButton("6 (VIP)", callback_data="pb_fmt|6")],
-            [InlineKeyboardButton("7 (Cinematic)", callback_data="pb_fmt|7"), InlineKeyboardButton("8 (Dark)", callback_data="pb_fmt|8")],
+            [InlineKeyboardButton("Format 1", callback_data="pb_fmt|1"), InlineKeyboardButton("Format 2", callback_data="pb_fmt|2")],
             [InlineKeyboardButton("Both 1 & 2", callback_data="pb_fmt|both")],
+            [InlineKeyboardButton("Minimal Clean", callback_data="pb_fmt|3"), InlineKeyboardButton("Premium Box", callback_data="pb_fmt|4")],
+            [InlineKeyboardButton("Compact Mobile", callback_data="pb_fmt|5")],
             [InlineKeyboardButton("Cancel", callback_data="pb_cancel")]
         ]
         await query.edit_message_text("<b>🛠 Story Post Builder</b>\n\nRestarting...", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
@@ -528,7 +536,26 @@ async def handle_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
         photo_ids = data.get('photo_ids', [])
         dest = data.get('destination')
         
-        # Determine targets. Either just the chat, or both current chat and destination.
+        # Save to DB
+        from database import load_db, save_db
+        db = load_db()
+        story_name = data.get('name')
+        if story_name:
+            db_entry = db.get(story_name, {})
+            db_entry['platform'] = data.get('platform', '')
+            db_entry['description_original'] = data.get('desc', '')
+            db_entry['description_short'] = data.get('desc_short', data.get('desc', ''))
+            if photo_ids:
+                db_entry['image_url'] = photo_ids[0]
+                db_entry['extra_images'] = photo_ids[1:] if len(photo_ids) > 1 else []
+            db_entry['last_used_template'] = data.get('format', '')
+            db_entry['genre'] = data.get('genre', '')
+            db_entry['link'] = data.get('link', '')
+            db_entry['status'] = data.get('status', '')
+            db_entry['episodes'] = data.get('episodes', '')
+            db[story_name] = db_entry
+            save_db(db)
+            
         targets = [query.message.chat_id]
         if dest:
             targets.append(dest)
@@ -550,11 +577,10 @@ async def handle_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     await context.bot.send_message(chat_id=t, text=p, parse_mode="HTML", disable_web_page_preview=True)
                 
-        await query.edit_message_text("✅ <b>Post Dispatched Successfully!</b>", parse_mode="HTML")
+        await query.edit_message_text("✅ <b>Post Dispatched & Database Updating Successfully!</b>", parse_mode="HTML")
         context.user_data.pop('pb_data', None)
         return ConversationHandler.END
 
-# Error Handler for Conversation
 async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Process cancelled.", reply_markup=ReplyKeyboardRemove())
     context.user_data.pop('pb_data', None)
@@ -568,23 +594,25 @@ post_builder_handler = ConversationHandler(
     states={
         SELECT_FORMAT: [CallbackQueryHandler(handle_format, pattern="^pb_")],
         ENTER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_name)],
-        SELECT_STATUS: [CallbackQueryHandler(handle_status, pattern="^pb_")],
-        SELECT_GENRE: [
-            CallbackQueryHandler(handle_genre_btn, pattern="^pb_"),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_genre_text)
-        ],
-        ENTER_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link)],
-        UPLOAD_IMAGE: [
-            CallbackQueryHandler(handle_image_done, pattern="^pb_img_done"),
-            MessageHandler(filters.PHOTO | filters.TEXT & ~filters.COMMAND, handle_image),
-            CommandHandler("skip", handle_image)
-        ],
-        ENTER_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_desc)],
-        ENTER_EPISODES: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_episodes)],
         SELECT_PLATFORM: [
             CallbackQueryHandler(handle_platform_btn, pattern="^pb_"),
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_platform_text)
         ],
+        HANDLE_DESC_CHOICE: [CallbackQueryHandler(handle_desc_choice, pattern="^pb_desc\|")],
+        ENTER_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_desc_text)],
+        HANDLE_IMG_CHOICE: [CallbackQueryHandler(handle_img_choice, pattern="^pb_imgc\|")],
+        UPLOAD_IMAGE: [
+            CallbackQueryHandler(handle_image, pattern="^pb_img_done|^pb_img_more"),
+            MessageHandler(filters.PHOTO | filters.TEXT & ~filters.COMMAND, handle_image),
+            CommandHandler("skip", handle_image)
+        ],
+        ENTER_GENRE: [
+            CallbackQueryHandler(handle_genre_btn, pattern="^pb_"),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_genre_text)
+        ],
+        ENTER_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link)],
+        ENTER_EPISODES: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_episodes)],
+        SELECT_STATUS: [CallbackQueryHandler(handle_status, pattern="^pb_")],
         ENTER_USERNAME: [
             CallbackQueryHandler(handle_username_btn, pattern="^pb_"),
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_username_text)
