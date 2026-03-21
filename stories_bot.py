@@ -1609,11 +1609,12 @@ def _stories_page(page=0):
         title = clean_story(name)
         db_story = db.get(name, {})
         link = db_story.get("link", "") or db_story.get("message_url", "")
-        # Title is the clickable anchor — no separate link display
+        # Number is plain text (non-copyable); title is <code> (copyable via tap)
+        # If linked: entire title = clickable anchor with code style
         if link:
-            lines.append(f"{i}. <a href='{link}'>{html.escape(title)}</a>")
+            lines.append(f"{i}. <a href='{link}'><code>{html.escape(title)}</code></a>")
         else:
-            lines.append(f"{i}. {html.escape(title)}")
+            lines.append(f"{i}. <code>{html.escape(title)}</code>")
     total = len(story_index)
     header = (
         f"<b>✦ Story List  ·  {total} titles</b>\n"
