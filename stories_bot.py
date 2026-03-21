@@ -762,27 +762,21 @@ def _menu_main(caller_id: int, lang: str = "en", mention: str = "") -> tuple:
     greet = f", {mention}" if mention else ""
     if lang == "hi":
         text = (
-            f"<b>♡ नमस्ते, स्वागत है</b>{greet}\n\n"
-            "<blockquote>@StoriesFinderBot</blockquote>\n\n"
-            "<blockquote><i>Disclaimer 📌\n"
-            "हम केवल Telegram फ़ाइलों को इंडेक्स करते हैं।</i></blockquote>\n\n"
-            "<u>स्टोरी का नाम भेजकर खोजें!</u>\n\n"
+            f"<b>♡ नमस्ते, स्वागत है</b>{greet} ( ˶ˆᗜˆ˵ )\n\n"
+            "<u>स्टोरी का नाम भेजकर खोजें! 🔎</u>\n\n"
             f"{_DIVIDER}\n"
             "<b>📚 Riya — Main Menu</b>\n"
-            "<i>✺ स्टोरी खोजें, एक्सप्लोर करें, और ज़्यादा।</i>\n"
+            "<i>✺ स्टोरी खोजें, एक्सप्लोर करें, और ज़्यादा। ✨</i>\n"
             f"{_DIVIDER}\n"
             "<b>By</b> @MeJeetX"
         )
     else:
         text = (
-            f"<b>♡ Hey, Welcome</b>{greet}\n\n"
-            "<blockquote>@StoriesFinderBot</blockquote>\n\n"
-            "<blockquote><i>Disclaimer 📌\n"
-            "We only index Telegram files. We do not host content.</i></blockquote>\n\n"
-            "<u>Send a story name to begin searching!</u>\n\n"
+            f"<b>♡ Hey, Welcome</b>{greet} ( ˶ˆᗜˆ˵ )\n\n"
+            "<u>Send a story name to begin searching! 🔎</u>\n\n"
             f"{_DIVIDER}\n"
             "<b>📚 Riya — Main Menu</b>\n"
-            "<i>✺ Search stories, explore, and more.</i>\n"
+            "<i>✺ Search stories, explore, and more. ✨</i>\n"
             f"{_DIVIDER}\n"
             "<b>By</b> @MeJeetX"
         )
@@ -2678,7 +2672,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg_text = (
                 f"<b>⚠ WARNING / चेतावनी</b>\n\n"
                 f"<a href='tg://user?id={target_uid}'>User</a> you have been placed on a 2-day timeout by administrators for submitting a fake report.\n\n"
-                f"<blockquote>If you are not able to access episodes of any story from the bot, then check:\n\n"
+                f"<blockquote expandable>If you are not able to access episodes of any story from the bot, then check:\n\n"
                 f"1. Click the link given in the channel — it will take you to a bot.\n\n"
                 f"2. After opening the bot, it will ask you to join 3–4 channels. Complete that step and try again. Then your episodes will start working (they remain available for 6–8 hours and then get deleted due to possible copyright issues). The same process applies to all stories available in the bot.\n\n"
                 f"3. If you are unable to find stories like Saaya, Vashikaran, or Yakshini, please scroll a bit — you will find them.\n\n"
@@ -4998,6 +4992,7 @@ def start_bot():
     app.add_handler(CommandHandler("settimer", settimer_cmd))
     app.add_handler(CommandHandler("requests", requests_cmd))
     app.add_handler(CommandHandler("userinfo", userinfo_cmd))
+    app.add_handler(CommandHandler("unwarn", unwarn_cmd))
     app.add_handler(CommandHandler("cleardata", cleardata_cmd))
     app.add_handler(CommandHandler("rescan", rescan_cmd))
     app.add_handler(CommandHandler("announce", announce_cmd))
@@ -5212,6 +5207,25 @@ async def listalias_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("\n".join(["Aliases:"] + [f"- {a}" for a in aliases]))
     else:
         await update.message.reply_text("No aliases found for this story.")
+
+
+async def unwarn_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to remove a user's cooldown."""
+    if not is_admin(update.effective_user.id):
+        return
+        
+    if not context.args:
+        await update.message.reply_text("<b>Usage:</b> <code>/unwarn &lt;user_id&gt;</code>", parse_mode="HTML")
+        return
+        
+    try:
+        target_id = int(context.args[0])
+    except ValueError:
+        await update.message.reply_text("Invalid User ID.")
+        return
+        
+    _clear_cooldown(target_id)
+    await update.message.reply_text(f"✅ Cooldown cleared for user <a href='tg://user?id={target_id}'>{target_id}</a>.", parse_mode="HTML")
 
 
 async def cleardata_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
