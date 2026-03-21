@@ -96,18 +96,50 @@ def is_admin_local(user_id: int) -> bool:
     return str(user_id) in mods or user_id in mods
 
 def _ocr_extract(raw_text: str, story_name: str, platform: str = "") -> str:
-    """Clean symbols and fix spaces, keep full text."""
+    """Clean symbols, fix spaces, keep full text, and intelligently merge broken lines."""
     import re
-    # Remove weird symbols explicitly mentioned or commonly problematic in OCR
+    
+    # 1. Remove weird garbage symbols
     text = re.sub(r'[€॥\[\]/|\\<>{}]', '', raw_text)
-    # Normalize spaces: reduce multiple spaces/newlines to single ones (preserving paragraph breaks if any)
+    
+    # 2. Light polish for common mistakes
+    fixes = {
+        r"\bbusiness\b": "Business",
+        r"\bfun\b": "Fun",
+        r"\bfeelings\b": "Feelings"
+    }
+    for old, new in fixes.items():
+        text = re.sub(old, new, text, flags=re.IGNORECASE)
+
+    # 3. Smart paragraph merging
+    # Split by lines
     lines = text.split("\n")
-    cleaned = []
+    paras = []
+    current_para = []
+    
     for ln in lines:
         s = re.sub(r' +', ' ', ln.strip())
-        if s:
-            cleaned.append(s)
-    return "\n".join(cleaned)
+        if not s:
+            # Empty line = true paragraph break based on OCR gap
+            if current_para:
+                # To format them beautifully, we can just join wrapped lines with space
+                paras.append(" ".join(current_para))
+                current_para = []
+        else:
+            current_para.append(s)
+            
+    if current_para:
+        paras.append(" ".join(current_para))
+        
+    # Finally, to respect user example "रोहन रोय... है।\nकम उम्र...":
+    # Let's clean the joined paragraphs to ensure proper line breaks after double danda or full stop
+    # but since we stripped double danda (॥), we rely on single danda (।) and full stops.
+    final_text = "\n\n".join(paras)
+    # Automatically drop a single newline after a Hindi danda (।) or full stop (.) 
+    # ONLY IF the next character is not already a newline or space-newline.
+    final_text = re.sub(r'([।?!]) (?=[A-Za-z0-9ऀ-ॿ])', r'\1\n', final_text)
+    
+    return final_text
 
 # ── Format builders ──────────────────────────────────────────────────────────
 def build_format_1(data: dict) -> str:
@@ -462,7 +494,7 @@ async def handle_desc_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if len(cleaned) < 10:
             _log.warning("[OCR] Too short — prompting manual")
-            await update.message.reply_text("❌ OCR failed. Please try a clearer image or crop properly.\n\n✍️ Enter manually:")
+            await update.message.reply_text("❌ Try clearer or cropped image\n\n✍️ Enter manually:")
             return STATE_DESC_ENTER
 
         context.user_data["pb_data"]["temp_found_desc"] = cleaned
@@ -523,9 +555,9 @@ async def _transition_to_img(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 caption="★ <b>Auto-fetched Cover Image</b>\n✧ Use it or replace it.",
                 parse_mode="HTML",
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("✅", callback_data="pb_ic|use_direct"),
-                    InlineKeyboardButton("🔄", callback_data="pb_im|manual"),
-                    InlineKeyboardButton("⏭", callback_data="pb_im|skip"),
+                    InlineKeyboardButton("✅ Use Preview", callback_data="pb_ic|use_direct"),
+                    InlineKeyboardButton("📤 Upload", callback_data="pb_im|manual"),
+                    InlineKeyboardButton("⏭ Skip", callback_data="pb_im|skip"),
                 ]])
             )
             data["img_mode_done"] = False
@@ -538,8 +570,8 @@ async def _transition_to_img(update: Update, context: ContextTypes.DEFAULT_TYPE,
     await msg.reply_text(
         "★ <b>Cover Image</b>\n✧ Upload an image or skip.",
         reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("📁", callback_data="pb_im|manual"),
-            InlineKeyboardButton("⏭", callback_data="pb_im|skip"),
+            InlineKeyboardButton("📤 Upload", callback_data="pb_im|manual"),
+            InlineKeyboardButton("⏭ Skip", callback_data="pb_im|skip"),
         ]]),
         parse_mode="HTML"
     )
@@ -614,13 +646,8 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data.setdefault("photo_ids", []).append({"id": fid, "type": mtype})
     count = len(data["photo_ids"])
 
-    if count == 1:
-        # Direct to next step — no extra confirm
-        return await _transition_to_genre(update, context, None)
-    else:
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("✅ Done", callback_data="pb_idone")]])
-        await update.message.reply_text(f"✅ {count} files. Send more or tap Done.", reply_markup=kb)
-        return STATE_IMG_UPLOAD
+    # Immediately proceed to next step (genre) on ANY file upload
+    return await _transition_to_genre(update, context, None)
 
 async def handle_image_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
