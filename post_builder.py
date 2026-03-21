@@ -710,12 +710,17 @@ async def _do_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 _log.warning(f"[POST] save_story failed: {e}")
 
-            await working.edit_text(f"[ Post ]ed to {chat_id}!")
+            await working.edit_text(f"★ Posted to {chat_id}!")
 
     except Exception as e:
         _log.error(f"[POST] {e}", exc_info=True)
-        try: await working.edit_text(f"❌ Error: {html.escape(str(e))}")
-        except: pass
+        err_text = html.escape(str(e))[:300]
+        for attempt in (working.edit_text, update.message.reply_text):
+            try:
+                await attempt(f"❌ Error posting:\n<code>{err_text}</code>", parse_mode="HTML")
+                break
+            except Exception:
+                pass
 
     context.user_data.pop("pb_data", None)
     return ConversationHandler.END
