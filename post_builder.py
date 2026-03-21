@@ -235,14 +235,22 @@ async def continue_to_desc(update: Update, context: ContextTypes.DEFAULT_TYPE, q
         if query: await query.message.delete()
     except: pass
     
-    wait_msg = await msg.reply_text("⏳ <i>Searching for description...</i>", parse_mode="HTML")
+    wait_msg = await msg.reply_text("⏳ <i>Searching and cleaning description...</i>", parse_mode="HTML")
     desc_found = await _fetch_serper_desc(f"{name} {platform}")
-    try: await wait_msg.delete()
-    except: pass
     
     if desc_found:
-        data['temp_found_desc'] = desc_found
-        text = f"★ <b>Description Found</b>\n✧ Source: {platform}\n\n<blockquote>{html.escape(desc_found)}</blockquote>"
+        from groq_helper import clean_description
+        # Store raw purely
+        data['desc_original'] = desc_found
+        
+        # Clean with Groq (Fallback returns original safely)
+        cleaned_desc = await clean_description(desc_found)
+        data['temp_found_desc'] = cleaned_desc
+        
+        try: await wait_msg.delete()
+        except: pass
+        
+        text = f"★ <b>Description Found</b>\n✧ Source: {platform}\n\n<blockquote>{html.escape(cleaned_desc)}</blockquote>"
         keyboard = [
             [InlineKeyboardButton("✅ Use This", callback_data="pb_desc|use"), InlineKeyboardButton("📝 Short Version", callback_data="pb_desc|short")],
             [InlineKeyboardButton("✍️ Manual Enter", callback_data="pb_desc|manual")]
@@ -250,6 +258,8 @@ async def continue_to_desc(update: Update, context: ContextTypes.DEFAULT_TYPE, q
         await msg.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         return HANDLE_DESC_CHOICE
     else:
+        try: await wait_msg.delete()
+        except: pass
         await msg.reply_text("❌ <b>No description found.</b>\n\n✍️ <b>Step 3: Manual Description</b>\n\nPlease enter the description manually (or /skip):", parse_mode="HTML")
         return ENTER_DESC
 
@@ -266,9 +276,15 @@ async def handle_desc_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return await continue_to_image(update, context, query)
     elif choice == "short":
         desc = context.user_data['pb_data']['temp_found_desc']
-        words = desc.split()
-        short_desc = " ".join(words[:25]) + ("..." if len(words) > 25 else "")
+        from groq_helper import shorten_description
+        
+        wait_msg = await query.message.reply_text("⏳ <i>Generating short version...</i>", parse_mode="HTML")
+        short_desc = await shorten_description(desc)
+        try: await wait_msg.delete()
+        except: pass
+        
         context.user_data['pb_data']['desc'] = short_desc
+        context.user_data['pb_data']['desc_short'] = short_desc
         return await continue_to_image(update, context, query)
     elif choice == "manual":
         await query.message.reply_text("✍️ <b>Step 3: Manual Description</b>\n\nEnter the description:", parse_mode="HTML")
@@ -543,7 +559,7 @@ async def handle_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if story_name:
             db_entry = db.get(story_name, {})
             db_entry['platform'] = data.get('platform', '')
-            db_entry['description_original'] = data.get('desc', '')
+            db_entry['description_original'] = data.get('desc_original', data.get('desc', ''))
             db_entry['description_short'] = data.get('desc_short', data.get('desc', ''))
             if photo_ids:
                 db_entry['image_url'] = photo_ids[0]
