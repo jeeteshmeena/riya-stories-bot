@@ -5,11 +5,20 @@ import asyncio
 import io
 import time
 import requests
+import logging
 from PIL import Image, ImageFilter
+
+# ── OCR setup ──────────────────────────────────────────────────────────────
+OCR_AVAILABLE = False
 try:
     import pytesseract
-except ImportError:
-    pass # Will be handled by the user's environment
+    pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
+    pytesseract.get_tesseract_version()
+    OCR_AVAILABLE = True
+    logging.getLogger(__name__).info("OCR: pytesseract detected and available ✓")
+except Exception as _ocr_err:
+    logging.getLogger(__name__).warning(f"OCR: pytesseract NOT available — {_ocr_err}")
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InputMediaDocument, InputMediaPhoto
 from telegram.ext import (
     ContextTypes,
@@ -347,39 +356,53 @@ async def handle_desc_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return STATE_DESC_MODE
 
 async def handle_desc_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if 'pytesseract' not in globals():
-        await update.message.reply_text("❌ <b>OCR Module Missing</b>\nPlease run <code>pip install pytesseract</code> and <code>sudo apt install tesseract-ocr</code> in your VPS terminal to enable this feature.\n\n✍️ Please enter manually:", parse_mode="HTML")
+    _logger = logging.getLogger(__name__)
+    _logger.info("[OCR] handler triggered")
+    if not OCR_AVAILABLE:
+        _logger.warning("[OCR] pytesseract not available")
+        await update.message.reply_text(
+            "❌ <b>OCR not installed on server</b>\n\n"
+            "Run on your VPS to enable:\n"
+            "<code>sudo apt install tesseract-ocr tesseract-ocr-hin -y</code>\n"
+            "<code>pip install pytesseract</code>\n\n"
+            "✍️ Please enter description manually:",
+            parse_mode="HTML"
+        )
         return STATE_DESC_ENTER
-        
     if not update.message.photo and not update.message.document:
-        await update.message.reply_text("❌ Please send a valid image containing text.")
+        await update.message.reply_text("❌ Please send an image or document to scan.")
         return STATE_DESC_OCR
-
-    wait_msg = await update.message.reply_text("⏳ <i>Extracting text via OCR...</i>", parse_mode="HTML")
+    wait_msg = await update.message.reply_text("⏳ <i>Scanning image via OCR...</i>", parse_mode="HTML")
+    _logger.info("[OCR] Downloading image...")
     try:
-        file = await update.message.photo[-1].get_file() if update.message.photo else await update.message.document.get_file()
-        byte_array = await file.download_as_bytearray()
-        img = Image.open(io.BytesIO(byte_array))
-        
-        extracted = await asyncio.to_thread(pytesseract.image_to_string, img, lang='hin+eng')
-        # Clean up weird newlines
-        lines = [l.strip() for l in extracted.split('\n') if len(l.strip()) > 3]
+        tg_file = await (update.message.photo[-1].get_file() if update.message.photo else update.message.document.get_file())
+        raw_bytes = await tg_file.download_as_bytearray()
+        img = Image.open(io.BytesIO(raw_bytes))
+        _logger.info(f"[OCR] Image loaded size={img.size}")
+        def _do_ocr(image):
+            return pytesseract.image_to_string(image, lang="eng+hin")
+        extracted = await asyncio.to_thread(_do_ocr, img)
+        _logger.info(f"[OCR] Raw extracted length={len(extracted)}")
+        lines = [ln.strip() for ln in extracted.split("\n") if len(ln.strip()) > 3]
         cleaned = " ".join(lines).strip()
-        
         await wait_msg.delete()
         if len(cleaned) < 10:
-            await update.message.reply_text("❌ OCR failed to find readable text.\n\n✍️ Please enter manually:")
+            _logger.warning("[OCR] Extracted text too short")
+            await update.message.reply_text("❌ OCR could not find readable text.\n\n✍️ Please enter manually:")
             return STATE_DESC_ENTER
-            
-        context.user_data['pb_data']['temp_found_desc'] = cleaned
-        text = f"★ <b>Extracted Description</b>\n\n<blockquote>{html.escape(cleaned[:800])}</blockquote>..."
-        keyboard = [
-            [InlineKeyboardButton("✅ Use This", callback_data="pb_dc|use"), InlineKeyboardButton("✍️ Edit / Manual", callback_data="pb_dc|manual")]
-        ]
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        _logger.info(f"[OCR] Success - {len(cleaned)} chars extracted")
+        context.user_data["pb_data"]["temp_found_desc"] = cleaned
+        preview = html.escape(cleaned[:800])
+        text_out = f"★ <b>Extracted Description</b>\n\n<blockquote>{preview}</blockquote>"
+        keyboard = [[InlineKeyboardButton("✅ Use This", callback_data="pb_dc|use"), InlineKeyboardButton("✍️ Edit", callback_data="pb_dc|manual")]]
+        await update.message.reply_text(text_out, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         return STATE_DESC_CHOICE
     except Exception as e:
-        await wait_msg.edit_text(f"❌ OCR Error: {str(e)}\n\n✍️ Please enter manually:")
+        _logger.error(f"[OCR] Exception: {e}", exc_info=True)
+        try:
+            await wait_msg.edit_text(f"❌ OCR error: {html.escape(str(e))}\n\n✍️ Please enter manually:")
+        except Exception:
+            pass
         return STATE_DESC_ENTER
 
 async def handle_desc_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
