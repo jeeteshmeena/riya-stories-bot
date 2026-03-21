@@ -762,23 +762,19 @@ def _menu_main(caller_id: int, lang: str = "en", mention: str = "") -> tuple:
     greet = f", {mention}" if mention else ""
     if lang == "hi":
         text = (
-            f"<b>♡ नमस्ते, स्वागत है</b>{greet} ( ˶ˆᗜˆ˵ )\n\n"
-            "<u>स्टोरी का नाम भेजकर खोजें! 🔎</u>\n\n"
+            f"<b>♡ नमस्ते,</b>{greet} ( ˶ˆᗜˆ˵ )\n\n"
             f"{_DIVIDER}\n"
             "<b>📚 Riya — Main Menu</b>\n"
             "<i>✺ स्टोरी खोजें, एक्सप्लोर करें, और ज़्यादा। ✨</i>\n"
-            f"{_DIVIDER}\n"
-            "<b>By</b> @MeJeetX"
+            f"{_DIVIDER}"
         )
     else:
         text = (
-            f"<b>♡ Hey, Welcome</b>{greet} ( ˶ˆᗜˆ˵ )\n\n"
-            "<u>Send a story name to begin searching! 🔎</u>\n\n"
+            f"<b>♡ Hey,</b>{greet} ( ˶ˆᗜˆ˵ )\n\n"
             f"{_DIVIDER}\n"
             "<b>📚 Riya — Main Menu</b>\n"
             "<i>✺ Search stories, explore, and more. ✨</i>\n"
-            f"{_DIVIDER}\n"
-            "<b>By</b> @MeJeetX"
+            f"{_DIVIDER}"
         )
     btn_rows = [
         [
@@ -938,41 +934,41 @@ def _menu_about(caller_id: int, lang: str = "en") -> tuple:
 def _menu_help(caller_id: int, lang: str = "en") -> tuple:
     if lang == "hi":
         body = (
-            "<u>❁ Bot कैसे काम करता है?</u>\n"
-            "1️⃣  स्टोरी का नाम भेजें\n"
-            "2️⃣  बॉट डेटाबेस में खोजता है\n"
-            "3️⃣  मिली ➜ लिंक मिलता है\n"
-            "4️⃣  नहीं मिली ➜ /request करें\n\n"
-            "<i>स्टोरी मिलने पर आपको नोटिफिकेशन मिलेगा।</i>\n\n"
+            "<u>❁ Bot कैसे काम करता है? ( ˶ˆᗜˆ˵ )</u>\n"
+            "▪️ स्टोरी का नाम भेजें... ✨\n"
+            "▪️ बॉट डेटाबेस में खोजता है 🔎\n"
+            "▪️ मिली ➜ लिंक मिलता है ✅\n"
+            "▪️ नहीं मिली ➜ /request करें ⚠️\n\n"
+            "<i>स्टोरी मिलने पर आपको नोटिफिकेशन मिलेगा।🔔</i>\n\n"
             "<u>✦ Commands</u>\n"
-            "➔ /start — बॉट शुरू करें\n"
-            "➔ /request — स्टोरी रिक्वेस्ट\n"
-            "➔ /info — स्टोरी डिटेल्स\n"
-            "➔ /saved — फेवरेट देखें\n"
-            "➔ /trending — ट्रेंडिंग\n"
-            "➔ /subscribe — नोटिफिकेशन\n\n"
-            "<i>स्टोरी का नाम भेजकर सीधे खोजें।</i>"
+            "➔ /start — बॉट शुरू करें ✨\n"
+            "➔ /request — स्टोरी रिक्वेस्ट 📂\n"
+            "➔ /info — स्टोरी डिटेल्स 📑\n"
+            "➔ /saved — फेवरेट देखें ♥️\n"
+            "➔ /trending — ट्रेंडिंग 🔥\n"
+            "➔ /subscribe — नोटिफिकेशन 💬\n\n"
+            "<i>स्टोरी का नाम भेजकर सीधे खोजें। ✨</i>"
         )
     else:
         body = (
-            "<u>✦ How It Works</u>\n"
-            "1️⃣  Send a story name\n"
-            "2️⃣  Bot searches the database\n"
-            "3️⃣  Found ➜ you get the link\n"
-            "4️⃣  Not found ➜ use /request\n\n"
-            "<i>When the story is uploaded, you will be notified automatically.</i>\n\n"
+            "<u>✦ How It Works ( ˶ˆᗜˆ˵ )</u>\n"
+            "▪️ Send a story name... ✨\n"
+            "▪️ Bot searches the database 🔎\n"
+            "▪️ Found ➜ you get the link ✅\n"
+            "▪️ Not found ➜ use /request ⚠️\n\n"
+            "<i>When the story is uploaded, you will be notified automatically.🔔</i>\n\n"
             "<u>✦ Commands</u>\n"
-            "➔ /start — Open the menu\n"
-            "➔ /request — Request a story\n"
-            "➔ /info — Story details\n"
-            "➔ /saved — Your favourites\n"
-            "➔ /trending — Trending stories\n"
-            "➔ /subscribe — Get notifications\n\n"
-            "<i>You can also just send a story name to search.</i>"
+            "➔ /start — Open the menu ✨\n"
+            "➔ /request — Request a story 📂\n"
+            "➔ /info — Story details 📑\n"
+            "➔ /saved — Your favourites ♥️\n"
+            "➔ /trending — Trending stories 🔥\n"
+            "➔ /subscribe — Get notifications 💬\n\n"
+            "<i>You can also just send a story name to search. ✨</i>"
         )
     text = (
-        "<b>🚧 Help &amp; How It Works</b>\n"
-        "<i>✧ Everything you need to use this bot.</i>\n"
+        "<b>🚧 Help &amp; How It Works</b> ( ˶ˆᗜˆ˵ )\n"
+        "<i>✧ Everything you need to use this bot. ✨</i>\n"
         f"{_DIVIDER}\n\n"
         f"{body}"
     )
@@ -1132,33 +1128,23 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_chat_lang(chat.id)
 
     if lang == "hi":
-        text = """
-<b>🆘 हेल्प सेंटर</b>
-
-<i>इन कमांड्स से आप बॉट के साथ इंटरैक्ट कर सकते हैं:</i>
-
-<u>/start</u> → बॉट शुरू करें
-<u>/request</u> → स्टोरी रिक्वेस्ट करें
-<u>/scan</u> → स्टोरी डेटाबेस रिफ्रेश करें [सिर्फ़ एडमिन]
-<u>/info</u> → स्टोरी डिटेल्स
-<u>/stats</u> → बॉट स्टैटिस्टिक्स [एडमिन]
-
-<b>आप सीधे स्टोरी का नाम भेजकर भी सर्च कर सकते हैं।</b>
-"""
+        text = f"<b>🆘 हेल्प सेंटर</b> ( ˶ˆᗜˆ˵ )\n\n" \
+               f"<i>इन कमांड्स से आप बॉट के साथ इंटरैक्ट कर सकते हैं: ✨</i>\n\n" \
+               f"<u>/start</u> → बॉट शुरू करें ✨\n" \
+               f"<u>/request</u> → स्टोरी रिक्वेस्ट 📂\n" \
+               f"<u>/scan</u> → डेटाबेस रिफ्रेश करें [सिर्फ़ एडमिन] ⚙️\n" \
+               f"<u>/info</u> → स्टोरी डिटेल्स 📑\n" \
+               f"<u>/stats</u> → बॉट स्टैटिस्टिक्स [एडमिन] 📊\n\n" \
+               f"<b>आप सीधे स्टोरी का नाम भेजकर भी सर्च कर सकते हैं। ✨</b>"
     else:
-        text = """
-<b>🆘 Help Center</b>
-
-<i>Use these commands to interact with the bot:</i>
-
-<u>/start</u> → Start the bot
-<u>/request</u> → Request a story
-<u>/scan</u> → Refresh story database [only for admins]
-<u>/info</u> → Story details
-<u>/stats</u> → Bot statistics [admins]
-
-<b>You can also simply send a story name to search.</b>
-"""
+        text = f"<b>🆘 Help Center</b> ( ˶ˆᗜˆ˵ )\n\n" \
+               f"<i>Use these commands to interact with the bot: ✨</i>\n\n" \
+               f"<u>/start</u> → Start the bot ✨\n" \
+               f"<u>/request</u> → Request a story 📂\n" \
+               f"<u>/scan</u> → Refresh database [admins only] ⚙️\n" \
+               f"<u>/info</u> → Story details 📑\n" \
+               f"<u>/stats</u> → Bot statistics [admins] 📊\n\n" \
+               f"<b>You can also simply send a story name to search. ✨</b>"
 
     keyboard = [
         [
@@ -2662,16 +2648,21 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(parts) >= 3 and parts[1] == "fake":
             try:
                 target_uid = int(parts[2])
+                try:
+                    c = await context.bot.get_chat(target_uid)
+                    target_nick = c.full_name or c.username or str(target_uid)
+                except Exception:
+                    target_nick = f"User {target_uid}"
             except ValueError:
                 await query.answer("Invalid user ID.", show_alert=True)
                 return
 
             _set_cooldown(target_uid, 2880, "Fake report")  # 2 days = 2880 mins
-            await query.answer("🔨 User punished for 2 days.", show_alert=True)
+            await query.answer(f"🔨 {target_nick} punished for 2 days.", show_alert=True)
 
             msg_text = (
                 f"<b>⚠ WARNING / चेतावनी</b>\n\n"
-                f"<a href='tg://user?id={target_uid}'>User</a> you have been placed on a 2-day timeout by administrators for submitting a fake report.\n\n"
+                f"<a href='tg://user?id={target_uid}'>{target_nick}</a> you have been placed on a 2-day timeout by administrators for submitting a fake report.\n\n"
                 f"<blockquote expandable>If you are not able to access episodes of any story from the bot, then check:\n\n"
                 f"1. Click the link given in the channel — it will take you to a bot.\n\n"
                 f"2. After opening the bot, it will ask you to join 3–4 channels. Complete that step and try again. Then your episodes will start working (they remain available for 6–8 hours and then get deleted due to possible copyright issues). The same process applies to all stories available in the bot.\n\n"
