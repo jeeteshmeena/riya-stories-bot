@@ -757,19 +757,34 @@ def _nav_row(caller_id: int, back: str | None = None) -> list:
     return row
 
 
-def _menu_main(caller_id: int, lang: str = "en") -> tuple:
+def _menu_main(caller_id: int, lang: str = "en", mention: str = "") -> tuple:
     """Main / Home menu."""
+    greet = f", {mention}" if mention else ""
     if lang == "hi":
         text = (
+            f"<b>♡ नमस्ते, स्वागत है</b>{greet}\n\n"
+            "<blockquote>@StoriesFinderBot</blockquote>\n\n"
+            "<blockquote><i>Disclaimer 📌\n"
+            "हम केवल Telegram फ़ाइलों को इंडेक्स करते हैं।</i></blockquote>\n\n"
+            "<u>स्टोरी का नाम भेजकर खोजें!</u>\n\n"
+            f"{_DIVIDER}\n"
             "<b>📚 Riya — Main Menu</b>\n"
             "<i>✺ स्टोरी खोजें, एक्सप्लोर करें, और ज़्यादा।</i>\n"
-            f"{_DIVIDER}"
+            f"{_DIVIDER}\n"
+            "<b>By</b> @MeJeetX"
         )
     else:
         text = (
+            f"<b>♡ Hey, Welcome</b>{greet}\n\n"
+            "<blockquote>@StoriesFinderBot</blockquote>\n\n"
+            "<blockquote><i>Disclaimer 📌\n"
+            "We only index Telegram files. We do not host content.</i></blockquote>\n\n"
+            "<u>Send a story name to begin searching!</u>\n\n"
+            f"{_DIVIDER}\n"
             "<b>📚 Riya — Main Menu</b>\n"
             "<i>✺ Search stories, explore, and more.</i>\n"
-            f"{_DIVIDER}"
+            f"{_DIVIDER}\n"
+            "<b>By</b> @MeJeetX"
         )
     btn_rows = [
         [
@@ -1003,30 +1018,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lang = get_chat_lang(chat.id)
     caller_id = u.id
 
-    # Welcome note (not part of the menu panel, just a greeting)
-    if lang == "hi":
-        welcome = (
-            f"<b>♡ नमस्ते, स्वागत है</b>, {u.mention_html()}\n\n"
-            "<blockquote>@StoriesFinderBot</blockquote>\n\n"
-            "<blockquote><i>Disclaimer 📌\n"
-            "हम केवल Telegram फ़ाइलों को इंडेक्स करते हैं।</i></blockquote>\n\n"
-            "<u>स्टोरी का नाम भेजकर खोजें!</u>\n\n"
-            "<b>By</b> @MeJeetX"
-        )
-    else:
-        welcome = (
-            f"<b>♡ Hey, Welcome</b>, {u.mention_html()}\n\n"
-            "<blockquote>@StoriesFinderBot</blockquote>\n\n"
-            "<blockquote><i>Disclaimer 📌\n"
-            "We only index Telegram files. We do not host content.</i></blockquote>\n\n"
-            "<u>Send a story name to begin searching!</u>\n\n"
-            "<b>By</b> @MeJeetX"
-        )
-
-    await update.message.reply_text(text=welcome, parse_mode="HTML")
-
-    # Send the inline menu panel
-    text, markup = _menu_main(caller_id, lang)
+    # Send the integrated welcome + inline menu panel
+    text, markup = _menu_main(caller_id, lang, u.mention_html() if u else "")
     await update.message.reply_text(text=text, parse_mode="HTML", reply_markup=markup)
 
     await log(context, f"START | user_id={u.id} username={u.username}")
@@ -2724,7 +2717,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Build the right section
         if section in ("home", "start"):
-            text, markup = _menu_main(caller_id, lang)
+            text, markup = _menu_main(caller_id, lang, query.from_user.mention_html())
         elif section == "trending":
             text, markup = _menu_trending(caller_id)
         elif section == "new":
@@ -2766,7 +2759,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         section = section_map.get(cmd)
         if section:
             if section == "home":
-                text, markup = _menu_main(caller_id, lang)
+                text, markup = _menu_main(caller_id, lang, query.from_user.mention_html())
             elif section == "trending":
                 text, markup = _menu_trending(caller_id)
             elif section == "new":
