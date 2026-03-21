@@ -96,11 +96,15 @@ def is_admin_local(user_id: int) -> bool:
     return str(user_id) in mods or user_id in mods
 
 def _ocr_extract(raw_text: str, story_name: str, platform: str = "") -> str:
-    """Simple clean output: remove extra blank lines and spaces, do not truncate."""
-    lines = raw_text.split("\n")
+    """Clean symbols and fix spaces, keep full text."""
+    import re
+    # Remove weird symbols explicitly mentioned or commonly problematic in OCR
+    text = re.sub(r'[€॥\[\]/|\\<>{}]', '', raw_text)
+    # Normalize spaces: reduce multiple spaces/newlines to single ones (preserving paragraph breaks if any)
+    lines = text.split("\n")
     cleaned = []
     for ln in lines:
-        s = ln.strip()
+        s = re.sub(r' +', ' ', ln.strip())
         if s:
             cleaned.append(s)
     return "\n".join(cleaned)
@@ -427,10 +431,26 @@ async def handle_desc_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         raw = await tg_file.download_as_bytearray()
         img = Image.open(io.BytesIO(raw))
-        _log.info(f"[OCR] Full image size={img.size}")
+        _log.info(f"[OCR] Original image size={img.size}")
 
         def _run_ocr(image):
-            return pytesseract.image_to_string(image, lang="eng+hin")
+            from PIL import ImageEnhance, ImageFilter
+            # 1. Grayscale
+            image = image.convert("L")
+            # 2. Increase contrast 2.0x
+            image = ImageEnhance.Contrast(image).enhance(2.0)
+            # 3. Sharpen
+            image = image.filter(ImageFilter.SHARPEN)
+            # 4. Resize 1.5x using LANCZOS
+            w, h = image.size
+            image = image.resize((int(w * 1.5), int(h * 1.5)), Image.LANCZOS)
+            _log.info(f"[OCR] Enhanced image size={image.size}")
+            
+            return pytesseract.image_to_string(
+                image, 
+                lang="eng+hin", 
+                config="--oem 3 --psm 6"
+            )
 
         raw_text = await asyncio.to_thread(_run_ocr, img)
         _log.info(f"[OCR] Raw text length={len(raw_text)}")
