@@ -514,6 +514,23 @@ async def handle_desc_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         img = Image.open(io.BytesIO(raw))
         _log.info(f"[OCR] Image size={img.size}")
 
+        pb = context.user_data.get("pb_data", {})
+        platform = pb.get("platform", "").lower()
+
+        # CROP logic: Physical cropping ensures OCR never scans top half
+        w, h = img.size
+        # Pocket FM: Usually lower 55%
+        if "pocket" in platform:
+            img = img.crop((0, int(h * 0.45), w, h))
+        # Kuku FM: Usually lower 70%
+        elif "kuku" in platform:
+            img = img.crop((0, int(h * 0.30), w, h))
+        else:
+            # Safe crop 40%
+            img = img.crop((0, int(h * 0.40), w, h))
+            
+        _log.info(f"[OCR] Cropped for platform '{platform}' to size={img.size}")
+
         def _run_ocr(image):
             return pytesseract.image_to_string(image, lang="eng+hin")
 

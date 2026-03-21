@@ -580,7 +580,7 @@ async def auto_scan_loop(bot=None):
                 save_story_index(story_index)
                 last_scan_count = len(story_index)
                 logger.info("Auto scan done | stories=%d", last_scan_count)
-                if bot: asyncio.create_task(update_all_indexes(bot))
+                if bot: pass  # auto scan removed
             else:
                 logger.warning("Auto scan returned no stories, keeping existing index")
         except Exception as e:
@@ -4753,68 +4753,6 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await handle_config_input(update, context)
     return await search(update, context)
 
-async def update_all_indexes(bot):
-    idx_list = bot_config.get("index_messages", [])
-    if not idx_list:
-        return
-        
-    db = load_db()
-    lines = []
-    for i, name in enumerate(story_index, 1):
-        db_story = db.get(name) or {}
-        link = db_story.get("link", "")
-        safe_name = html.escape(clean_story(name))
-        if link:
-            lines.append(f"<code>{i}.</code> <a href='{link}'>{safe_name}</a>")
-        else:
-            lines.append(f"<code>{i}.</code> {safe_name}")
-            
-    msgs_text = []
-    current_msg = "<b>📚 Complete Story Index</b>\n━━━━━━━━━━━━━━━━\n\n"
-    for line in lines:
-        if len(current_msg) + len(line) > 3500:
-            msgs_text.append(current_msg)
-            current_msg = ""
-        current_msg += line + "\n"
-    if current_msg:
-        msgs_text.append(current_msg)
-        
-    if not msgs_text:
-        msgs_text = ["<i>No stories indexed yet.</i>"]
-        
-    for item in idx_list:
-        chat_id = item.get("chat_id")
-        msg_ids = item.get("msg_ids", [])
-        
-        new_ids = []
-        for i, text in enumerate(msgs_text):
-            if i < len(msg_ids):
-                try:
-                    await bot.edit_message_text(chat_id=chat_id, message_id=msg_ids[i], text=text, parse_mode="HTML", disable_web_page_preview=True)
-                    new_ids.append(msg_ids[i])
-                except Exception:
-                    try:
-                        sent = await bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", disable_web_page_preview=True)
-                        new_ids.append(sent.message_id)
-                    except Exception:
-                        pass
-            else:
-                try:
-                    sent = await bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", disable_web_page_preview=True)
-                    new_ids.append(sent.message_id)
-                except Exception:
-                    pass
-        
-        for j in range(len(msgs_text), len(msg_ids)):
-            try:
-                await bot.delete_message(chat_id=chat_id, message_id=msg_ids[j])
-            except Exception:
-                pass
-                
-        item["msg_ids"] = new_ids
-        
-    save_config(bot_config)
-
 
 async def storylist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -4846,23 +4784,10 @@ async def storylist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_ids = []
     for text in msgs_text:
         try:
-            sent = await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", disable_web_page_preview=True)
-            msg_ids.append(sent.message_id)
+            await context.bot.send_message(chat_id=chat_id, text=text, parse_mode="HTML", disable_web_page_preview=True)
             await asyncio.sleep(0.5)
         except Exception as e:
             logger.error(f"Failed to send list: {e}")
-            
-    idx_list = bot_config.get("index_messages", [])
-    found = False
-    for item in idx_list:
-        if item.get("chat_id") == chat_id:
-            item["msg_ids"] = msg_ids
-            found = True
-            break
-    if not found:
-        idx_list.append({"chat_id": chat_id, "msg_ids": msg_ids})
-    bot_config["index_messages"] = idx_list
-    save_config(bot_config)
 
 check_cooldowns = {}
 
