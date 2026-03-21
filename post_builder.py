@@ -291,7 +291,10 @@ async def _bg_fetch_desc(context, chat_id, msg_id, name, platform):
         ]
     else:
         text = "☆ <b>No full description found</b>\n✧ Please enter manually:"
-        keyboard = [[InlineKeyboardButton("✍️ Manual Enter", callback_data="pb_dm|manual"), InlineKeyboardButton("Skip", callback_data="pb_dm|skip")]]
+        keyboard = [
+            [InlineKeyboardButton("✍️ Manual Enter", callback_data="pb_dm|manual"), InlineKeyboardButton("📸 Upload Screenshot", callback_data="pb_dm|ocr")],
+            [InlineKeyboardButton("Skip", callback_data="pb_dm|skip")]
+        ]
         
     try: await context.bot.edit_message_text(text=text, chat_id=chat_id, message_id=msg_id, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     except: pass
@@ -713,7 +716,7 @@ async def handle_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     working_msg = await query.message.reply_text("⏳ <i>Processing post...</i>", parse_mode="HTML")
     
-    from database import save_story
+    from database import add_story
     story_name = data.get("name")
     
     try:
@@ -748,18 +751,21 @@ async def handle_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     await context.bot.send_message(chat_id=chat_id, text=p, parse_mode="HTML", disable_web_page_preview=True)
                     
-                save_story(
-                    name=story_name, genre=data.get("genre"), link=data.get("link"), episodes=data.get("episodes"), status=data.get("status"),
-                    description_original=data.get("desc_original", ""), description_short=data.get("desc_short", ""),
-                    image_url=photo_ids[0]["id"] if photo_ids else "", extra_images=[item["id"] for item in photo_ids[1:]] if len(photo_ids) > 1 else [],
-                    format_number=int(data.get("format")) if data.get("format") != "both" else 1
-                )
+                try: fmt_num = int(data.get("format")) if str(data.get("format")) != "both" else 1
+                except: fmt_num = 1
+                
+                add_story({
+                    "name": story_name, "genre": data.get("genre"), "link": data.get("link"), "episodes": data.get("episodes"), "status": data.get("status"),
+                    "description_original": data.get("desc_original", ""), "description_short": data.get("desc_short", ""),
+                    "image_url": photo_ids[0]["id"] if photo_ids else "", "extra_images": [item["id"] for item in photo_ids[1:]] if len(photo_ids) > 1 else [],
+                    "format_number": fmt_num
+                })
                 
             await working_msg.delete()
             await context.bot.send_message(chat_id=query.message.chat_id, text=f"✅ <b>Successfully Posted to {chat_id}!</b>", parse_mode="HTML")
             
     except Exception as e:
-        await working_msg.edit_text(f"❌ <b>Error processing:</b>\n<code>{str(e)}</code>", parse_mode="HTML")
+        await working_msg.edit_text(f"❌ <b>Error processing:</b>\n<code>{html.escape(str(e))}</code>", parse_mode="HTML")
         
     context.user_data.pop('pb_data', None)
     return ConversationHandler.END
@@ -770,6 +776,7 @@ async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 post_builder_handler = ConversationHandler(
+    allow_reentry=True,
     entry_points=[
         CommandHandler("createpost", start_builder),
         CallbackQueryHandler(start_builder, pattern="^menu\|createpost")
