@@ -588,13 +588,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data["photo_ids"] = [{"id": fid, "type": mtype}]
     return await _transition_to_genre(update, context, None)
 
-async def handle_image_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try: await query.answer()
-    except: pass
-    try: await query.message.delete()
-    except: pass
-    return await _transition_to_genre(update, context, query)
+
 
 # ── Genre ─────────────────────────────────────────────────────────────────────
 async def _transition_to_genre(update: Update, context: ContextTypes.DEFAULT_TYPE, query):
@@ -954,12 +948,7 @@ post_builder_handler = ConversationHandler(
         STATE_DESC_CHOICE: [CallbackQueryHandler(handle_desc_choice, pattern=r"^pb_dc\|")],
         STATE_DESC_ENTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_desc_text)],
         STATE_DESC_OCR: [MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_desc_ocr)],
-        STATE_IMG_MODE: [
-            CallbackQueryHandler(handle_img_mode, pattern=r"^pb_im\|"),
-            CallbackQueryHandler(handle_img_choice, pattern=r"^pb_ic\|"),
-        ],
-                STATE_IMG_UPLOAD: [
-            CallbackQueryHandler(handle_image_done, pattern=r"^pb_idone"),
+        STATE_IMG_UPLOAD: [
             MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_image),
             CommandHandler("skip", handle_image),
         ],
