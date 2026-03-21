@@ -235,8 +235,9 @@ async def continue_to_desc(update: Update, context: ContextTypes.DEFAULT_TYPE, q
         if query: await query.message.delete()
     except: pass
     
-    wait_msg = await msg.reply_text("⏳ <i>Searching and cleaning description...</i>", parse_mode="HTML")
-    desc_found = await _fetch_serper_desc(f"{name} {platform}")
+    wait_msg = await msg.reply_text("⏳ <i>Searching and validating full explicit description natively...</i>", parse_mode="HTML")
+    from advanced_scraper import extract_story_description
+    desc_found = await extract_story_description(name, platform)
     
     if desc_found:
         from groq_helper import clean_description
@@ -260,7 +261,7 @@ async def continue_to_desc(update: Update, context: ContextTypes.DEFAULT_TYPE, q
     else:
         try: await wait_msg.delete()
         except: pass
-        await msg.reply_text("❌ <b>No description found.</b>\n\n✍️ <b>Step 3: Manual Description</b>\n\nPlease enter the description manually (or /skip):", parse_mode="HTML")
+        await msg.reply_text("❌ <b>Full Description not logically verified.</b>\n\n✍️ <b>Step 3: Manual Description</b>\n\nPlease enter the description manually (or /skip):", parse_mode="HTML")
         return ENTER_DESC
 
 async def handle_desc_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -303,26 +304,27 @@ async def continue_to_image(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     name = data.get('name', '')
     platform = data.get('platform', '')
     
-    wait_msg = await msg.reply_text("⏳ <i>Searching for cover image...</i>", parse_mode="HTML")
-    img_url = await _fetch_serper_image(f"{name} {platform}")
+    wait_msg = await msg.reply_text("⏳ <i>Searching and scaling HD cover image...</i>", parse_mode="HTML")
+    from advanced_scraper import extract_hd_image
+    img_bytes = await extract_hd_image(name, platform)
     try: await wait_msg.delete()
     except: pass
     
-    if img_url:
-        data['temp_found_img'] = img_url
-        text = f"★ <b>Image Found</b>\n✧ Source: {platform}"
+    if img_bytes:
+        text = f"★ <b>HD Image Found</b>\n✧ Source: {platform}"
         keyboard = [
             [InlineKeyboardButton("✅ Use This", callback_data="pb_imgc|use"), InlineKeyboardButton("🔄 Change / Manual", callback_data="pb_imgc|manual")]
         ]
         try:
-            await context.bot.send_photo(chat_id=msg.chat_id, photo=img_url, caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+            sent_msg = await context.bot.send_document(chat_id=msg.chat_id, document=img_bytes, filename=f"{name}_cover.jpg", caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+            data['temp_found_img'] = {"id": sent_msg.document.file_id, "type": "doc"}
             return HANDLE_IMG_CHOICE
         except Exception:
             await msg.reply_text("❌ <b>Image found, but failed to load.</b>\n\n🖼 <b>Step 4: Upload Image(s)</b>\nPlease upload manually (or /skip):", parse_mode="HTML")
             context.user_data['pb_data']['photo_ids'] = []
             return UPLOAD_IMAGE
     else:
-        await msg.reply_text("❌ <b>No image found.</b>\n\n🖼 <b>Step 4: Upload Image(s)</b>\nPlease upload manually (or /skip):", parse_mode="HTML")
+        await msg.reply_text("❌ <b>No full HD image found.</b>\n\n🖼 <b>Step 4: Upload Image(s)</b>\nPlease upload manually (or /skip):", parse_mode="HTML")
         context.user_data['pb_data']['photo_ids'] = []
         return UPLOAD_IMAGE
 
@@ -343,7 +345,7 @@ async def handle_img_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return UPLOAD_IMAGE
     elif choice == "manual":
         context.user_data['pb_data']['photo_ids'] = []
-        await query.message.reply_text("🖼 <b>Step 4: Upload Image(s)</b>\n\nSend a photo for the post (or multiple).", parse_mode="HTML")
+        await query.message.reply_text("🖼 <b>Step 4: Upload Image(s) / Documents</b>\n\nSend a photo or document for the post (or multiple).", parse_mode="HTML")
         return UPLOAD_IMAGE
 
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -352,25 +354,29 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         try: await query.message.delete()
         except: pass
-        
         if query.data == "pb_img_done":
             return await continue_to_genre(update, context, query)
         elif query.data == "pb_img_more":
-            await query.message.reply_text("Send more photos now, then press '✅ Done Adding Images' when complete.",
+            await query.message.reply_text("Send more photos or UNCOMPRESSED documents now, then press '✅ Done Adding Images'.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Done Adding Images", callback_data="pb_img_done")]]))
             return UPLOAD_IMAGE
             
-    if update.message and update.message.photo:
-        context.user_data['pb_data']['photo_ids'].append(update.message.photo[-1].file_id)
-        keyboard = [[InlineKeyboardButton("✅ Done Adding Images", callback_data="pb_img_done")]]
-        await update.message.reply_text("Image saved! Send more images if needed, or click 'Done'.", reply_markup=InlineKeyboardMarkup(keyboard))
-        return UPLOAD_IMAGE
-    elif update.message and update.message.text == "/skip":
-        return await continue_to_genre(update, context)
-    else:
-        if update.message:
-            await update.message.reply_text("Please send a valid photo, press Done below, or /skip.")
-        return UPLOAD_IMAGE
+    if update.message:
+        if update.message.document:
+            context.user_data['pb_data'].setdefault('photo_ids', []).append({"id": update.message.document.file_id, "type": "doc"})
+            keyboard = [[InlineKeyboardButton("✅ Done Adding Images", callback_data="pb_img_done")]]
+            await update.message.reply_text("Document saved! Send more if needed, or click 'Done'.", reply_markup=InlineKeyboardMarkup(keyboard))
+            return UPLOAD_IMAGE
+        elif update.message.photo:
+            context.user_data['pb_data'].setdefault('photo_ids', []).append({"id": update.message.photo[-1].file_id, "type": "photo"})
+            keyboard = [[InlineKeyboardButton("✅ Done Adding Images", callback_data="pb_img_done")]]
+            await update.message.reply_text("Photo saved! Send more if needed, or click 'Done'.", reply_markup=InlineKeyboardMarkup(keyboard))
+            return UPLOAD_IMAGE
+        elif update.message.text == "/skip":
+            return await continue_to_genre(update, context)
+            
+        await update.message.reply_text("Please send a valid photo/document, press Done below, or /skip.")
+    return UPLOAD_IMAGE
 
 async def continue_to_genre(update: Update, context: ContextTypes.DEFAULT_TYPE, query=None):
     msg = query.message if query else update.message
@@ -505,16 +511,34 @@ async def generate_preview(message, context: ContextTypes.DEFAULT_TYPE):
         photo_ids = data.get('photo_ids', [])
         if photo_ids:
             if len(photo_ids) == 1:
+                item = photo_ids[0]
                 try:
-                    await context.bot.send_photo(chat_id=message.chat_id, photo=photo_ids[0], caption=p, parse_mode="HTML")
+                    if item["type"] == "doc":
+                        await context.bot.send_document(chat_id=message.chat_id, document=item["id"], caption=p, parse_mode="HTML")
+                    else:
+                        await context.bot.send_photo(chat_id=message.chat_id, photo=item["id"], caption=p, parse_mode="HTML")
                 except Exception:
-                    await context.bot.send_photo(chat_id=message.chat_id, photo=photo_ids[0])
+                    if item["type"] == "doc":
+                        await context.bot.send_document(chat_id=message.chat_id, document=item["id"])
+                    else:
+                        await context.bot.send_photo(chat_id=message.chat_id, photo=item["id"])
                     await context.bot.send_message(chat_id=message.chat_id, text=p, parse_mode="HTML", disable_web_page_preview=True)
             else:
-                media_group = [InputMediaPhoto(media=photo_ids[0], caption=p, parse_mode="HTML")]
-                for pid in photo_ids[1:]:
-                    media_group.append(InputMediaPhoto(media=pid))
-                await context.bot.send_media_group(chat_id=message.chat_id, media=media_group)
+                from telegram import InputMediaDocument, InputMediaPhoto
+                doc_grp = []
+                pho_grp = []
+                for i, item in enumerate(photo_ids):
+                    cap = p if i == 0 else ""
+                    if item["type"] == "doc":
+                        doc_grp.append(InputMediaDocument(media=item["id"], caption=cap, parse_mode="HTML"))
+                    else:
+                        pho_grp.append(InputMediaPhoto(media=item["id"], caption=cap, parse_mode="HTML"))
+                
+                # Cannot mix in Telegram natively flawlessly
+                if doc_grp:
+                    await context.bot.send_media_group(chat_id=message.chat_id, media=doc_grp)
+                if pho_grp:
+                    await context.bot.send_media_group(chat_id=message.chat_id, media=pho_grp)
         else:
             await context.bot.send_message(chat_id=message.chat_id, text=p, parse_mode="HTML", disable_web_page_preview=True)
             
@@ -562,8 +586,9 @@ async def handle_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
             db_entry['description_original'] = data.get('desc_original', data.get('desc', ''))
             db_entry['description_short'] = data.get('desc_short', data.get('desc', ''))
             if photo_ids:
-                db_entry['image_url'] = photo_ids[0]
-                db_entry['extra_images'] = photo_ids[1:] if len(photo_ids) > 1 else []
+                # Correct saving using the exact ID list inside object mapped array dictionary
+                db_entry['image_url'] = photo_ids[0]['id']
+                db_entry['extra_images'] = [x['id'] for x in photo_ids[1:]] if len(photo_ids) > 1 else []
             db_entry['last_used_template'] = data.get('format', '')
             db_entry['genre'] = data.get('genre', '')
             db_entry['link'] = data.get('link', '')
@@ -580,16 +605,33 @@ async def handle_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for p in previews:
                 if photo_ids:
                     if len(photo_ids) == 1:
+                        item = photo_ids[0]
                         try:
-                            await context.bot.send_photo(chat_id=t, photo=photo_ids[0], caption=p, parse_mode="HTML")
+                            if item["type"] == "doc":
+                                await context.bot.send_document(chat_id=t, document=item["id"], caption=p, parse_mode="HTML")
+                            else:
+                                await context.bot.send_photo(chat_id=t, photo=item["id"], caption=p, parse_mode="HTML")
                         except Exception:
-                            await context.bot.send_photo(chat_id=t, photo=photo_ids[0])
+                            if item["type"] == "doc":
+                                await context.bot.send_document(chat_id=t, document=item["id"])
+                            else:
+                                await context.bot.send_photo(chat_id=t, photo=item["id"])
                             await context.bot.send_message(chat_id=t, text=p, parse_mode="HTML", disable_web_page_preview=True)
                     else:
-                        media_group = [InputMediaPhoto(media=photo_ids[0], caption=p, parse_mode="HTML")]
-                        for pid in photo_ids[1:]:
-                            media_group.append(InputMediaPhoto(media=pid))
-                        await context.bot.send_media_group(chat_id=t, media=media_group)
+                        from telegram import InputMediaDocument, InputMediaPhoto
+                        doc_grp = []
+                        pho_grp = []
+                        for i, item in enumerate(photo_ids):
+                            cap = p if i == 0 else ""
+                            if item["type"] == "doc":
+                                doc_grp.append(InputMediaDocument(media=item["id"], caption=cap, parse_mode="HTML"))
+                            else:
+                                pho_grp.append(InputMediaPhoto(media=item["id"], caption=cap, parse_mode="HTML"))
+                        
+                        if doc_grp:
+                            await context.bot.send_media_group(chat_id=t, media=doc_grp)
+                        if pho_grp:
+                            await context.bot.send_media_group(chat_id=t, media=pho_grp)
                 else:
                     await context.bot.send_message(chat_id=t, text=p, parse_mode="HTML", disable_web_page_preview=True)
                 
