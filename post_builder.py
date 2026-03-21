@@ -549,83 +549,24 @@ async def _transition_to_img(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if cached:
         _log.info(f"[IMG] Prefetched image available ({len(cached)} bytes)")
         try:
-            await msg.reply_document(
+            sent = await context.bot.send_document(
+                chat_id=msg.chat_id,
                 document=cached,
-                filename=f"{data.get('name','cover')}_cover.jpg",
-                caption="★ <b>Auto-fetched Cover Image</b>\n✧ Use it or replace it.",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("✅ Use Preview", callback_data="pb_ic|use_direct"),
-                    InlineKeyboardButton("📤 Upload", callback_data="pb_im|manual"),
-                    InlineKeyboardButton("⏭ Skip", callback_data="pb_im|skip"),
-                ]])
+                filename=f"{data.get('name','cover')}_cover.jpg"
             )
-            data["img_mode_done"] = False
-            return STATE_IMG_MODE
+            data["photo_ids"] = [{"id": sent.document.file_id, "type": "doc"}]
+            await msg.reply_text("✅ <b>Cover image auto-fetched.</b>", parse_mode="HTML")
+            return await _transition_to_genre(update, context, query)
         except Exception as e:
             _log.warning(f"[IMG] Failed to send prefetched image: {e}")
 
-    # No cached image
-    _log.info("[IMG] No prefetched image — asking user")
+    # No cached image - Direct input flow
+    _log.info("[IMG] No prefetched image — asking user for direct upload")
     await msg.reply_text(
-        "★ <b>Cover Image</b>\n✧ Upload an image or skip.",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("📤 Upload", callback_data="pb_im|manual"),
-            InlineKeyboardButton("⏭ Skip", callback_data="pb_im|skip"),
-        ]]),
+        "📷 <b>Send image</b>\n\n<i>Type /skip to skip.</i>",
         parse_mode="HTML"
     )
-    data["img_mode_done"] = False
-    return STATE_IMG_MODE
-
-async def handle_img_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try: await query.answer()
-    except: pass
-
-    choice = query.data.split("|")[1]
-    context.user_data["pb_data"]["img_mode_done"] = True
-
-    try: await query.message.delete()
-    except: pass
-
-    if choice == "skip":
-        context.user_data["pb_data"].setdefault("photo_ids", [])
-        return await _transition_to_genre(update, context, query)
-    elif choice == "manual":
-        context.user_data["pb_data"]["photo_ids"] = []
-        await query.message.reply_text("🖼 <b>Upload image/document:</b>", parse_mode="HTML")
-        return STATE_IMG_UPLOAD
-    return STATE_IMG_MODE
-
-async def handle_img_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    try: await query.answer()
-    except: pass
-
-    choice = query.data.split("|")[1]
-    try: await query.message.delete()
-    except: pass
-    data = context.user_data["pb_data"]
-
-    if choice == "use_direct":
-        img_bytes = data.get("temp_img_bytes")
-        if img_bytes:
-            try:
-                sent = await context.bot.send_document(
-                    chat_id=query.message.chat_id,
-                    document=img_bytes,
-                    filename=f"{data.get('name','cover')}_cover.jpg"
-                )
-                data["photo_ids"] = [{"id": sent.document.file_id, "type": "doc"}]
-            except Exception as e:
-                _log.error(f"[IMG] use_direct failed: {e}")
-        data["img_mode_done"] = True
-        return await _transition_to_genre(update, context, query)
-    else:
-        data["photo_ids"] = []
-        await query.message.reply_text("🖼 <b>Upload image/document:</b>", parse_mode="HTML")
-        return STATE_IMG_UPLOAD
+    return STATE_IMG_UPLOAD
 
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data["pb_data"]
@@ -640,13 +581,11 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fid = update.message.document.file_id
         mtype = "doc"
     else:
-        await update.message.reply_text("❌ Send a photo or document.")
+        await update.message.reply_text("❌ Please send image or type /skip")
         return STATE_IMG_UPLOAD
 
-    data.setdefault("photo_ids", []).append({"id": fid, "type": mtype})
-    count = len(data["photo_ids"])
-
-    # Immediately proceed to next step (genre) on ANY file upload
+    # Capture file_id and immediately proceed
+    data["photo_ids"] = [{"id": fid, "type": mtype}]
     return await _transition_to_genre(update, context, None)
 
 async def handle_image_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1020,8 +959,7 @@ post_builder_handler = ConversationHandler(
             CallbackQueryHandler(handle_img_mode, pattern=r"^pb_im\|"),
             CallbackQueryHandler(handle_img_choice, pattern=r"^pb_ic\|"),
         ],
-        STATE_IMG_CHOICE: [CallbackQueryHandler(handle_img_choice, pattern=r"^pb_ic\|")],
-        STATE_IMG_UPLOAD: [
+                STATE_IMG_UPLOAD: [
             CallbackQueryHandler(handle_image_done, pattern=r"^pb_idone"),
             MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_image),
             CommandHandler("skip", handle_image),
