@@ -513,13 +513,32 @@ async def handle_genre(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Use the buttons or type a custom genre.")
         return STATE_GENRE
     context.user_data["pb_data"]["genre"] = genre
-    await update.message.reply_text("» Story link (or /skip):", reply_markup=ReplyKeyboardRemove())
+    kb = _kb([
+        ["Default Link"],
+        ["+ Manual Link", "/skip"],
+    ])
+    await update.message.reply_text("¤ Story link:", reply_markup=kb)
     return STATE_LINK
 
 # ── Link ──────────────────────────────────────────────────────────────────────
+DEFAULT_STORY_LINK = "https://t.me/StoriesByJeetXNew"
+
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["pb_data"]["link"] = "" if update.message.text.strip() == "/skip" else update.message.text.strip()
-    await update.message.reply_text("» Total episodes:")
+    text = update.message.text.strip()
+    if text == "Default Link":
+        context.user_data["pb_data"]["link"] = DEFAULT_STORY_LINK
+    elif text == "/skip":
+        context.user_data["pb_data"]["link"] = ""
+    elif text == "+ Manual Link":
+        await update.message.reply_text("» Paste the story link:", reply_markup=ReplyKeyboardRemove())
+        context.user_data["pb_data"]["_awaiting_manual_link"] = True
+        return STATE_LINK
+    elif context.user_data["pb_data"].pop("_awaiting_manual_link", False):
+        context.user_data["pb_data"]["link"] = text
+    else:
+        # User typed something unexpected; treat as a direct link
+        context.user_data["pb_data"]["link"] = text
+    await update.message.reply_text("» Total episodes:", reply_markup=ReplyKeyboardRemove())
     return STATE_EPISODES
 
 # ── Episodes ──────────────────────────────────────────────────────────────────
