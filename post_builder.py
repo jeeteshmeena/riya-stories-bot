@@ -95,30 +95,96 @@ def is_admin_local(user_id: int) -> bool:
     mods = cfg.get("moderators", [])
     return str(user_id) in mods or user_id in mods
 
-def _ocr_extract(raw_text: str, story_name: str) -> str:
-    """Extract only the description section from OCR text."""
+def _ocr_extract(raw_text: str, story_name: str, platform: str = "") -> str:
+    """
+    Platform-aware OCR description extraction.
+
+    Pocket FM layout:
+        [title + UI elements]
+        About A Nightmare | अ नाइटमेयर   ← anchor line
+        When loved ones left Kriya ...    ← description starts HERE
+
+    Kuku FM layout:
+        About the show   >               ← section header (skip)
+        Jobless Ghar Jamai               ← story title (skip)
+        Aarav Ambani jiske ...           ← description starts HERE
+    """
+    _platform = platform.lower()
+    is_kuku = "kuku" in _platform
+    is_pocket = "pocket" in _platform
+
     lines = raw_text.split("\n")
+    n = len(lines)
+    start_idx = None  # index AFTER which description begins
 
-    # Step 1: Find "About" line
-    about_idx = None
-    for i, ln in enumerate(lines):
-        lo = ln.strip().lower()
-        if lo.startswith("about"):
-            about_idx = i
-            break
+    if is_pocket:
+        # ── Pocket FM: find "About <story name>" line ─────────────────────
+        for i, ln in enumerate(lines):
+            lo = ln.strip().lower()
+            # Must start with "about" and NOT be "about the show" generic header
+            if lo.startswith("about") and "the show" not in lo:
+                start_idx = i  # description is from i+1 onward
+                break
+        if start_idx is None:
+            # Fallback: any line starting with "about"
+            for i, ln in enumerate(lines):
+                if ln.strip().lower().startswith("about"):
+                    start_idx = i
+                    break
 
-    working = lines[about_idx + 1:] if about_idx is not None else lines
+    elif is_kuku:
+        # ── Kuku FM: find "About the show" → skip title → text below ─────
+        about_show_idx = None
+        for i, ln in enumerate(lines):
+            lo = ln.strip().lower()
+            if lo.startswith("about") and ("show" in lo or "the" in lo):
+                about_show_idx = i
+                break
 
-    # Step 2: Stop at UI noise words
+        if about_show_idx is not None:
+            # The title line is immediately after (or the story name itself)
+            # Skip it regardless and start description from the line after
+            candidate = about_show_idx + 1
+            if candidate < n:
+                # If this line looks like a title (matches story_name or is short heading)
+                next_lo = lines[candidate].strip().lower()
+                sn_lo = story_name.strip().lower()
+                if sn_lo and sn_lo in next_lo:
+                    start_idx = candidate  # start AFTER the title line
+                else:
+                    # Even if we can't match, skip one line (it's usually the title)
+                    start_idx = candidate
+        else:
+            # Fallback: find story title line directly and start AFTER it
+            if story_name:
+                sn_lo = story_name.strip().lower()
+                for i, ln in enumerate(lines):
+                    if sn_lo in ln.strip().lower() and len(ln.strip()) < 80:
+                        start_idx = i  # start AFTER this line
+                        break
+
+    else:
+        # ── Unknown platform: generic "About" search ──────────────────────
+        for i, ln in enumerate(lines):
+            if ln.strip().lower().startswith("about"):
+                start_idx = i
+                break
+
+    # Collect lines after start_idx, stop at UI noise
+    working = lines[start_idx + 1:] if start_idx is not None else lines
+
     result = []
     for ln in working:
         stripped = ln.strip()
         if not stripped:
             continue
         lo = stripped.lower()
-        # Stop if UI junk line
+        # Stop when we hit UI noise
         if any(lo == w or lo.startswith(w + " ") for w in OCR_STOP_WORDS):
             break
+        # Skip obvious single-word UI noise
+        if stripped in {"More", "...More", "…More", ">", "< ", "›"}:
+            continue
         if len(stripped) >= 3:
             result.append(stripped)
 
@@ -453,8 +519,11 @@ async def handle_desc_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raw_text = await asyncio.to_thread(_run_ocr, img)
         _log.info(f"[OCR] Raw text length={len(raw_text)}")
 
-        story_name = context.user_data.get("pb_data", {}).get("name", "")
-        cleaned = _ocr_extract(raw_text, story_name)
+        pb = context.user_data.get("pb_data", {})
+        story_name = pb.get("name", "")
+        platform = pb.get("platform", "")
+        _log.info(f"[OCR] Extracting for platform='{platform}' story='{story_name}'")
+        cleaned = _ocr_extract(raw_text, story_name, platform)
         _log.info(f"[OCR] Cleaned length={len(cleaned)}")
 
         await wait.delete()
