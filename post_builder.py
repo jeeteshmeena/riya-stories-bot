@@ -30,8 +30,10 @@ from telegram.ext import (
     ENTER_USERNAME,
     SELECT_DESTINATION,
     CUSTOM_DESTINATION,
-    CONFIRM_POST
-) = range(17)
+    CONFIRM_POST,
+    SELECT_POST_MODE,
+    ENTER_EDIT_LINK
+) = range(19)
 
 STATUS_EMOJIS = {"Completed": "✅", "Ongoing": "⏳", "RIP": "💀"}
 DEFAULT_JOIN_USERNAME = "@StoriesByJeetXNew"
@@ -168,14 +170,12 @@ async def start_builder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['pb_data'] = {}
     
     keyboard = [
-        [InlineKeyboardButton("Format 1", callback_data="pb_fmt|1"), InlineKeyboardButton("Format 2", callback_data="pb_fmt|2")],
-        [InlineKeyboardButton("Both 1 & 2", callback_data="pb_fmt|both")],
-        [InlineKeyboardButton("Minimal Clean", callback_data="pb_fmt|3"), InlineKeyboardButton("Premium Box", callback_data="pb_fmt|4")],
-        [InlineKeyboardButton("Compact Mobile", callback_data="pb_fmt|5")],
+        [InlineKeyboardButton("New Post", callback_data="pb_mode|new")],
+        [InlineKeyboardButton("Edit Existing Post", callback_data="pb_mode|edit")],
         [InlineKeyboardButton("Cancel", callback_data="pb_cancel")]
     ]
     
-    text = "<b>🛠 Story Post Builder</b>\n\nWelcome to the Post Builder! Pick a format to begin:"
+    text = "<b>🛠 Story Post Builder</b>\n\nWelcome to the Post Builder! Pick a mode:"
     
     if update.callback_query:
         await update.callback_query.answer()
@@ -186,6 +186,67 @@ async def start_builder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         
+    return SELECT_POST_MODE
+
+async def handle_post_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "pb_cancel":
+        await query.edit_message_text("Post builder cancelled.")
+        context.user_data.pop('pb_data', None)
+        return ConversationHandler.END
+        
+    _, mode = query.data.split("|")
+    context.user_data['pb_data']['post_mode'] = mode
+    
+    if mode == "edit":
+        await query.edit_message_text("📝 <b>Edit Post</b>\n\nPaste the Telegram post link to edit:\n(e.g., https://t.me/channel/123)", parse_mode="HTML")
+        return ENTER_EDIT_LINK
+    
+    keyboard = [
+        [InlineKeyboardButton("Format 1", callback_data="pb_fmt|1"), InlineKeyboardButton("Format 2", callback_data="pb_fmt|2")],
+        [InlineKeyboardButton("Both 1 & 2", callback_data="pb_fmt|both")],
+        [InlineKeyboardButton("Minimal Clean", callback_data="pb_fmt|3"), InlineKeyboardButton("Premium Box", callback_data="pb_fmt|4")],
+        [InlineKeyboardButton("Compact Mobile", callback_data="pb_fmt|5")],
+        [InlineKeyboardButton("Cancel", callback_data="pb_cancel")]
+    ]
+    await query.edit_message_text("<b>🛠 Select Format</b>\n\nPick a format to begin:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    return SELECT_FORMAT
+
+async def handle_edit_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if "t.me/" not in text:
+        await update.message.reply_text("❌ Invalid link. Please send a valid Telegram post link (e.g., https://t.me/channel/123):")
+        return ENTER_EDIT_LINK
+        
+    parts = text.split("t.me/")[1].split("/")
+    if len(parts) < 2:
+        await update.message.reply_text("❌ Could not parse channel and message ID. Try again:")
+        return ENTER_EDIT_LINK
+        
+    chat_username = "@" + parts[0] if not parts[0].startswith("@") else parts[0]
+    # some links have c/1234/12
+    if parts[0] == "c":
+        chat_username = "-100" + parts[1]
+        msg_id = parts[2]
+    else:
+        msg_id = parts[1]
+        
+    try:
+        msg_id = int(msg_id.split("?")[0]) # remove query parameters
+    except:
+        await update.message.reply_text("❌ Invalid message ID. Try again:")
+        return ENTER_EDIT_LINK
+        
+    context.user_data['pb_data']['edit_chat_id'] = chat_username
+    context.user_data['pb_data']['edit_msg_id'] = msg_id
+    
+    keyboard = [
+        [InlineKeyboardButton("Format 1", callback_data="pb_fmt|1"), InlineKeyboardButton("Format 2", callback_data="pb_fmt|2")],
+        [InlineKeyboardButton("Minimal Clean", callback_data="pb_fmt|3"), InlineKeyboardButton("Premium Box", callback_data="pb_fmt|4")],
+        [InlineKeyboardButton("Compact Mobile", callback_data="pb_fmt|5")]
+    ]
+    await update.message.reply_text("✅ Target saved!\n\n<b>🛠 Select Format to Edit TO:</b>", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     return SELECT_FORMAT
 
 async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -227,6 +288,36 @@ async def handle_platform_text(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data['pb_data']['platform'] = update.message.text
     return await continue_to_desc(update, context)
 
+async def _bg_fetch_desc(context, chat_id, msg_id, name, platform):
+    try:
+        from advanced_scraper import extract_story_description
+        desc_found = await asyncio.wait_for(extract_story_description(name, platform), timeout=5.0)
+    except Exception:
+        desc_found = None
+    
+    data = context.user_data.get('pb_data', {})
+    if data.get('desc_mode_done'): return
+    
+    if desc_found:
+        from groq_helper import clean_description
+        try:
+            cleaned_desc = await asyncio.wait_for(clean_description(desc_found), timeout=5.0)
+        except: cleaned_desc = desc_found
+        data['desc_original'] = cleaned_desc
+        data['temp_found_desc'] = cleaned_desc
+        text = f"★ <b>Description Found</b>\n✧ Source: {platform}\n\n<blockquote>{html.escape(cleaned_desc)}</blockquote>"
+        keyboard = [
+            [InlineKeyboardButton("✅ Use This", callback_data="pb_desc|use"), InlineKeyboardButton("📝 Short Version", callback_data="pb_desc|short")],
+            [InlineKeyboardButton("✍️ Manual", callback_data="pb_desc|manual")]
+        ]
+    else:
+        text = "☆ <b>No full description found</b>\n✧ Please enter manually:"
+        keyboard = [[InlineKeyboardButton("✍️ Manual Enter", callback_data="pb_dmode|manual"), InlineKeyboardButton("Skip", callback_data="pb_dmode|skip")]]
+        
+    try:
+        await context.bot.edit_message_text(text=text, chat_id=chat_id, message_id=msg_id, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    except: pass
+
 async def continue_to_desc(update: Update, context: ContextTypes.DEFAULT_TYPE, query=None):
     msg = query.message if query else update.message
     data = context.user_data['pb_data']
@@ -237,16 +328,15 @@ async def continue_to_desc(update: Update, context: ContextTypes.DEFAULT_TYPE, q
         if query: await query.message.delete()
     except: pass
     
-    from advanced_scraper import extract_story_description
-    task = asyncio.create_task(extract_story_description(name, platform))
-    context.user_data['pb_data']['desc_task'] = task
-    
-    text = "<b>Step 3: Description Setup</b>\nSelect an option below:"
+    text = "★ <b>Description Setup</b>\n✧ Choose how to add description:\n⏳ <i>Auto-fetching in background...</i>"
     keyboard = [
-        [InlineKeyboardButton("✦ Auto Fetch", callback_data="pb_dmode|auto"), InlineKeyboardButton("✧ Manual Enter", callback_data="pb_dmode|manual")],
-        [InlineKeyboardButton("Skip", callback_data="pb_dmode|skip")]
+        [InlineKeyboardButton("✦ Auto Fetching... ⏳", callback_data="pb_dmode|auto")],
+        [InlineKeyboardButton("✧ Manual Enter", callback_data="pb_dmode|manual"), InlineKeyboardButton("Skip", callback_data="pb_dmode|skip")]
     ]
-    await msg.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    sent_msg = await msg.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    
+    data['desc_mode_done'] = False
+    asyncio.create_task(_bg_fetch_desc(context, sent_msg.chat_id, sent_msg.message_id, name, platform))
     return HANDLE_DESC_MODE
 
 async def handle_desc_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -254,49 +344,21 @@ async def handle_desc_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     choice = query.data.split("|")[1]
     
-    try: await query.message.delete()
-    except: pass
+    context.user_data['pb_data']['desc_mode_done'] = True
     
     if choice == "skip":
+        try: await query.message.delete()
+        except: pass
         context.user_data['pb_data']['desc'] = ""
         return await continue_to_image(update, context, query)
     elif choice == "manual":
+        try: await query.message.delete()
+        except: pass
         await query.message.reply_text("✍️ <b>Step 3: Manual Description</b>\n\nEnter the description:", parse_mode="HTML")
         return ENTER_DESC
     else:
-        wait_msg = await query.message.reply_text("⏳ <i>Searching...</i>", parse_mode="HTML")
-        task = context.user_data['pb_data'].get('desc_task')
-        
-        try:
-            if task: desc_found = await asyncio.wait_for(task, timeout=4.5)
-            else: desc_found = None
-        except asyncio.TimeoutError:
-            desc_found = None
-        except Exception:
-            desc_found = None
-            
-        if desc_found:
-            from groq_helper import clean_description
-            data = context.user_data['pb_data']
-            data['desc_original'] = desc_found
-            cleaned_desc = await clean_description(desc_found)
-            data['temp_found_desc'] = cleaned_desc
-            
-            try: await wait_msg.delete()
-            except: pass
-            
-            text = f"★ <b>Description Found</b>\n✧ Source: {data.get('platform')}\n\n<blockquote>{html.escape(cleaned_desc)}</blockquote>"
-            keyboard = [
-                [InlineKeyboardButton("✅ Use This", callback_data="pb_desc|use"), InlineKeyboardButton("📝 Short Version", callback_data="pb_desc|short")],
-                [InlineKeyboardButton("✍️ Manual Enter", callback_data="pb_desc|manual")]
-            ]
-            await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-            return HANDLE_DESC_CHOICE
-        else:
-            try: await wait_msg.delete()
-            except: pass
-            await query.message.reply_text("❌ <b>No full description found automatically.</b>\n\n✍️ <b>Step 3: Manual Description</b>\n\nPlease enter the description manually (or /skip):", parse_mode="HTML")
-            return ENTER_DESC
+        # Ignore clicks on auto-fetching dummy button if it hasn't updated yet!
+        return HANDLE_DESC_MODE
 
 async def handle_desc_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -332,22 +394,43 @@ async def handle_desc_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['pb_data']['desc'] = ""
     return await continue_to_image(update, context)
 
+async def _bg_fetch_img(context, chat_id, msg_id, name, platform):
+    try:
+        from advanced_scraper import extract_hd_image
+        img_bytes = await asyncio.wait_for(extract_hd_image(name, platform), timeout=5.0)
+    except Exception:
+        img_bytes = None
+        
+    data = context.user_data.get('pb_data', {})
+    if data.get('img_mode_done'): return
+    
+    if img_bytes:
+        data['temp_img_bytes'] = img_bytes
+        text = f"★ <b>HD Image Found</b>\n✧ Source: {platform}\n\n✅ Ready to use."
+        keyboard = [[InlineKeyboardButton("✅ Send & Use This", callback_data="pb_imgc|use_direct"), InlineKeyboardButton("🔄 Change / Manual", callback_data="pb_imode|manual")]]
+        try:
+            await context.bot.edit_message_text(text=text, chat_id=chat_id, message_id=msg_id, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        except: pass
+    else:
+        text = "☆ <b>No HD image found automatically</b>\n✧ Please upload manually:"
+        keyboard = [[InlineKeyboardButton("✧ Upload Manually", callback_data="pb_imode|manual"), InlineKeyboardButton("Skip", callback_data="pb_imode|skip")]]
+        try: await context.bot.edit_message_text(text=text, chat_id=chat_id, message_id=msg_id, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+        except: pass
+
 async def continue_to_image(update: Update, context: ContextTypes.DEFAULT_TYPE, query=None):
     msg = query.message if query else update.message
     data = context.user_data['pb_data']
     name = data.get('name', '')
     platform = data.get('platform', '')
     
-    from advanced_scraper import extract_hd_image
-    task = asyncio.create_task(extract_hd_image(name, platform))
-    context.user_data['pb_data']['img_task'] = task
-    
-    text = "<b>Step 4: Image Setup</b>\nSelect an option below:"
+    text = "★ <b>Image Setup</b>\n✧ Choose how to add cover image:\n⏳ <i>Auto-fetching in background...</i>"
     keyboard = [
-        [InlineKeyboardButton("✦ Auto Fetch", callback_data="pb_imode|auto"), InlineKeyboardButton("✧ Manual Upload", callback_data="pb_imode|manual")],
-        [InlineKeyboardButton("Skip", callback_data="pb_imode|skip")]
+        [InlineKeyboardButton("✦ Auto Fetching... ⏳", callback_data="pb_imode|auto")],
+        [InlineKeyboardButton("✧ Upload Manually", callback_data="pb_imode|manual"), InlineKeyboardButton("Skip", callback_data="pb_imode|skip")]
     ]
-    await msg.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    sent_msg = await msg.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    data['img_mode_done'] = False
+    asyncio.create_task(_bg_fetch_img(context, sent_msg.chat_id, sent_msg.message_id, name, platform))
     return HANDLE_IMG_MODE
 
 async def handle_img_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -355,6 +438,7 @@ async def handle_img_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     choice = query.data.split("|")[1]
     
+    context.user_data['pb_data']['img_mode_done'] = True
     try: await query.message.delete()
     except: pass
     
@@ -366,38 +450,36 @@ async def handle_img_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("🖼 <b>Step 4: Upload Image(s) / Documents</b>\n\nSend a photo or document for the post (or multiple).", parse_mode="HTML")
         return UPLOAD_IMAGE
     else:
-        wait_msg = await query.message.reply_text("⏳ <i>Fetching HD image...</i>", parse_mode="HTML")
-        task = context.user_data['pb_data'].get('img_task')
+        return HANDLE_IMG_MODE
+
+async def handle_img_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    choice = query.data.split("|")[1]
+    
+    try: await query.message.delete()
+    except: pass
+    
+    if choice == "use_direct":
+        # Actively push the document now
         data = context.user_data['pb_data']
-        
-        try:
-            if task: img_bytes = await asyncio.wait_for(task, timeout=4.5)
-            else: img_bytes = None
-        except asyncio.TimeoutError:
-            img_bytes = None
-        except Exception:
-            img_bytes = None
-            
-        try: await wait_msg.delete()
-        except: pass
-        
+        img_bytes = data.get('temp_img_bytes')
         if img_bytes:
-            text = f"★ <b>HD Image Found</b>\n✧ Source: {data.get('platform')}"
-            keyboard = [
-                [InlineKeyboardButton("✅ Use This", callback_data="pb_imgc|use"), InlineKeyboardButton("🔄 Change / Manual", callback_data="pb_imgc|manual")]
-            ]
-            try:
-                sent_msg = await context.bot.send_document(chat_id=query.message.chat_id, document=img_bytes, filename=f"{data.get('name')}_cover.jpg", caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-                data['temp_found_img'] = {"id": sent_msg.document.file_id, "type": "doc"}
-                return HANDLE_IMG_CHOICE
-            except Exception:
-                await query.message.reply_text("❌ <b>Image found, but failed to load.</b>\n\n🖼 <b>Step 4: Upload Image(s)</b>\nPlease upload manually (or /skip):", parse_mode="HTML")
-                context.user_data['pb_data']['photo_ids'] = []
-                return UPLOAD_IMAGE
-        else:
-            await query.message.reply_text("❌ <b>No HD image found automatically.</b>\n\n🖼 <b>Step 4: Upload Image(s)</b>\nPlease upload manually (or /skip):", parse_mode="HTML")
-            context.user_data['pb_data']['photo_ids'] = []
-            return UPLOAD_IMAGE
+            sent_msg = await context.bot.send_document(chat_id=query.message.chat_id, document=img_bytes, filename=f"{data.get('name')}_cover.jpg")
+            data['temp_found_img'] = {"id": sent_msg.document.file_id, "type": "doc"}
+            context.user_data['pb_data']['photo_ids'] = [data['temp_found_img']]
+        return await continue_to_genre(update, context, query)
+    
+    # Original handle code fallback:
+    if choice == "use":
+        data = context.user_data['pb_data']
+        if 'temp_found_img' in data:
+            context.user_data['pb_data']['photo_ids'] = [data['temp_found_img']]
+        return await continue_to_genre(update, context, query)
+    else:
+        context.user_data['pb_data']['photo_ids'] = []
+        await query.message.reply_text("🖼 <b>Step 4: Upload Image</b>\nPlease upload manually (or /skip):", parse_mode="HTML")
+        return UPLOAD_IMAGE
 
 async def handle_img_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -727,10 +809,10 @@ post_builder_handler = ConversationHandler(
             CallbackQueryHandler(handle_platform_btn, pattern="^pb_"),
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_platform_text)
         ],
-        HANDLE_DESC_MODE: [CallbackQueryHandler(handle_desc_mode, pattern="^pb_dmode\|")],
+        HANDLE_DESC_MODE: [CallbackQueryHandler(handle_desc_mode, pattern="^pb_dmode\|"), CallbackQueryHandler(handle_desc_choice, pattern="^pb_desc\|")],
         HANDLE_DESC_CHOICE: [CallbackQueryHandler(handle_desc_choice, pattern="^pb_desc\|")],
         ENTER_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_desc_text)],
-        HANDLE_IMG_MODE: [CallbackQueryHandler(handle_img_mode, pattern="^pb_imode\|")],
+        HANDLE_IMG_MODE: [CallbackQueryHandler(handle_img_mode, pattern="^pb_imode\|"), CallbackQueryHandler(handle_img_choice, pattern="^pb_imgc\|")],
         HANDLE_IMG_CHOICE: [CallbackQueryHandler(handle_img_choice, pattern="^pb_imgc\|")],
         UPLOAD_IMAGE: [
             CallbackQueryHandler(handle_image, pattern="^pb_img_done|^pb_img_more"),
