@@ -11,6 +11,8 @@ from typing import Optional, List
 from PIL import Image, ImageFilter
 
 logger = logging.getLogger(__name__)
+from dotenv import load_dotenv
+load_dotenv()
 
 async def extract_story_description(story_name: str, platform_name: str) -> Optional[str]:
     api_key = os.getenv("SERPER_API_KEY")

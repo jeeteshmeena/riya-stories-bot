@@ -144,8 +144,7 @@ async def start_builder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['pb_data'] = {}
     
     keyboard = [
-        [InlineKeyboardButton("New Post", callback_data="pb_m|new")],
-        [InlineKeyboardButton("Edit Existing Post", callback_data="pb_m|edit")],
+        [InlineKeyboardButton("New Post", callback_data="pb_m|new"), InlineKeyboardButton("Edit Post", callback_data="pb_m|edit")],
         [InlineKeyboardButton("Cancel", callback_data="pb_cancel")]
     ]
     
@@ -312,7 +311,7 @@ async def transition_to_desc(update: Update, context: ContextTypes.DEFAULT_TYPE,
     text = "★ <b>Description Setup</b>\n✧ Choose how to add description:\n⏳ <i>Auto-fetching in background...</i>"
     keyboard = [
         [InlineKeyboardButton("✦ Auto Fetching... ⏳", callback_data="pb_dm|auto")],
-        [InlineKeyboardButton("✧ Manual Enter", callback_data="pb_dm|manual"), InlineKeyboardButton("📸 Upload Screenshot", callback_data="pb_dm|ocr")],
+        [InlineKeyboardButton("✍️ Manual", callback_data="pb_dm|manual"), InlineKeyboardButton("📸 OCR Scan", callback_data="pb_dm|ocr")],
         [InlineKeyboardButton("Skip", callback_data="pb_dm|skip")]
     ]
     sent_msg = await msg.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
@@ -348,6 +347,10 @@ async def handle_desc_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return STATE_DESC_MODE
 
 async def handle_desc_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if 'pytesseract' not in globals():
+        await update.message.reply_text("❌ <b>OCR Module Missing</b>\nPlease run <code>pip install pytesseract</code> and <code>sudo apt install tesseract-ocr</code> in your VPS terminal to enable this feature.\n\n✍️ Please enter manually:", parse_mode="HTML")
+        return STATE_DESC_ENTER
+        
     if not update.message.photo and not update.message.document:
         await update.message.reply_text("❌ Please send a valid image containing text.")
         return STATE_DESC_OCR
@@ -425,12 +428,12 @@ async def _bg_fetch_img(context, chat_id, msg_id, name, platform):
     if img_bytes:
         data['temp_img_bytes'] = img_bytes
         text = f"★ <b>HD Image Found</b>\n✧ Source: {platform}\n\n✅ Ready to use."
-        keyboard = [[InlineKeyboardButton("✅ Send & Use This", callback_data="pb_ic|use_direct"), InlineKeyboardButton("🔄 Change / Manual", callback_data="pb_im|manual")]]
+        keyboard = [[InlineKeyboardButton("✅ Use Image", callback_data="pb_ic|use_direct"), InlineKeyboardButton("🔄 Manual", callback_data="pb_im|manual")]]
         try: await context.bot.edit_message_text(text=text, chat_id=chat_id, message_id=msg_id, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         except: pass
     else:
         text = "☆ <b>No HD image found automatically</b>\n✧ Please upload manually:"
-        keyboard = [[InlineKeyboardButton("✧ Upload Manually", callback_data="pb_im|manual"), InlineKeyboardButton("Skip", callback_data="pb_im|skip")]]
+        keyboard = [[InlineKeyboardButton("✍️ Upload Manual", callback_data="pb_im|manual"), InlineKeyboardButton("Skip", callback_data="pb_im|skip")]]
         try: await context.bot.edit_message_text(text=text, chat_id=chat_id, message_id=msg_id, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
         except: pass
 
@@ -443,7 +446,7 @@ async def transition_to_img(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     text = "★ <b>Image Setup</b>\n✧ Choose how to add cover image:\n⏳ <i>Auto-fetching in background...</i>"
     keyboard = [
         [InlineKeyboardButton("✦ Auto Fetching... ⏳", callback_data="pb_im|auto")],
-        [InlineKeyboardButton("✧ Upload Manually", callback_data="pb_im|manual"), InlineKeyboardButton("Skip", callback_data="pb_im|skip")]
+        [InlineKeyboardButton("✍️ Upload Manual", callback_data="pb_im|manual"), InlineKeyboardButton("Skip", callback_data="pb_im|skip")]
     ]
     sent_msg = await msg.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
     data['img_mode_done'] = False
@@ -732,7 +735,9 @@ async def handle_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try: await context.bot.edit_message_text(chat_id=chat_id, message_id=edit_msg_id, text=p, parse_mode="HTML", disable_web_page_preview=True)
                 except Exception: await context.bot.edit_message_caption(chat_id=chat_id, message_id=edit_msg_id, caption=p, parse_mode="HTML")
             await working_msg.delete()
-            await context.bot.send_message(chat_id=query.message.chat_id, text=f"✅ <b>Successfully Edited Target Post in {chat_id}!</b>", parse_mode="HTML")
+            
+            end_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Create Another", callback_data="menu|createpost")]])
+            await context.bot.send_message(chat_id=query.message.chat_id, text=f"✅ <b>Successfully Edited Target Post in {chat_id}!</b>", reply_markup=end_kb, parse_mode="HTML")
             
         else:
             for p in previews:
@@ -762,7 +767,8 @@ async def handle_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 })
                 
             await working_msg.delete()
-            await context.bot.send_message(chat_id=query.message.chat_id, text=f"✅ <b>Successfully Posted to {chat_id}!</b>", parse_mode="HTML")
+            end_kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Create Another", callback_data="menu|createpost")]])
+            await context.bot.send_message(chat_id=query.message.chat_id, text=f"✅ <b>Successfully Posted to {chat_id}!</b>", reply_markup=end_kb, parse_mode="HTML")
             
     except Exception as e:
         await working_msg.edit_text(f"❌ <b>Error processing:</b>\n<code>{html.escape(str(e))}</code>", parse_mode="HTML")
