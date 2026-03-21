@@ -26,7 +26,7 @@ async def extract_story_description(story_name: str, platform_name: str) -> Opti
     target_urls: List[str] = []
     
     try:
-        resp = await asyncio.to_thread(requests.post, "https://google.serper.dev/search", json=payload, headers=headers, timeout=10)
+        resp = await asyncio.to_thread(requests.post, "https://google.serper.dev/search", json=payload, headers=headers, timeout=2.0)
         data = resp.json()
         organic = data.get("organic", [])
         for res in organic:
@@ -42,9 +42,9 @@ async def extract_story_description(story_name: str, platform_name: str) -> Opti
     best_desc = None
     best_log = ""
 
-    for target_url in target_urls[:3]: # try up to 3 pages
+    for target_url in target_urls[:2]: # try up to 2 pages max
         try:
-            html_resp = await asyncio.to_thread(requests.get, target_url, timeout=15)
+            html_resp = await asyncio.to_thread(requests.get, target_url, timeout=2.5)
             html_resp.raise_for_status()
             soup = BeautifulSoup(html_resp.text, 'html.parser')
         except Exception:
@@ -149,7 +149,7 @@ async def extract_hd_image(story_name: str, platform_name: str) -> Optional[byte
     headers = {'X-API-KEY': api_key, 'Content-Type': 'application/json'}
     target_urls: List[str] = []
     try:
-        resp = await asyncio.to_thread(requests.post, "https://google.serper.dev/search", json=payload, headers=headers, timeout=10)
+        resp = await asyncio.to_thread(requests.post, "https://google.serper.dev/search", json=payload, headers=headers, timeout=2.0)
         data = resp.json()
         for res in data.get("organic", []):
             if "link" in res: target_urls.append(res["link"])
@@ -158,7 +158,7 @@ async def extract_hd_image(story_name: str, platform_name: str) -> Optional[byte
     img_urls: List[str] = []
     if target_urls:
         try:
-            html_resp = await asyncio.to_thread(requests.get, target_urls[0], timeout=10)
+            html_resp = await asyncio.to_thread(requests.get, target_urls[0], timeout=2.5)
             if html_resp.status_code == 200:
                 soup = BeautifulSoup(html_resp.text, 'html.parser')
                 
@@ -179,13 +179,13 @@ async def extract_hd_image(story_name: str, platform_name: str) -> Optional[byte
     img_fallback_query = f"{story_name} {platform_name} cover image"
     payload_img = {"q": img_fallback_query + " site:pocketfm.com OR site:kukufm.com OR site:headfone.co.in", "gl": "in"}
     try:
-        resp = await asyncio.to_thread(requests.post, "https://google.serper.dev/images", json=payload_img, headers=headers, timeout=10)
+        resp = await asyncio.to_thread(requests.post, "https://google.serper.dev/images", json=payload_img, headers=headers, timeout=2.0)
         data = resp.json()
         for img in data.get("images", []):
             if "imageUrl" in img: img_urls.append(img["imageUrl"])
     except: pass
     
-    for base_u in img_urls[:10]:
+    for base_u in img_urls[:2]:
         if not base_u: continue
         variants = [
             re.sub(r'w=\d+', 'w=2000', re.sub(r'width=\d+', 'width=2000', re.sub(r'q=\d+', 'q=100', base_u))),
@@ -196,7 +196,7 @@ async def extract_hd_image(story_name: str, platform_name: str) -> Optional[byte
         for u in variants:
             if not u.startswith('http'): continue
             try:
-                resp = await asyncio.to_thread(requests.get, u, timeout=10)
+                resp = await asyncio.to_thread(requests.get, u, timeout=2.5)
                 if resp.status_code == 200:
                     return await asyncio.to_thread(_enhance_image, resp.content)
             except: continue

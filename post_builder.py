@@ -235,9 +235,15 @@ async def continue_to_desc(update: Update, context: ContextTypes.DEFAULT_TYPE, q
         if query: await query.message.delete()
     except: pass
     
-    wait_msg = await msg.reply_text("⏳ <i>Searching and validating full explicit description natively...</i>", parse_mode="HTML")
+    wait_msg = await msg.reply_text("⏳ <i>Searching...</i>", parse_mode="HTML")
     from advanced_scraper import extract_story_description
-    desc_found = await extract_story_description(name, platform)
+    
+    try:
+        desc_found = await asyncio.wait_for(extract_story_description(name, platform), timeout=4.5)
+    except asyncio.TimeoutError:
+        desc_found = None
+    except Exception:
+        desc_found = None
     
     if desc_found:
         from groq_helper import clean_description
@@ -304,9 +310,16 @@ async def continue_to_image(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     name = data.get('name', '')
     platform = data.get('platform', '')
     
-    wait_msg = await msg.reply_text("⏳ <i>Searching and scaling HD cover image...</i>", parse_mode="HTML")
+    wait_msg = await msg.reply_text("⏳ <i>Fetching HD image...</i>", parse_mode="HTML")
     from advanced_scraper import extract_hd_image
-    img_bytes = await extract_hd_image(name, platform)
+    
+    try:
+        img_bytes = await asyncio.wait_for(extract_hd_image(name, platform), timeout=4.5)
+    except asyncio.TimeoutError:
+        img_bytes = None
+    except Exception:
+        img_bytes = None
+        
     try: await wait_msg.delete()
     except: pass
     
