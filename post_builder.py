@@ -249,11 +249,10 @@ async def start_builder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["pb_data"] = {}
 
     kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("New Post", callback_data="pb_m|new"),
-         InlineKeyboardButton("Edit Post", callback_data="pb_m|edit")],
+        [InlineKeyboardButton("New", callback_data="pb_m|new"), InlineKeyboardButton("Edit", callback_data="pb_m|edit")],
         [InlineKeyboardButton("✖ Cancel", callback_data="pb_cancel")]
     ])
-    text = "<b>🛠 Post Builder</b>\n\nChoose a mode:"
+    text = "<b>╭─❰ 🛠 POST BUILDER ❱─╮\n┣⊸ Choose mode\n╰──────────────╯</b>"
 
     if update.callback_query:
         try: await update.callback_query.answer()
@@ -274,8 +273,7 @@ async def handle_post_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: pass
 
     if query.data == "pb_cancel":
-        await query.edit_message_text("Cancelled.")
-        context.user_data.pop("pb_data", None)
+        await cancel_handler(update, context)
         return ConversationHandler.END
 
     mode = query.data.split("|")[1]
@@ -297,7 +295,7 @@ async def handle_post_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("Compact", callback_data="pb_f|5")],
         [InlineKeyboardButton("✖ Cancel", callback_data="pb_cancel")]
     ])
-    await query.edit_message_text("<b>Select Format:</b>", reply_markup=kb, parse_mode="HTML")
+    await query.edit_message_text("<b>╭─❰ 📝 FORMAT ❱─╮\n┣⊸ Select layout\n╰──────────────╯</b>", reply_markup=kb, parse_mode="HTML")
     return STATE_FORMAT
 
 # ── Edit link ─────────────────────────────────────────────────────────────────
@@ -340,12 +338,11 @@ async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: pass
 
     if query.data == "pb_cancel":
-        await query.edit_message_text("Cancelled.")
-        context.user_data.pop("pb_data", None)
+        await cancel_handler(update, context)
         return ConversationHandler.END
 
     context.user_data["pb_data"]["format"] = query.data.split("|")[1]
-    await query.edit_message_text("✏️ <b>Enter Story Name:</b>", parse_mode="HTML")
+    await query.edit_message_text("<b>STEP 1 — NAME</b>\n<b>╭─❰ 📝 STORY NAME ❱─╮\n┣⊸ Enter the name\n┣⊸ Example: <code>A Nightmare</code>\n╰──────────────╯</b>", parse_mode="HTML")
     return STATE_NAME
 
 # ── Name ──────────────────────────────────────────────────────────────────────
@@ -357,7 +354,7 @@ async def handle_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("Headfone", callback_data="pb_p|Headfone"),
          InlineKeyboardButton("✎ Custom", callback_data="pb_p_cust")]
     ])
-    await update.message.reply_text("🎵 <b>Select Platform:</b>", reply_markup=kb, parse_mode="HTML")
+    await update.message.reply_text("<b>STEP 2 — PLATFORM</b>\n<b>╭─❰ 🎵 PLATFORM ❱─╮\n┣⊸ Select or type it\n╰──────────────╯</b>", reply_markup=kb, parse_mode="HTML")
     return STATE_PLATFORM
 
 # ── Platform ──────────────────────────────────────────────────────────────────
@@ -392,17 +389,11 @@ async def _transition_to_desc(update: Update, context: ContextTypes.DEFAULT_TYPE
     asyncio.create_task(_bg_prefetch_img(context, name, platform))
     _log.info(f"[DESC] Showing description options for '{name}'")
 
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✎", callback_data="pb_dm|manual"),
-        InlineKeyboardButton("📷", callback_data="pb_dm|ocr"),
-        InlineKeyboardButton("⏭", callback_data="pb_dm|skip"),
-    ]])
     await msg.reply_text(
-        "★ <b>Description</b>\n✎ Manual  │  📷 OCR  │  ⏭ Skip",
-        reply_markup=kb, parse_mode="HTML"
+        "<b>STEP 3 — DESCRIPTION</b>\n<b>╭─❰ 📄 DESCRIPTION ❱─╮\n┣⊸ Type text, send image (OCR)\n┣⊸ Or type skip\n╰──────────────╯</b>",
+        parse_mode="HTML"
     )
-    data["desc_mode_done"] = False
-    return STATE_DESC_MODE
+    return STATE_DESC_ENTER
 
 async def handle_desc_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -537,7 +528,8 @@ async def handle_desc_choice(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return STATE_DESC_ENTER
 
 async def handle_desc_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["pb_data"]["desc"] = update.message.text.strip()
+    text = update.message.text.strip()
+    context.user_data["pb_data"]["desc"] = "" if text.lower() == "skip" else text
     return await _transition_to_img(update, context, None)
 
 # ── Image step ────────────────────────────────────────────────────────────────
@@ -563,14 +555,14 @@ async def _transition_to_img(update: Update, context: ContextTypes.DEFAULT_TYPE,
     # No cached image - Direct input flow
     _log.info("[IMG] No prefetched image — asking user for direct upload")
     await msg.reply_text(
-        "📷 <b>Send image</b>\n\n<i>Type /skip to skip.</i>",
+        "<b>STEP 4 — IMAGE</b>\n<b>╭─❰ 📷 COVER IMAGE ❱─╮\n┣⊸ Send image\n┣⊸ Or type skip\n╰──────────────╯</b>",
         parse_mode="HTML"
     )
     return STATE_IMG_UPLOAD
 
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data["pb_data"]
-    if update.message.text == "/skip":
+    if update.message.text and update.message.text.strip().lower() in ["skip", "/skip"]:
         data.setdefault("photo_ids", [])
         return await _transition_to_genre(update, context, None)
 
@@ -581,7 +573,7 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fid = update.message.document.file_id
         mtype = "doc"
     else:
-        await update.message.reply_text("❌ Please send image or type /skip")
+        await update.message.reply_text("❌ Send image or type skip")
         return STATE_IMG_UPLOAD
 
     # Capture file_id and immediately proceed
@@ -601,7 +593,7 @@ async def _transition_to_genre(update: Update, context: ContextTypes.DEFAULT_TYP
         [InlineKeyboardButton("⚔️ Action", callback_data="pb_g|Action"),
          InlineKeyboardButton("✎ Custom", callback_data="pb_g_cust")],
     ])
-    await msg.reply_text("🎭 <b>Select Genre:</b>", reply_markup=kb, parse_mode="HTML")
+    await msg.reply_text("<b>STEP 5 — GENRE</b>\n<b>╭─❰ 🎭 GENRE ❱─╮\n┣⊸ Select or type it\n╰──────────────╯</b>", reply_markup=kb, parse_mode="HTML")
     return STATE_GENRE
 
 async def handle_genre_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -674,52 +666,30 @@ async def _transition_to_dest(update: Update, context: ContextTypes.DEFAULT_TYPE
     if data.get("post_mode") == "edit":
         return await _generate_preview(msg, context)
 
-    from database import load_config
-    cfg = load_config()
-    destinations = cfg.get("post_channels", [])
-
-    btns = [[KeyboardButton(str(d))] for d in destinations[:5]]
-    btns.append([KeyboardButton("➕ Add Channel")])
-    btns.append([KeyboardButton("✖ This Chat")])
-
     if query:
         try: await query.message.delete()
         except: pass
 
     await msg.reply_text(
-        "📢 <b>Destination</b>\n\nWhere to post?",
-        reply_markup=ReplyKeyboardMarkup(btns, resize_keyboard=True, one_time_keyboard=True),
+        "<b>STEP 10 — DESTINATION</b>\n"
+        "<b>╭─❰ 🚀 POST CHANNEL ❱─╮\n"
+        "┣⊸ Send @channel or ID\n"
+        "┣⊸ Or type skip\n"
+        "╰──────────────╯</b>",
         parse_mode="HTML"
     )
     return STATE_DESTINATION
 
 async def handle_destination(update: Update, context: ContextTypes.DEFAULT_TYPE):
     dest = update.message.text.strip()
-    if dest == "➕ Add Channel":
-        await update.message.reply_text(
-            "Send channel username (e.g. @MyChannel) or ID:",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        return STATE_CUSTOM_DEST
-
-    if dest != "✖ This Chat":
+    if dest.lower() in ["skip", "/skip"]:
+        context.user_data["pb_data"]["destination"] = ""
+    else:
         context.user_data["pb_data"]["destination"] = dest
 
-    msg = await update.message.reply_text("Channel set.", reply_markup=ReplyKeyboardRemove())
+    msg = await update.message.reply_text("✅ Target saved.")
     return await _generate_preview(msg, context)
 
-async def handle_custom_destination(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    dest = update.message.text.strip()
-    from database import load_config, save_config
-    cfg = load_config()
-    dests = cfg.get("post_channels", [])
-    if dest not in dests:
-        dests.append(dest)
-        cfg["post_channels"] = dests
-        save_config(cfg)
-    context.user_data["pb_data"]["destination"] = dest
-    msg = await update.message.reply_text(f"✅ {dest} saved.", reply_markup=ReplyKeyboardRemove())
-    return await _generate_preview(msg, context)
 
 # ── Preview ───────────────────────────────────────────────────────────────────
 async def _generate_preview(message, context: ContextTypes.DEFAULT_TYPE):
@@ -778,8 +748,7 @@ async def handle_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: pass
 
     if query.data == "pb_cancel":
-        await query.edit_message_text("Cancelled.")
-        context.user_data.pop("pb_data", None)
+        await cancel_handler(update, context)
         return ConversationHandler.END
 
     data = context.user_data["pb_data"]
@@ -925,8 +894,13 @@ async def handle_final(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── Cancel ────────────────────────────────────────────────────────────────────
 async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("pb_data", None)
-    try: await update.message.reply_text("Cancelled.", reply_markup=ReplyKeyboardRemove())
-    except: pass
+    msg = "<b>╭─❰ ❌ CANCELLED ❱─╮\n╰──────────────╯</b>"
+    if update.callback_query:
+        try: await update.callback_query.message.edit_text(msg, parse_mode="HTML")
+        except: pass
+    else:
+        try: await update.message.reply_text(msg, parse_mode="HTML")
+        except: pass
     return ConversationHandler.END
 
 # ── ConversationHandler ────────────────────────────────────────────────────────
@@ -944,10 +918,11 @@ post_builder_handler = ConversationHandler(
             CallbackQueryHandler(handle_platform_btn, pattern=r"^pb_p\||^pb_p_cust"),
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_platform_text),
         ],
-        STATE_DESC_MODE: [CallbackQueryHandler(handle_desc_mode, pattern=r"^pb_dm\|")],
         STATE_DESC_CHOICE: [CallbackQueryHandler(handle_desc_choice, pattern=r"^pb_dc\|")],
-        STATE_DESC_ENTER: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_desc_text)],
-        STATE_DESC_OCR: [MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_desc_ocr)],
+        STATE_DESC_ENTER: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_desc_text),
+            MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_desc_ocr),
+        ],
         STATE_IMG_UPLOAD: [
             MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_image),
             CommandHandler("skip", handle_image),
@@ -964,7 +939,6 @@ post_builder_handler = ConversationHandler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_username_text),
         ],
         STATE_DESTINATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_destination)],
-        STATE_CUSTOM_DEST: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_destination)],
         STATE_CONFIRM: [CallbackQueryHandler(handle_final, pattern=r"^pb_final_yes|^pb_cancel")],
     },
     fallbacks=[
