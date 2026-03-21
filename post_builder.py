@@ -96,99 +96,14 @@ def is_admin_local(user_id: int) -> bool:
     return str(user_id) in mods or user_id in mods
 
 def _ocr_extract(raw_text: str, story_name: str, platform: str = "") -> str:
-    """
-    Platform-aware OCR description extraction.
-
-    Pocket FM layout:
-        [title + UI elements]
-        About A Nightmare | अ नाइटमेयर   ← anchor line
-        When loved ones left Kriya ...    ← description starts HERE
-
-    Kuku FM layout:
-        About the show   >               ← section header (skip)
-        Jobless Ghar Jamai               ← story title (skip)
-        Aarav Ambani jiske ...           ← description starts HERE
-    """
-    _platform = platform.lower()
-    is_kuku = "kuku" in _platform
-    is_pocket = "pocket" in _platform
-
+    """Simple clean output: remove extra blank lines and spaces, do not truncate."""
     lines = raw_text.split("\n")
-    n = len(lines)
-    start_idx = None  # index AFTER which description begins
-
-    if is_pocket:
-        # ── Pocket FM: find "About <story name>" line ─────────────────────
-        for i, ln in enumerate(lines):
-            lo = ln.strip().lower()
-            # Must start with "about" and NOT be "about the show" generic header
-            if lo.startswith("about") and "the show" not in lo:
-                start_idx = i  # description is from i+1 onward
-                break
-        if start_idx is None:
-            # Fallback: any line starting with "about"
-            for i, ln in enumerate(lines):
-                if ln.strip().lower().startswith("about"):
-                    start_idx = i
-                    break
-
-    elif is_kuku:
-        # ── Kuku FM: find "About the show" → skip title → text below ─────
-        about_show_idx = None
-        for i, ln in enumerate(lines):
-            lo = ln.strip().lower()
-            if lo.startswith("about") and ("show" in lo or "the" in lo):
-                about_show_idx = i
-                break
-
-        if about_show_idx is not None:
-            # The title line is immediately after (or the story name itself)
-            # Skip it regardless and start description from the line after
-            candidate = about_show_idx + 1
-            if candidate < n:
-                # If this line looks like a title (matches story_name or is short heading)
-                next_lo = lines[candidate].strip().lower()
-                sn_lo = story_name.strip().lower()
-                if sn_lo and sn_lo in next_lo:
-                    start_idx = candidate  # start AFTER the title line
-                else:
-                    # Even if we can't match, skip one line (it's usually the title)
-                    start_idx = candidate
-        else:
-            # Fallback: find story title line directly and start AFTER it
-            if story_name:
-                sn_lo = story_name.strip().lower()
-                for i, ln in enumerate(lines):
-                    if sn_lo in ln.strip().lower() and len(ln.strip()) < 80:
-                        start_idx = i  # start AFTER this line
-                        break
-
-    else:
-        # ── Unknown platform: generic "About" search ──────────────────────
-        for i, ln in enumerate(lines):
-            if ln.strip().lower().startswith("about"):
-                start_idx = i
-                break
-
-    # Collect lines after start_idx, stop at UI noise
-    working = lines[start_idx + 1:] if start_idx is not None else lines
-
-    result = []
-    for ln in working:
-        stripped = ln.strip()
-        if not stripped:
-            continue
-        lo = stripped.lower()
-        # Stop when we hit UI noise
-        if any(lo == w or lo.startswith(w + " ") for w in OCR_STOP_WORDS):
-            break
-        # Skip obvious single-word UI noise
-        if stripped in {"More", "...More", "…More", ">", "< ", "›"}:
-            continue
-        if len(stripped) >= 3:
-            result.append(stripped)
-
-    return " ".join(result).strip()
+    cleaned = []
+    for ln in lines:
+        s = ln.strip()
+        if s:
+            cleaned.append(s)
+    return "\n".join(cleaned)
 
 # ── Format builders ──────────────────────────────────────────────────────────
 def build_format_1(data: dict) -> str:
@@ -512,24 +427,7 @@ async def handle_desc_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         raw = await tg_file.download_as_bytearray()
         img = Image.open(io.BytesIO(raw))
-        _log.info(f"[OCR] Image size={img.size}")
-
-        pb = context.user_data.get("pb_data", {})
-        platform = pb.get("platform", "").lower()
-
-        # CROP logic: Physical cropping ensures OCR never scans top half
-        w, h = img.size
-        # Pocket FM: Usually lower 55%
-        if "pocket" in platform:
-            img = img.crop((0, int(h * 0.45), w, h))
-        # Kuku FM: Usually lower 70%
-        elif "kuku" in platform:
-            img = img.crop((0, int(h * 0.30), w, h))
-        else:
-            # Safe crop 40%
-            img = img.crop((0, int(h * 0.40), w, h))
-            
-        _log.info(f"[OCR] Cropped for platform '{platform}' to size={img.size}")
+        _log.info(f"[OCR] Full image size={img.size}")
 
         def _run_ocr(image):
             return pytesseract.image_to_string(image, lang="eng+hin")
@@ -537,22 +435,18 @@ async def handle_desc_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raw_text = await asyncio.to_thread(_run_ocr, img)
         _log.info(f"[OCR] Raw text length={len(raw_text)}")
 
-        pb = context.user_data.get("pb_data", {})
-        story_name = pb.get("name", "")
-        platform = pb.get("platform", "")
-        _log.info(f"[OCR] Extracting for platform='{platform}' story='{story_name}'")
-        cleaned = _ocr_extract(raw_text, story_name, platform)
+        cleaned = _ocr_extract(raw_text, "", "")
         _log.info(f"[OCR] Cleaned length={len(cleaned)}")
 
         await wait.delete()
 
         if len(cleaned) < 10:
             _log.warning("[OCR] Too short — prompting manual")
-            await update.message.reply_text("❌ OCR found no readable text.\n\n✍️ Enter manually:")
+            await update.message.reply_text("❌ OCR failed. Please try a clearer image or crop properly.\n\n✍️ Enter manually:")
             return STATE_DESC_ENTER
 
         context.user_data["pb_data"]["temp_found_desc"] = cleaned
-        preview = html.escape(cleaned[:800])
+        preview = html.escape(cleaned)
         kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("✅", callback_data="pb_dc|use"),
             InlineKeyboardButton("✎", callback_data="pb_dc|manual"),
