@@ -54,8 +54,33 @@ from telegram.ext import (
 
 STATUS_EMOJIS = {"Completed": "✅", "Ongoing": "⏳", "RIP": "💀"}
 DEFAULT_JOIN_USERNAME = "@StoriesByJeetXNew"
-DEFAULT_FORMAT_1_EMOJI = "🫠"
+DEFAULT_FORMAT_1_EMOJI = "📖"  # fallback; genre-based set in build_format_1
 DEFAULT_FORMAT_1_JOIN_EMOJI = "🦊"
+
+GENRE_EMOJI_MAP = {
+    "romance": "❤️", "love": "❤️",
+    "thriller": "🔍", "suspense": "🔍",
+    "horror": "👻",
+    "crime": "🔪",
+    "action": "⚔️",
+    "comedy": "😂",
+    "fantasy": "🧙",
+    "mystery": "🕵️",
+    "drama": "🎭",
+    "school": "🏫",
+    "history": "📜",
+    "sci-fi": "🚀", "science": "🚀",
+}
+
+def _genre_emoji(genre: str) -> str:
+    if not genre:
+        return "📖"
+    lo = genre.lower()
+    for k, v in GENRE_EMOJI_MAP.items():
+        if k in lo:
+            return v
+    return "📖"
+
 
 def is_admin_local(user_id):
     from config import ADMIN_ID, OWNER_ID
@@ -67,10 +92,11 @@ def is_admin_local(user_id):
     return False
 
 def build_format_1(data):
-    emoji = DEFAULT_FORMAT_1_EMOJI
+    genre = data.get("genre", "")
+    emoji = _genre_emoji(genre)
     name = data.get("name", "Unknown")
     status = data.get("status", "Ongoing")
-    genre = data.get("genre", "Unknown")
+    genre = data.get("genre", "Unknown") or "Unknown"
     link = data.get("link", "")
     join_username = data.get("username", DEFAULT_JOIN_USERNAME)
     join_emoji = DEFAULT_FORMAT_1_JOIN_EMOJI
@@ -277,56 +303,49 @@ async def handle_platform_text(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data['pb_data']['platform'] = update.message.text
     return await transition_to_desc(update, context, None)
 
-async def _bg_fetch_desc(context, chat_id, msg_id, name, platform):
+
+async def _bg_prefetch_img(context, name: str, platform: str):
+    """Prefetch image in background while user fills description."""
+    _logger = logging.getLogger(__name__)
+    _logger.info(f"[IMG-BG] Prefetch started: {name} / {platform}")
     try:
-        from advanced_scraper import extract_story_description
-        desc_found = await asyncio.wait_for(extract_story_description(name, platform), timeout=4.5)
-    except: desc_found = None
-    
-    data = context.user_data.get('pb_data', {})
-    if data.get('desc_mode_done'): return
-    
-    if desc_found:
-        from groq_helper import clean_description
-        try: cleaned = await asyncio.wait_for(clean_description(desc_found), timeout=4.5)
-        except: cleaned = desc_found
-        data['desc_original'] = cleaned
-        data['temp_found_desc'] = cleaned
-        text = f"★ <b>Description Found</b>\n✧ Source: {platform}\n\n<blockquote>{html.escape(cleaned[:800])}</blockquote>..."
-        keyboard = [
-            [InlineKeyboardButton("✅ Use This", callback_data="pb_dc|use"), InlineKeyboardButton("📝 Short Version", callback_data="pb_dc|short")],
-            [InlineKeyboardButton("✍️ Manual", callback_data="pb_dc|manual")]
-        ]
-    else:
-        text = "☆ <b>No full description found</b>\n✧ Please enter manually:"
-        keyboard = [
-            [InlineKeyboardButton("✍️ Manual Enter", callback_data="pb_dm|manual"), InlineKeyboardButton("📸 Upload Screenshot", callback_data="pb_dm|ocr")],
-            [InlineKeyboardButton("Skip", callback_data="pb_dm|skip")]
-        ]
-        
-    try: await context.bot.edit_message_text(text=text, chat_id=chat_id, message_id=msg_id, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-    except: pass
+        from advanced_scraper import extract_hd_image
+        img_bytes = await asyncio.wait_for(extract_hd_image(name, platform), timeout=12)
+        if img_bytes:
+            data = context.user_data.get('pb_data', {})
+            if not data.get('img_mode_done'):
+                data['temp_img_bytes'] = img_bytes
+                _logger.info(f"[IMG-BG] Prefetch success — {len(img_bytes)} bytes cached")
+        else:
+            _logger.info("[IMG-BG] Prefetch returned no image")
+    except Exception as e:
+        _logger.warning(f"[IMG-BG] Prefetch failed: {e}")
+
+# Auto description fetch removed — manual/OCR/skip only
 
 async def transition_to_desc(update: Update, context: ContextTypes.DEFAULT_TYPE, query):
+    _logger = logging.getLogger(__name__)
     msg = query.message if query else update.message
     try:
         if query: await query.message.delete()
     except: pass
-    
+
     data = context.user_data['pb_data']
     name = data.get('name', '')
     platform = data.get('platform', '')
-    
-    text = "★ <b>Description Setup</b>\n✧ Choose how to add description:\n⏳ <i>Auto-fetching in background...</i>"
+
+    # Start image fetch in background immediately so it's ready by the time user reaches image step
+    _logger.info(f"[IMG-BG] Starting background image fetch for '{name}' on '{platform}'")
+    asyncio.create_task(_bg_prefetch_img(context, name, platform))
+
+    text = "★ <b>Description</b>\n✧ How to add description?"
     keyboard = [
-        [InlineKeyboardButton("✦ Auto Fetching... ⏳", callback_data="pb_dm|auto")],
-        [InlineKeyboardButton("✍️ Manual", callback_data="pb_dm|manual"), InlineKeyboardButton("📸 OCR Scan", callback_data="pb_dm|ocr")],
-        [InlineKeyboardButton("Skip", callback_data="pb_dm|skip")]
+        [InlineKeyboardButton("✎ Manual", callback_data="pb_dm|manual"),
+         InlineKeyboardButton("📷 OCR", callback_data="pb_dm|ocr"),
+         InlineKeyboardButton("⏭ Skip", callback_data="pb_dm|skip")]
     ]
-    sent_msg = await msg.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-    
-    data['desc_mode_done'] = False
-    asyncio.create_task(_bg_fetch_desc(context, sent_msg.chat_id, sent_msg.message_id, name, platform))
+    await msg.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    data['desc_mode_done'] = True
     return STATE_DESC_MODE
 
 async def handle_desc_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -353,6 +372,7 @@ async def handle_desc_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text("📸 <b>Upload Screenshot (OCR)</b>\n\nSend the image containing the description:", parse_mode="HTML")
         return STATE_DESC_OCR
     else:
+        # Unknown/auto — just re-show options
         return STATE_DESC_MODE
 
 async def handle_desc_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -383,7 +403,35 @@ async def handle_desc_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return pytesseract.image_to_string(image, lang="eng+hin")
         extracted = await asyncio.to_thread(_do_ocr, img)
         _logger.info(f"[OCR] Raw extracted length={len(extracted)}")
-        lines = [ln.strip() for ln in extracted.split("\n") if len(ln.strip()) > 3]
+
+        # Filter: extract only text after "About ..." section
+        story_name = context.user_data.get("pb_data", {}).get("name", "")
+        lines_raw = extracted.split("\n")
+        about_idx = None
+        for idx, ln in enumerate(lines_raw):
+            lo = ln.strip().lower()
+            if lo.startswith("about") and (not story_name or story_name.lower()[:6] in lo or lo == "about"):
+                about_idx = idx
+                break
+        if about_idx is not None and about_idx + 1 < len(lines_raw):
+            _logger.info(f"[OCR] Found 'About' section at line {about_idx} — extracting below")
+            lines_raw = lines_raw[about_idx + 1:]
+        else:
+            _logger.info("[OCR] No 'About' section found — using full OCR text")
+
+        # Clean: skip UI junk keywords
+        UI_JUNK = {"play", "resume", "episode", "episodes", "rating", "ratings",
+                   "download", "follow", "share", "like", "subscribe", "login",
+                   "sign in", "sign up", "register", "comments", "comment"}
+        lines = []
+        for ln in lines_raw:
+            stripped = ln.strip()
+            if len(stripped) < 3:
+                continue
+            lo = stripped.lower()
+            if any(lo == junk or lo.startswith(junk+" ") for junk in UI_JUNK):
+                continue
+            lines.append(stripped)
         cleaned = " ".join(lines).strip()
         await wait_msg.delete()
         if len(cleaned) < 10:
@@ -439,41 +487,43 @@ async def handle_desc_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['pb_data']['desc'] = update.message.text
     return await transition_to_img(update, context, None)
 
-async def _bg_fetch_img(context, chat_id, msg_id, name, platform):
-    try:
-        from advanced_scraper import extract_hd_image
-        img_bytes = await asyncio.wait_for(extract_hd_image(name, platform), timeout=4.5)
-    except: img_bytes = None
-        
-    data = context.user_data.get('pb_data', {})
-    if data.get('img_mode_done'): return
-    
-    if img_bytes:
-        data['temp_img_bytes'] = img_bytes
-        text = f"★ <b>HD Image Found</b>\n✧ Source: {platform}\n\n✅ Ready to use."
-        keyboard = [[InlineKeyboardButton("✅ Use Image", callback_data="pb_ic|use_direct"), InlineKeyboardButton("🔄 Manual", callback_data="pb_im|manual")]]
-        try: await context.bot.edit_message_text(text=text, chat_id=chat_id, message_id=msg_id, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-        except: pass
-    else:
-        text = "☆ <b>No HD image found automatically</b>\n✧ Please upload manually:"
-        keyboard = [[InlineKeyboardButton("✍️ Upload Manual", callback_data="pb_im|manual"), InlineKeyboardButton("Skip", callback_data="pb_im|skip")]]
-        try: await context.bot.edit_message_text(text=text, chat_id=chat_id, message_id=msg_id, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-        except: pass
+# _bg_fetch_img removed — image is pre-fetched via _bg_prefetch_img in transition_to_desc
 
 async def transition_to_img(update: Update, context: ContextTypes.DEFAULT_TYPE, query):
+    _logger = logging.getLogger(__name__)
     msg = query.message if query else update.message
     data = context.user_data['pb_data']
-    name = data.get('name', '')
-    platform = data.get('platform', '')
-    
-    text = "★ <b>Image Setup</b>\n✧ Choose how to add cover image:\n⏳ <i>Auto-fetching in background...</i>"
-    keyboard = [
-        [InlineKeyboardButton("✦ Auto Fetching... ⏳", callback_data="pb_im|auto")],
-        [InlineKeyboardButton("✍️ Upload Manual", callback_data="pb_im|manual"), InlineKeyboardButton("Skip", callback_data="pb_im|skip")]
-    ]
-    sent_msg = await msg.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+
+    # Check if image was already prefetched in background
+    cached = data.get('temp_img_bytes')
+    if cached:
+        _logger.info(f"[IMG] Prefetched image available ({len(cached)} bytes) — showing immediately")
+        try:
+            sent = await msg.reply_document(
+                document=cached,
+                filename=f"{data.get('name','cover')}_cover.jpg",
+                caption="★ <b>Cover Image (auto-fetched)</b>\n✧ Use it, or upload a different one.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("✅ Use", callback_data="pb_ic|use_direct"),
+                    InlineKeyboardButton("🔄 Replace", callback_data="pb_im|manual"),
+                    InlineKeyboardButton("⏭ Skip", callback_data="pb_im|skip")
+                ]])
+            )
+        except Exception as e:
+            _logger.warning(f"[IMG] Could not send prefetched image: {e}")
+            cached = None
+
+    if not cached:
+        _logger.info("[IMG] No prefetched image — prompting manual")
+        text = "★ <b>Cover Image</b>\n✧ No auto image found. Upload or skip."
+        keyboard = [[
+            InlineKeyboardButton("📁 Upload", callback_data="pb_im|manual"),
+            InlineKeyboardButton("⏭ Skip", callback_data="pb_im|skip")
+        ]]
+        await msg.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+
     data['img_mode_done'] = False
-    asyncio.create_task(_bg_fetch_img(context, sent_msg.chat_id, sent_msg.message_id, name, platform))
     return STATE_IMG_MODE
 
 async def handle_img_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -536,10 +586,14 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return STATE_IMG_UPLOAD
             
         context.user_data['pb_data']['photo_ids'].append({"id": file_id, "type": m_type})
-        
-        keyboard = [[InlineKeyboardButton("✅ Done Uploading", callback_data="pb_idone")]]
-        await update.message.reply_text(f"✅ Received {len(context.user_data['pb_data']['photo_ids'])} file(s). Send more or click Done.", reply_markup=InlineKeyboardMarkup(keyboard))
-        return STATE_IMG_UPLOAD
+        count = len(context.user_data['pb_data']['photo_ids'])
+        if count == 1:
+            # Single image: go directly to next step
+            return await transition_to_genre(update, context, None)
+        else:
+            keyboard = [[InlineKeyboardButton("✅ Done", callback_data="pb_idone")]]
+            await update.message.reply_text(f"✅ {count} files received. Send more or tap Done.", reply_markup=InlineKeyboardMarkup(keyboard))
+            return STATE_IMG_UPLOAD
         
     return await transition_to_genre(update, context, None)
 

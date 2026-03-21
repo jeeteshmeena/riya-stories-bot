@@ -1608,12 +1608,12 @@ def _stories_page(page=0):
     for i, name in enumerate(chunk, start + 1):
         title = clean_story(name)
         db_story = db.get(name, {})
-        link = db_story.get("link", "")
-        # per‑story monospace so each can be copied individually, embedded in link
+        link = db_story.get("link", "") or db_story.get("message_url", "")
+        # Title is the clickable anchor — no separate link display
         if link:
-            lines.append(f"{i}. <a href='{link}'><code>{title}</code></a>")
+            lines.append(f"{i}. <a href='{link}'>{html.escape(title)}</a>")
         else:
-            lines.append(f"{i}. <code>{title}</code>")
+            lines.append(f"{i}. {html.escape(title)}")
     total = len(story_index)
     header = (
         f"<b>✦ Story List  ·  {total} titles</b>\n"
@@ -1656,7 +1656,7 @@ async def stories(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nav, 
         [
             InlineKeyboardButton("🗑️ Delete", callback_data=f"story_delete|{caller_id}"),
-            InlineKeyboardButton("WTF", callback_data=f"story_wtf|{caller_id}")
+            InlineKeyboardButton("📋 Full List", callback_data=f"story_wtf|{caller_id}")
         ]
     ]
 
@@ -4958,7 +4958,7 @@ def start_bot():
     app.add_handler(CommandHandler("scan", scan))
     app.add_handler(CommandHandler("check", check_command))
     app.add_handler(CommandHandler("stories", stories))
-    app.add_handler(CommandHandler("storylist", storylist_cmd))
+    # /storylist command removed — access via WTF button only
     app.add_handler(CommandHandler("request", request_story))
     app.add_handler(CommandHandler("about", about))
     app.add_handler(CommandHandler("how", how))
