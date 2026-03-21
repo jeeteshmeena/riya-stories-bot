@@ -262,7 +262,8 @@ async def _bg_prefetch_img(context: ContextTypes.DEFAULT_TYPE, name: str, platfo
     _log.info(f"[IMG-BG] Starting prefetch: '{name}' / '{platform}'")
     try:
         from advanced_scraper import extract_hd_image
-        img_bytes = await asyncio.wait_for(extract_hd_image(name, platform), timeout=12)
+        # User requested max 3s internal timeout, setting background limit slightly higher to 4s
+        img_bytes = await asyncio.wait_for(extract_hd_image(name, platform), timeout=4.0)
         data = context.user_data.get("pb_data", {})
         if img_bytes and not data.get("img_mode_done"):
             data["temp_img_bytes"] = img_bytes
