@@ -339,6 +339,49 @@ def _clear_cooldown(user_id: int):
         save_cooldowns(cooldowns_db)
 
 
+_cooldown_msg_cache = {}
+
+async def _fake_report_live_timer(target_msg, context, user, reason, until):
+    try:
+        lang = get_chat_lang(target_msg.chat.id) if getattr(target_msg, "chat", None) else "en"
+    except Exception:
+        lang = "en"
+        
+    rem = max(0, int(until - time.time()))
+    h, r = divmod(rem, 3600)
+    m, s = divmod(r, 60)
+    timer_str = f"{h:02d}:{m:02d}:{s:02d}"
+    
+    text_template = (
+        f"<b>⛔ Error: Interaction Blocked</b>\n\n"
+        f"{user.mention_html()}\n"
+        f"✧ <i>Reason / कारण:</i> <b>{reason}</b>\n"
+        f"✧ <i>Access will be restored in:</i> <b>[TIMER]</b>"
+    )
+        
+    try:
+        sent = await target_msg.reply_text(text=text_template.replace("[TIMER]", timer_str), parse_mode="HTML")
+    except Exception:
+        return
+        
+    chat_id = sent.chat.id
+    msg_id = sent.message_id
+    
+    end_task = time.time() + 300
+    while time.time() < end_task:
+        await asyncio.sleep(20)
+        rem = max(0, int(until - time.time()))
+        h, r = divmod(rem, 3600)
+        m, s = divmod(r, 60)
+        timer_str = f"{h:02d}:{m:02d}:{s:02d}"
+        patched_text = text_template.replace("[TIMER]", timer_str)
+        try:
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=msg_id, text=patched_text, parse_mode="HTML")
+        except Exception:
+            pass
+        if rem <= 0:
+            break
+
 async def _enforce_cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """Return True if user is blocked or if system is scanning, to abort command."""
     user = update.effective_user
@@ -376,10 +419,23 @@ async def _enforce_cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         _clear_cooldown(user.id)
         return False
 
+    target = update.message or (update.callback_query.message if update.callback_query else None)
+    
+    last_msg = _cooldown_msg_cache.get(user.id, 0)
+    if now - last_msg < 60:
+        return True
+        
+    _cooldown_msg_cache[user.id] = now
+    
     remaining = int(entry["until"] - now)
     mins = max(1, remaining // 60)
     lang = get_chat_lang(update.effective_chat.id) if update.effective_chat else "en"
     reason = entry.get("reason", "cooldown")
+
+    if reason.lower() == "fake report":
+        if target:
+            asyncio.create_task(_fake_report_live_timer(target, context, user, reason, entry["until"]))
+        return True
 
     if lang == "hi":
         text = (
@@ -398,7 +454,6 @@ async def _enforce_cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     # reply to whatever is available
     try:
-        target = update.message or (update.callback_query.message if update.callback_query else None)
         if target:
             await target.reply_text(text=text, parse_mode="HTML")
     except Exception:
@@ -2493,9 +2548,9 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     else:
-        msg = await context.bot.send_video(
+        msg = await context.bot.send_photo(
             chat_id=chat_id,
-            video="https://files.catbox.moe/rq7km7.mp4",
+            photo="https://files.catbox.moe/i59f4o.jpg",
             caption=caption,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard)
@@ -2606,6 +2661,40 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 await context.bot.send_message(req_uid, msg_text, parse_mode="HTML")
             except:
+                pass
+        return
+
+    # ── PUNISH FAKE REPORT ──────────────────────────────────────────────────
+    if query.data.startswith("punish|"):
+        if not is_admin(user.id):
+            await query.answer("⛔ Only admins can use this.", show_alert=True)
+            return
+
+        parts = query.data.split("|")
+        # punish|fake|<reporter_id>
+        if len(parts) >= 3 and parts[1] == "fake":
+            try:
+                target_uid = int(parts[2])
+            except ValueError:
+                await query.answer("Invalid user ID.", show_alert=True)
+                return
+
+            _set_cooldown(target_uid, 2880, "Fake report")  # 2 days = 2880 mins
+            await query.answer("🔨 User punished for 2 days.", show_alert=True)
+
+            msg_text = (
+                f"<b>⚠ WARNING / चेतावनी</b>\n\n"
+                f"<a href='tg://user?id={target_uid}'>User</a> you have been placed on a 2-day timeout by administrators for submitting a fake report.\n\n"
+                f"<blockquote>If you are not able to access episodes of any story from the bot, then check:\n\n"
+                f"1. Click the link given in the channel — it will take you to a bot.\n\n"
+                f"2. After opening the bot, it will ask you to join 3–4 channels. Complete that step and try again. Then your episodes will start working (they remain available for 6–8 hours and then get deleted due to possible copyright issues). The same process applies to all stories available in the bot.\n\n"
+                f"3. If you are unable to find stories like Saaya, Vashikaran, or Yakshini, please scroll a bit — you will find them.\n\n"
+                f"4. If you searched for another story and got a wrong result, that still does not give you the right to misuse this feature for fun.</blockquote>\n\n"
+                f"<i>“Sorry, but I’m human — so be kind. Do not send fake reports again, otherwise you may be banned.”</i>"
+            )
+            try:
+                await context.bot.send_message(chat_id=query.message.chat.id, text=msg_text, parse_mode="HTML")
+            except Exception:
                 pass
         return
 
@@ -2799,9 +2888,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=InlineKeyboardMarkup(keyboard)
                 )
             else:
-                sent = await context.bot.send_video(
+                sent = await context.bot.send_photo(
                     chat_id=query.message.chat.id,
-                    video="https://files.catbox.moe/rq7km7.mp4",
+                    photo="https://files.catbox.moe/i59f4o.jpg",
                     caption=caption,
                     parse_mode="HTML",
                     reply_markup=InlineKeyboardMarkup(keyboard)
@@ -2973,6 +3062,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [
                     InlineKeyboardButton(confirm_label, callback_data=f"lnw_confirm|{story_key}|{reporter_id}"),
                     InlineKeyboardButton(cancel_label, callback_data=f"lnw_cancel|{reporter_id}"),
+                ],
+                [
+                    InlineKeyboardButton("🔨 Punish User", callback_data=f"punish|fake|{reporter_id}")
                 ]
             ]
         )
@@ -3104,6 +3196,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "voters": {},  # user_id -> display_name
                 "link": link,
                 "story_name": story_name,
+                "reporter_id": reporter_id if reporter_id is not None else user_id,
             }
             active_link_votes[vote_id] = vote
         display_name = user.full_name or user.first_name or str(user_id)
@@ -3134,6 +3227,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [
                     InlineKeyboardButton(broken_label, callback_data=f"lnwv_broken|{vote_id}"),
                     InlineKeyboardButton(ok_label, callback_data=f"lnwv_ok|{vote_id}"),
+                ],
+                [
+                    InlineKeyboardButton("🔨 Punish User", callback_data=f"punish|fake|{vote['reporter_id']}")
                 ]
             ]
         )
@@ -3214,6 +3310,9 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [
                     InlineKeyboardButton(broken_label, callback_data=f"lnwv_broken|{vote_id}"),
                     InlineKeyboardButton(ok_label, callback_data=f"lnwv_ok|{vote_id}"),
+                ],
+                [
+                    InlineKeyboardButton("🔨 Punish User", callback_data=f"punish|fake|{vote['reporter_id']}")
                 ]
             ]
         )
