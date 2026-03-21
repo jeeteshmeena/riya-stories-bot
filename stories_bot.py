@@ -810,10 +810,10 @@ def _menu_trending(caller_id: int) -> tuple:
         )
         body = lines
     else:
-        body = "<i>☆ No trending stories yet. Start searching!</i>"
+        body = "<i>☆ No trending stories yet. Start searching! ✨</i>"
     text = (
-        "<b>🔥 Trending Stories</b>\n"
-        "<i>✺ Top searched stories right now.</i>\n"
+        "<b>🔥 Trending Stories</b> ( ˶ˆᗜˆ˵ )\n"
+        "<i>✺ Top searched stories right now. ✨</i>\n"
         f"{_DIVIDER}\n\n"
         f"{body}"
     )
@@ -903,31 +903,31 @@ def _menu_how(caller_id: int, lang: str = "en") -> tuple:
 def _menu_about(caller_id: int, lang: str = "en") -> tuple:
     if lang == "hi":
         body = (
-            "<blockquote><i>Riya एक स्मार्ट Telegram स्टोरी खोज बॉट है।</i></blockquote>\n\n"
+            "<blockquote><i>Riya एक स्मार्ट Telegram स्टोरी खोज बॉट है। ✨</i></blockquote>\n\n"
             "<u>❁ Features</u>\n"
-            "▪ AI फ़जी सर्च\n"
-            "▪ इनलाइन मेनू नेविगेशन\n"
-            "▪ JSON डेटाबेस\n"
-            "▪ एडमिन /scan\n"
-            "▪ फेवरेट सिस्टम\n\n"
+            "▪ AI फ़जी सर्च 🔎\n"
+            "▪ इनलाइन मेनू नेविगेशन 📂\n"
+            "▪ JSON डेटाबेस 💾\n"
+            "▪ एडमिन /scan ⚙️\n"
+            "▪ फेवरेट सिस्टम ♥️\n\n"
             "<b>👨‍💻 Developer:</b> @MeJeetX\n"
             "<b>⚙ Version:</b> Riya v10"
         )
     else:
         body = (
-            "<blockquote><i>Riya is an intelligent Telegram story finder bot.</i></blockquote>\n\n"
+            "<blockquote><i>Riya is an intelligent Telegram story finder bot. ✨</i></blockquote>\n\n"
             "<u>❁ Features</u>\n"
-            "▪ AI fuzzy search\n"
-            "▪ Inline menu navigation\n"
-            "▪ JSON database\n"
-            "▪ Admin /scan command\n"
-            "▪ Favourites system\n\n"
+            "▪ AI fuzzy search 🔎\n"
+            "▪ Inline menu navigation 📂\n"
+            "▪ JSON database 💾\n"
+            "▪ Admin /scan command ⚙️\n"
+            "▪ Favourites system ♥️\n\n"
             "<b>👨‍💻 Developer:</b> @MeJeetX\n"
             "<b>⚙ Version:</b> Riya v10"
         )
     text = (
-        "<b>📚 About Riya Bot</b>\n"
-        "<i>✧ Everything you need to know.</i>\n"
+        "<b>📚 About Riya Bot</b> ( ˶ˆᗜˆ˵ )\n"
+        "<i>✧ Everything you need to know. ✨</i>\n"
         f"{_DIVIDER}\n\n"
         f"{body}"
     )
@@ -988,10 +988,10 @@ def _menu_help(caller_id: int, lang: str = "en") -> tuple:
 
 def _menu_lang(caller_id: int) -> tuple:
     text = (
-        "<b>🌐 Language / भाषा</b>\n"
-        "<i>Select your preferred language for this chat.</i>\n"
+        "<b>🌐 Language / भाषा</b> ( ˶ˆᗜˆ˵ )\n"
+        "<i>Select your preferred language for this chat. ✨</i>\n"
         f"{_DIVIDER}\n\n"
-        "Choose a language below:"
+        "Choose a language below 👇"
     )
     markup = InlineKeyboardMarkup([
         [
@@ -1163,7 +1163,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [
             InlineKeyboardButton("🔥 Trending", callback_data="cmd|trending"),
-            InlineKeyboardButton("🌐 Change Language", callback_data="cmd|lang_menu")
+            InlineKeyboardButton("🌐 Language", callback_data="cmd|lang_menu")
         ],
         [InlineKeyboardButton("🔙 Back to Menu", callback_data="cmd|start")]
     ]
