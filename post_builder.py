@@ -6,9 +6,11 @@ import logging
 try:
     import pytesseract
     from PIL import Image, ImageEnhance, ImageFilter
-    OCR_AVAILABLE = True
+    # Force the binary path — works inside venv on Ubuntu/Debian VPS
+    pytesseract.pytesseract.tesseract_cmd = "/usr/bin/tesseract"
     try:
         pytesseract.get_tesseract_version()
+        OCR_AVAILABLE = True
     except Exception:
         OCR_AVAILABLE = False
 except ImportError:
@@ -198,7 +200,7 @@ async def start_builder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             msg_target = update.message or (update.callback_query and update.callback_query.message)
             if msg_target:
-                await msg_target.reply_text("⚠️ Previous session cancelled.", reply_markup=ReplyKeyboardRemove())
+                await msg_target.reply_text("· Previous session cancelled.", reply_markup=ReplyKeyboardRemove())
         except: pass
 
     context.user_data["pb_data"] = {}
@@ -207,9 +209,9 @@ async def start_builder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: await update.callback_query.answer()
         except: pass
 
-    kb = _kb([["🆕 New", "✏️ Edit"], ["/cancel"]])
+    kb = _kb([["[ New ]", "[ Edit ]"], ["/cancel"]])
     await (update.message or update.callback_query.message).reply_text(
-        "🛠 <b>Post Builder</b>\n\nSelect mode:",
+        "★ <b>Post Builder</b>\n\nSelect mode:",
         reply_markup=kb, parse_mode="HTML"
     )
     return STATE_MODE
@@ -217,9 +219,9 @@ async def start_builder(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── Mode ──────────────────────────────────────────────────────────────────────
 async def handle_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    if text == "🆕 New":
+    if text == "[ New ]":
         context.user_data["pb_data"]["post_mode"] = "new"
-    elif text == "✏️ Edit":
+    elif text == "[ Edit ]":
         context.user_data["pb_data"]["post_mode"] = "edit"
         await update.message.reply_text(
             "📝 Paste the Telegram post link to edit:\n(e.g. https://t.me/channel/123)",
@@ -227,7 +229,7 @@ async def handle_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return STATE_EDIT_LINK
     else:
-        await update.message.reply_text("❌ Use the buttons below.", reply_markup=_kb([["🆕 New", "✏️ Edit"], ["/cancel"]]))
+        await update.message.reply_text("❌ Use the buttons below.", reply_markup=_kb([["[ New ]", "[ Edit ]"], ["/cancel"]]))
         return STATE_MODE
 
     # Format selection
@@ -237,7 +239,7 @@ async def handle_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ["Format 4", "Format 5"],
         ["/cancel"],
     ])
-    await update.message.reply_text("📋 Select format:", reply_markup=kb)
+    await update.message.reply_text("¤ Select format:", reply_markup=kb)
     return STATE_FORMAT
 
 # ── Edit link ─────────────────────────────────────────────────────────────────
@@ -261,7 +263,7 @@ async def handle_edit_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return STATE_EDIT_LINK
 
     kb = _kb([["Format 1", "Format 2"], ["Format 3", "Format 4"], ["Format 5"], ["/cancel"]])
-    await update.message.reply_text("📋 Select format:", reply_markup=kb)
+    await update.message.reply_text("¤ Select format:", reply_markup=kb)
     return STATE_FORMAT
 
 # ── Format ────────────────────────────────────────────────────────────────────
@@ -277,26 +279,26 @@ async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Select a format from the buttons.")
         return STATE_FORMAT
     context.user_data["pb_data"]["format"] = fmt
-    await update.message.reply_text("📖 Enter story name:", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("» Enter story name:", reply_markup=ReplyKeyboardRemove())
     return STATE_NAME
 
 # ── Name ──────────────────────────────────────────────────────────────────────
 async def handle_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["pb_data"]["name"] = update.message.text.strip()
-    kb = _kb([["📱 Pocket FM", "🎧 Kuku FM"], ["🎵 Headfone", "➕ Custom"], ["/cancel"]])
-    await update.message.reply_text("🎵 Select platform:", reply_markup=kb)
+    kb = _kb([["Pocket FM", "Kuku FM"], ["Headfone", "+ Custom"], ["/cancel"]])
+    await update.message.reply_text("¤ Select platform:", reply_markup=kb)
     return STATE_PLATFORM
 
 # ── Platform ──────────────────────────────────────────────────────────────────
 _PLATFORM_MAP = {
-    "📱 Pocket FM": "Pocket FM",
-    "🎧 Kuku FM": "Kuku FM",
-    "🎵 Headfone": "Headfone",
+    "Pocket FM": "Pocket FM",
+    "Kuku FM": "Kuku FM",
+    "Headfone": "Headfone",
 }
 
 async def handle_platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    if text == "➕ Custom":
+    if text == "+ Custom":
         await update.message.reply_text("Type the platform name:", reply_markup=ReplyKeyboardRemove())
         context.user_data["pb_data"]["_awaiting_custom_platform"] = True
         return STATE_PLATFORM
@@ -312,17 +314,17 @@ async def handle_platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await _go_to_desc(update, context)
 
 async def _go_to_desc(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    kb = _kb([["✍️ Manual", "📸 OCR"], ["/cancel"]])
-    await update.message.reply_text("📝 Description mode:", reply_markup=kb)
+    kb = _kb([["[ Manual ]", "[ OCR ]"], ["/cancel"]])
+    await update.message.reply_text("¤ Description:", reply_markup=kb)
     return STATE_DESC_MODE
 
 # ── Description mode ──────────────────────────────────────────────────────────
 async def handle_desc_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    if text == "✍️ Manual":
+    if text == "[ Manual ]":
         await update.message.reply_text("✍️ Type the description:", reply_markup=ReplyKeyboardRemove())
         return STATE_DESC_ENTER
-    elif text == "📸 OCR":
+    elif text == "[ OCR ]":
         if not OCR_AVAILABLE:
             await update.message.reply_text(
                 "❌ OCR not available on server.\n\n"
@@ -335,7 +337,7 @@ async def handle_desc_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📸 Send the screenshot:", reply_markup=ReplyKeyboardRemove())
         return STATE_DESC_OCR
     else:
-        await update.message.reply_text("❌ Use the buttons.", reply_markup=_kb([["✍️ Manual", "📸 OCR"], ["/cancel"]]))
+        await update.message.reply_text("❌ Use the buttons.", reply_markup=_kb([["[ Manual ]", "[ OCR ]"], ["/cancel"]]))
         return STATE_DESC_MODE
 
 # ── Description manual entry ──────────────────────────────────────────────────
@@ -349,7 +351,7 @@ async def handle_desc_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Send an image file.")
         return STATE_DESC_OCR
 
-    wait = await update.message.reply_text("⏳ Scanning…")
+    wait = await update.message.reply_text("· Scanning...")
     try:
         tg_file = (
             await update.message.photo[-1].get_file()
@@ -378,9 +380,9 @@ async def handle_desc_ocr(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["pb_data"]["temp_found_desc"] = cleaned
         preview = html.escape(cleaned)
         kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("✅ Use", callback_data="pb_dc|use"),
-            InlineKeyboardButton("✍️ Edit", callback_data="pb_dc|manual"),
-            InlineKeyboardButton("🔁 Retry", callback_data="pb_dc|retry"),
+            InlineKeyboardButton("[ Use ]", callback_data="pb_dc|use"),
+            InlineKeyboardButton("[ Edit ]", callback_data="pb_dc|manual"),
+            InlineKeyboardButton("[ Retry ]", callback_data="pb_dc|retry"),
         ]])
         await update.message.reply_text(
             f"★ <b>Extracted:</b>\n\n<blockquote>{preview}</blockquote>",
@@ -422,7 +424,7 @@ async def _go_to_img(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chat_id=update.message.chat_id,
                 document=cached,
                 filename=f"{data.get('name','cover')}_cover.jpg",
-                caption="✅ <b>Cover auto-fetched.</b>",
+                caption="★ Cover auto-fetched.",
                 parse_mode="HTML"
             )
             data["photo_ids"] = [{"id": sent.document.file_id, "type": "doc"}]
@@ -446,7 +448,7 @@ async def _go_to_img_from_query(update: Update, context: ContextTypes.DEFAULT_TY
                 chat_id=msg.chat_id,
                 document=cached,
                 filename=f"{data.get('name','cover')}_cover.jpg",
-                caption="✅ <b>Cover auto-fetched.</b>",
+                caption="★ Cover auto-fetched.",
                 parse_mode="HTML"
             )
             data["photo_ids"] = [{"id": sent.document.file_id, "type": "doc"}]
@@ -483,9 +485,9 @@ async def _go_to_genre(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ["Romance", "Thriller"],
         ["Crime", "Horror"],
         ["Suspense", "Drama"],
-        ["➕ Custom", "/cancel"],
+        ["+ Custom", "/cancel"],
     ])
-    await update.message.reply_text("🎭 Select genre:", reply_markup=kb)
+    await update.message.reply_text("¤ Select genre:", reply_markup=kb)
     return STATE_GENRE
 
 async def _go_to_genre_from_query(update: Update, context: ContextTypes.DEFAULT_TYPE, query):
@@ -493,16 +495,16 @@ async def _go_to_genre_from_query(update: Update, context: ContextTypes.DEFAULT_
         ["Romance", "Thriller"],
         ["Crime", "Horror"],
         ["Suspense", "Drama"],
-        ["➕ Custom", "/cancel"],
+        ["+ Custom", "/cancel"],
     ])
-    await query.message.reply_text("🎭 Select genre:", reply_markup=kb)
+    await query.message.reply_text("¤ Select genre:", reply_markup=kb)
     return STATE_GENRE
 
 _GENRES = {"Romance", "Thriller", "Crime", "Horror", "Suspense", "Drama"}
 
 async def handle_genre(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    if text == "➕ Custom":
+    if text == "+ Custom":
         await update.message.reply_text("Type the custom genre:", reply_markup=ReplyKeyboardRemove())
         context.user_data["pb_data"]["_awaiting_custom_genre"] = True
         return STATE_GENRE
@@ -511,44 +513,44 @@ async def handle_genre(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Use the buttons or type a custom genre.")
         return STATE_GENRE
     context.user_data["pb_data"]["genre"] = genre
-    await update.message.reply_text("🔗 Paste the story link (or /skip):", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("» Story link (or /skip):", reply_markup=ReplyKeyboardRemove())
     return STATE_LINK
 
 # ── Link ──────────────────────────────────────────────────────────────────────
 async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["pb_data"]["link"] = "" if update.message.text.strip() == "/skip" else update.message.text.strip()
-    await update.message.reply_text("🔢 Total episodes number:")
+    await update.message.reply_text("» Total episodes:")
     return STATE_EPISODES
 
 # ── Episodes ──────────────────────────────────────────────────────────────────
 async def handle_episodes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["pb_data"]["episodes"] = update.message.text.strip()
-    kb = _kb([["✅ Completed", "🔄 Ongoing"], ["☠️ RIP"], ["/cancel"]])
-    await update.message.reply_text("📊 Select status:", reply_markup=kb)
+    kb = _kb([["Completed", "Ongoing"], ["RIP"], ["/cancel"]])
+    await update.message.reply_text("¤ Status:", reply_markup=kb)
     return STATE_STATUS
 
 # ── Status ────────────────────────────────────────────────────────────────────
-_STATUS_MAP = {"✅ Completed": "Completed", "🔄 Ongoing": "Ongoing", "☠️ RIP": "RIP"}
+_STATUS_MAP = {"Completed": "Completed", "Ongoing": "Ongoing", "RIP": "RIP"}
 
 async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     status = _STATUS_MAP.get(text)
     if not status:
-        await update.message.reply_text("❌ Use the buttons.", reply_markup=_kb([["✅ Completed", "🔄 Ongoing"], ["☠️ RIP"], ["/cancel"]]))
+        await update.message.reply_text("❌ Use the buttons.", reply_markup=_kb([["Completed", "Ongoing"], ["RIP"], ["/cancel"]]))
         return STATE_STATUS
     context.user_data["pb_data"]["status"] = status
     # Username step
-    kb = _kb([["Default Username", "➕ Custom Username"], ["/cancel"]])
-    await update.message.reply_text("👤 Join username:", reply_markup=kb)
+    kb = _kb([["Default", "+ Custom Username"], ["/cancel"]])
+    await update.message.reply_text("¤ Join username:", reply_markup=kb)
     return STATE_USERNAME
 
 # ── Username ──────────────────────────────────────────────────────────────────
 async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    if text == "Default Username":
+    if text == "Default":
         context.user_data["pb_data"]["username"] = DEFAULT_JOIN_USERNAME
         return await _go_to_dest(update, context)
-    elif text == "➕ Custom Username":
+    elif text == "+ Custom Username":
         await update.message.reply_text("Type the username (e.g. @MyChannel):", reply_markup=ReplyKeyboardRemove())
         context.user_data["pb_data"]["_awaiting_custom_username"] = True
         return STATE_USERNAME
@@ -556,7 +558,7 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["pb_data"]["username"] = text
         return await _go_to_dest(update, context)
     else:
-        await update.message.reply_text("❌ Use the buttons.", reply_markup=_kb([["Default Username", "➕ Custom Username"], ["/cancel"]]))
+        await update.message.reply_text("❌ Use the buttons.", reply_markup=_kb([["Default", "+ Custom Username"], ["/cancel"]]))
         return STATE_USERNAME
 
 # ── Destination ───────────────────────────────────────────────────────────────
@@ -569,15 +571,15 @@ async def _go_to_dest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         channels = []
     rows = [[c] for c in channels[:5]]
-    rows.append(["➕ New Channel"])
+    rows.append(["+ New Channel"])
     rows.append(["/cancel"])
     kb = _kb(rows)
-    await update.message.reply_text("📢 Where to post?", reply_markup=kb)
+    await update.message.reply_text("¤ Where to post?", reply_markup=kb)
     return STATE_DESTINATION
 
 async def handle_destination(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    if text == "➕ New Channel":
+    if text == "+ New Channel":
         await update.message.reply_text("Send channel username or ID:", reply_markup=ReplyKeyboardRemove())
         return STATE_CUSTOM_DEST
     context.user_data["pb_data"]["destination"] = text
@@ -605,7 +607,7 @@ async def _show_preview(message, context: ContextTypes.DEFAULT_TYPE):
     data["cached_previews"] = previews
     photo_ids = data.get("photo_ids", [])
 
-    await message.reply_text("🔎 <b>Preview:</b>", parse_mode="HTML")
+    await message.reply_text("· <b>Preview</b>", parse_mode="HTML")
 
     for p in previews:
         try:
@@ -621,25 +623,25 @@ async def _show_preview(message, context: ContextTypes.DEFAULT_TYPE):
             _log.error(f"[PREVIEW] {e}")
             await context.bot.send_message(chat_id=message.chat_id, text=p, parse_mode="HTML", disable_web_page_preview=True)
 
-    kb = _kb([["✅ Post", "✏️ Re-edit"], ["❌ Cancel"]])
-    await message.reply_text("Confirm and post?", reply_markup=kb)
+    kb = _kb([["[ Post ]", "[ Re-edit ]"], ["[ Cancel ]"]])
+    await message.reply_text("¤ Confirm and post?", reply_markup=kb)
     return STATE_CONFIRM
 
 # ── Confirm ───────────────────────────────────────────────────────────────────
 async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    if text == "❌ Cancel":
-        await update.message.reply_text("Cancelled.", reply_markup=ReplyKeyboardRemove())
+    if text == "[ Cancel ]":
+        await update.message.reply_text("· Cancelled.", reply_markup=ReplyKeyboardRemove())
         context.user_data.pop("pb_data", None)
         return ConversationHandler.END
-    elif text == "✏️ Re-edit":
+    elif text == "[ Re-edit ]":
         # Restart flow
         context.user_data.pop("pb_data", None)
         return await start_builder(update, context)
-    elif text == "✅ Post":
+    elif text == "[ Post ]":
         return await _do_post(update, context)
     else:
-        await update.message.reply_text("❌ Use the buttons.", reply_markup=_kb([["✅ Post", "✏️ Re-edit"], ["❌ Cancel"]]))
+        await update.message.reply_text("❌ Use the buttons.", reply_markup=_kb([["[ Post ]", "[ Re-edit ]"], ["[ Cancel ]"]]))
         return STATE_CONFIRM
 
 async def _do_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -651,13 +653,13 @@ async def _do_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = edit_chat_id if post_mode == "edit" else dest
 
     if post_mode == "new" and not dest:
-        await update.message.reply_text("❌ No destination. Cancelled.", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text("❌ No destination. · Cancelled.", reply_markup=ReplyKeyboardRemove())
         context.user_data.pop("pb_data", None)
         return ConversationHandler.END
 
     previews = data.get("cached_previews", [])
     photo_ids = data.get("photo_ids", [])
-    working = await update.message.reply_text("⏳ Posting…", reply_markup=ReplyKeyboardRemove())
+    working = await update.message.reply_text("· Posting...", reply_markup=ReplyKeyboardRemove())
 
     try:
         if post_mode == "edit":
@@ -671,7 +673,7 @@ async def _do_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await asyncio.wait_for(context.bot.edit_message_text(chat_id=chat_id, message_id=edit_msg_id, text=p, parse_mode="HTML", disable_web_page_preview=True), timeout=15)
                 except Exception:
                     await asyncio.wait_for(context.bot.edit_message_caption(chat_id=chat_id, message_id=edit_msg_id, caption=p, parse_mode="HTML"), timeout=15)
-            await working.edit_text(f"✅ Edited in {chat_id}!")
+            await working.edit_text(f"★ Edited in {chat_id}!")
 
         else:
             for p in previews:
@@ -708,7 +710,7 @@ async def _do_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 _log.warning(f"[POST] save_story failed: {e}")
 
-            await working.edit_text(f"✅ Posted to {chat_id}!")
+            await working.edit_text(f"[ Post ]ed to {chat_id}!")
 
     except Exception as e:
         _log.error(f"[POST] {e}", exc_info=True)
@@ -721,7 +723,7 @@ async def _do_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── Cancel ────────────────────────────────────────────────────────────────────
 async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop("pb_data", None)
-    try: await update.message.reply_text("Cancelled.", reply_markup=ReplyKeyboardRemove())
+    try: await update.message.reply_text("· Cancelled.", reply_markup=ReplyKeyboardRemove())
     except: pass
     return ConversationHandler.END
 
