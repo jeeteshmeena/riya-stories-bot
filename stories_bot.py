@@ -731,7 +731,6 @@ def _menu_main(caller_id: int, lang: str = "en") -> tuple:
         ]
     ]
     if is_admin(caller_id):
-        btn_rows.append([InlineKeyboardButton("🛠 Create Post", callback_data=f"menu|createpost|{caller_id}")])
     btn_rows.append([InlineKeyboardButton("✖ Close", callback_data=f"menu|close|{caller_id}")])
 
     markup = InlineKeyboardMarkup(btn_rows)

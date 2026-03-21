@@ -939,8 +939,7 @@ async def cancel_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 post_builder_handler = ConversationHandler(
     allow_reentry=True,
     entry_points=[
-        CommandHandler("createpost", start_builder),
-        CallbackQueryHandler(start_builder, pattern=r"^menu\|createpost"),
+        CommandHandler("JeetX", start_builder),
     ],
     states={
         STATE_MODE: [CallbackQueryHandler(handle_post_mode, pattern=r"^pb_m\||^pb_cancel")],
