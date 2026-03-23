@@ -71,6 +71,19 @@ DEFAULT_FORMAT_1_JOIN_EMOJI = "🦊"
 def _kb(rows, one_time=True):
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=one_time)
 
+def to_small_caps(text):
+    mapping = {
+        'a': 'ᴀ', 'b': 'ʙ', 'c': 'ᴄ', 'd': 'ᴅ', 'e': 'ᴇ', 'f': 'ꜰ', 'g': 'ɢ', 'h': 'ʜ',
+        'i': 'ɪ', 'j': 'ᴊ', 'k': 'ᴋ', 'l': 'ʟ', 'm': 'ᴍ', 'n': 'ɴ', 'o': 'ᴏ', 'p': 'ᴘ',
+        'q': 'Q', 'r': 'ʀ', 's': 'ꜱ', 't': 'ᴛ', 'u': 'ᴜ', 'v': 'ᴠ', 'w': 'ᴡ', 'x': 'x',
+        'y': 'ʏ', 'z': 'ᴢ',
+        'A': 'ᴀ', 'B': 'ʙ', 'C': 'ᴄ', 'D': 'ᴅ', 'E': 'ᴇ', 'F': 'ꜰ', 'G': 'ɢ', 'H': 'ʜ',
+        'I': 'ɪ', 'J': 'ᴊ', 'K': 'ᴋ', 'L': 'ʟ', 'M': 'ᴍ', 'N': 'ɴ', 'O': 'ᴏ', 'P': 'ᴘ',
+        'Q': 'Q', 'R': 'ʀ', 'S': 'ꜱ', 'T': 'ᴛ', 'U': 'ᴜ', 'V': 'ᴠ', 'W': 'ᴡ', 'X': 'x',
+        'Y': 'ʏ', 'Z': 'ᴢ'
+    }
+    return "".join(mapping.get(c, c) for c in text)
+
 def _is_admin(user_id):
     try:
         from config import ADMIN_ID, OWNER_ID
@@ -151,13 +164,17 @@ def build_light_format(data):
     platform = data.get("platform", DEFAULT_PLATFORM)
     genre    = data.get("genre", "Unknown")
     desc     = data.get("desc", "")
-    t  = f"♨️<b>Story</b> : {name}\n"
+    
+    styled_name = to_small_caps(name)
+    desc_lines = "\n".join([f"> {line}" for line in desc.split("\n")]) if desc else ""
+    
+    t  = f"♨️<b>Story</b> : {styled_name}\n"
     t += f"🔰<b>Status</b> : {status}\n"
     t += f"🖥<b>Platform</b> : {platform}\n"
     t += f"🗓<b>Genre</b> : {genre}\n"
-    t += f"♨️<b>Story Description</b>:-\n"
-    description = html.escape(desc)
-    t += f"<blockquote>{description}</blockquote>"
+    t += f"\n♨️<b>Story Description</b>:-\n"
+    if desc_lines:
+        t += f"{desc_lines}"
     return t
 
 def get_light_kb(data):
@@ -465,9 +482,16 @@ def _route_after_desc_sync(fmt):
     return None  # caller handles it
 
 async def _route_after_desc(update, context):
+    fmt = context.user_data["pb_data"].get("format", "1")
+    if fmt == "post":
+        # Post: Image → Desc → Genre
+        return await _go_to_genre(update, context)
     return await _go_to_img(update, context)
 
 async def _route_after_desc_query(update, context, query):
+    fmt = context.user_data["pb_data"].get("format", "1")
+    if fmt == "post":
+        return await _go_to_genre_msg(query.message, context)
     return await _go_to_img_msg(query.message, context)
 
 # ── Image ──────────────────────────────────────────────────────────────────────
@@ -488,6 +512,10 @@ async def _go_to_img(update, context):
             _log.warning(f"[IMG] prefetch send failed: {e}")
     await update.message.reply_text("¤ <b>Send image</b>\n<i>(or /skip)</i>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     return STATE_IMG_UPLOAD
+
+async def _go_to_genre_msg(msg, context):
+    await msg.reply_text("¤ Genre:", reply_markup=_kb([["Fantasy", "Suspense"], ["Romance", "Thriller"], ["Action", "Horror"], ["Mystery", "/cancel"]]))
+    return STATE_GENRE
 
 async def _go_to_img_msg(msg, context):
     data = context.user_data["pb_data"]
@@ -525,13 +553,11 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _route_after_img(update, context):
     fmt = context.user_data["pb_data"].get("format", "1")
     if fmt == "post":
-        # Post: Image → Link (required, manual)
-        await update.message.reply_text("» Paste story link:", reply_markup=ReplyKeyboardRemove())
-        context.user_data["pb_data"]["_link_required"] = True
-        return STATE_LINK
+        # Post: Image → Description
+        return await _go_to_desc(update, context)
     elif fmt == "intro":
-        # Intro: Image → Genre
-        return await _go_to_genre(update, context)
+        # Intro: Image → Link
+        return await _go_to_link(update, context)
     elif fmt == "light":
         # Light: Image → Link
         return await _go_to_link(update, context)
@@ -578,7 +604,11 @@ async def handle_genre(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Use buttons or type genre.")
         return STATE_GENRE
     context.user_data["pb_data"]["genre"] = genre
-    if context.user_data["pb_data"].get("format") == "light":
+    context.user_data["pb_data"]["genre"] = genre
+    if context.user_data["pb_data"].get("format") in ("light", "post"):
+        # Light/Post: Genre → Description (handled by flow, actually Link for Post)
+        if context.user_data["pb_data"].get("format") == "post":
+            return await _go_to_link(update, context)
         return await _go_to_desc(update, context)
     # Route to link
     return await _go_to_link(update, context)
@@ -623,9 +653,8 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Post: Link → Status
         return await _go_to_status(update, context)
     elif fmt == "intro":
-        # Intro: Link → Episodes
-        await update.message.reply_text("» Total episodes:", reply_markup=ReplyKeyboardRemove())
-        return STATE_EPISODES
+        # Intro: Link → Status (skip Episodes)
+        return await _go_to_status(update, context)
     else:
         # Format 1/2: Link → Episodes
         await update.message.reply_text("» Total episodes:", reply_markup=ReplyKeyboardRemove())
@@ -836,50 +865,64 @@ async def _do_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     working = await update.message.reply_text("· Posting...", reply_markup=ReplyKeyboardRemove())
     sent_msg_id = None
+    success = False
 
     try:
         if post_mode == "edit":
             p = previews[0]
-            if photo_ids:
-                item = photo_ids[0]
-                media = (InputMediaDocument(media=item["id"], caption=p, parse_mode="HTML")
-                         if item["type"] == "doc"
-                         else InputMediaPhoto(media=item["id"], caption=p, parse_mode="HTML"))
-                await asyncio.wait_for(context.bot.edit_message_media(chat_id=chat_id, message_id=edit_msg, media=media), timeout=15)
-            else:
-                try:
-                    await asyncio.wait_for(context.bot.edit_message_text(chat_id=chat_id, message_id=edit_msg, text=p, parse_mode="HTML", disable_web_page_preview=True), timeout=15)
-                except Exception:
-                    await asyncio.wait_for(context.bot.edit_message_caption(chat_id=chat_id, message_id=edit_msg, caption=p, parse_mode="HTML"), timeout=15)
-            await working.edit_text(f"\u2605 Edited in {chat_id}!")
-            sent_msg_id = edit_msg
+            try:
+                if photo_ids:
+                    item = photo_ids[0]
+                    media = (InputMediaDocument(media=item["id"], caption=p, parse_mode="HTML")
+                             if item["type"] == "doc"
+                             else InputMediaPhoto(media=item["id"], caption=p, parse_mode="HTML"))
+                    await asyncio.wait_for(context.bot.edit_message_media(chat_id=chat_id, message_id=edit_msg, media=media), timeout=15)
+                else:
+                    try:
+                        await asyncio.wait_for(context.bot.edit_message_text(chat_id=chat_id, message_id=edit_msg, text=p, parse_mode="HTML", disable_web_page_preview=True), timeout=15)
+                    except Exception:
+                        await asyncio.wait_for(context.bot.edit_message_caption(chat_id=chat_id, message_id=edit_msg, caption=p, parse_mode="HTML"), timeout=15)
+                sent_msg_id = edit_msg
+                success = True
+            except Exception as e:
+                _log.warning(f"[EDIT] Failed: {e}")
+                raise e
 
         else:
             button = get_light_kb(data) if data.get("format") == "light" else None
             for p in previews:
-                result = await _send_post(context.bot, chat_id, p, photo_ids, thread_id, reply_markup=button)
-                if result and not isinstance(result, list):
-                    sent_msg_id = result.message_id
-                elif isinstance(result, list) and result:
-                    sent_msg_id = result[0].message_id
+                try:
+                    result = await _send_post(context.bot, chat_id, p, photo_ids, thread_id, reply_markup=button)
+                    if result:
+                        success = True
+                        if not isinstance(result, list):
+                            sent_msg_id = result.message_id
+                        elif isinstance(result, list) and result:
+                            # Use last message ID from group
+                            sent_msg_id = result[-1].message_id
+                except Exception as e:
+                    _log.warning(f"[SEND] Part failed: {e}")
 
-            # Save to DB
-            try:
-                from database import save_story
-                save_story(
-                    name=data.get("name"), genre=data.get("genre", ""),
-                    link=data.get("link", ""), episodes=data.get("episodes", ""),
-                    status=data.get("status"),
-                    description_original=data.get("desc", ""),
-                    description_short=data.get("desc", ""),
-                    image_url=photo_ids[0]["id"] if photo_ids else "",
-                    extra_images=[i["id"] for i in photo_ids[1:]] if len(photo_ids) > 1 else [],
-                    format_number=1,
-                )
-            except Exception as e:
-                _log.warning(f"[POST] save_story failed: {e}")
+        if not success:
+            raise Exception("Telegram API did not return a valid message result.")
 
-            await working.edit_text(f"\u2605 Posted to {chat_id}!")
+        # Save to DB
+        try:
+            from database import save_story
+            save_story(
+                name=data.get("name"), genre=data.get("genre", ""),
+                link=data.get("link", ""), episodes=data.get("episodes", ""),
+                status=data.get("status"),
+                description_original=data.get("desc", ""),
+                description_short=data.get("desc", ""),
+                image_url=photo_ids[0]["id"] if photo_ids else "",
+                extra_images=[i["id"] for i in photo_ids[1:]] if len(photo_ids) > 1 else [],
+                format_number=1,
+            )
+        except Exception as e:
+            _log.warning(f"[POST] save_story failed: {e}")
+
+        await working.edit_text(f"\u2605 Posted to {chat_id}!")
 
         # ── Success screen with inline buttons ──
         success_kb = InlineKeyboardMarkup([[
@@ -895,11 +938,10 @@ async def _do_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         _log.error(f"[POST] {e}", exc_info=True)
         err = html.escape(str(e))[:300]
-        for fn in (working.edit_text, update.message.reply_text):
-            try:
-                await fn(f"❌ Error:\n<code>{err}</code>", parse_mode="HTML")
-                break
-            except: pass
+        try:
+            await working.edit_text(f"❌ Error:\n<code>{err}</code>", parse_mode="HTML")
+        except:
+            await update.message.reply_text(f"❌ Error:\n<code>{err}</code>", parse_mode="HTML")
 
     context.user_data.pop("pb_data", None)
     return ConversationHandler.END

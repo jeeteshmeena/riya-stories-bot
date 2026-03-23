@@ -2492,7 +2492,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     keyboard = [
-        [InlineKeyboardButton("✦ Open Story", url=result["link"])],
+        [InlineKeyboardButton("✦ Open Story", url=result.get("link", "https://t.me/"))],
         [
             InlineKeyboardButton("★ Favourites", callback_data=f"fav|{story_key}"),
             InlineKeyboardButton("⚠ Link Broken?", callback_data=f"lnw|{story_key}"),
@@ -2502,7 +2502,31 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     photo = result.get("photo") or result.get("image")
     story_type_line = f"\n<b>✽ Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
-    caption = f"""Hey {mention} 👋
+    
+    if result.get("format") == "LIGHT":
+        keyboard[0] = [InlineKeyboardButton("ᴘʟᴀʏ ɴᴏᴡ", url=result.get("link", "https://t.me/"))]
+        
+        name = result.get("text", story_name)
+        status = result.get("status", "Unknown")
+        platform = result.get("platform", "Unknown")
+        genre = result.get("genre", "Unknown")
+        desc = result.get("description", "")
+        
+        desc_lines = "\n".join([f"> {line}" for line in desc.split("\n")]) if desc else ""
+        description_addon = f"\n\n♨️<b>Story Description</b>:-\n{desc_lines}" if desc else ""
+
+        caption = f"""Hey {mention} 👋
+<b>✫ I found this story</b> ➴
+
+♨️<b>Story</b> : {name}
+🔰<b>Status</b> : {status}
+🖥<b>Platform</b> : {platform}
+🗓<b>Genre</b> : {genre}{description_addon}
+
+<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>
+"""
+    else:
+        caption = f"""Hey {mention} 👋
 <b>✫ I found this story</b> ➴
 
 <i>❁ Name:-</i> <b>{story_name}</b>{story_type_line}
