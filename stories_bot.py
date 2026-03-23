@@ -2502,18 +2502,20 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         light_genre   = result.get("genre", "Unknown")
         light_photo   = result.get("photo") or result.get("image") or "https://files.catbox.moe/i59f4o.jpg"
 
-        # 1. Header text message
-        header_text = (
-            f"Hey {mention} 👋\n"
-            f"<b>✫ I found this story</b> ➴"
-        )
+        # Step 1 — header text message
         header_msg = await context.bot.send_message(
             chat_id=chat_id,
-            text=header_text,
+            text=f"Hey {mention} 👋\n<b>✫ I found this story</b> ➴",
             parse_mode="HTML"
         )
 
-        # 2. Premium image post — NO description in search result
+        # Step 2 — photo with Light caption, standard search keyboard (no Play/Backup)
+        light_name     = result.get("text", story_name)
+        light_status   = result.get("status", "Unknown")
+        light_platform = result.get("platform", "Unknown")
+        light_genre    = result.get("genre", "Unknown")
+        light_photo    = result.get("photo") or result.get("image") or "https://files.catbox.moe/i59f4o.jpg"
+
         light_caption = (
             f"♨️<b>Story</b> : {html.escape(light_name)}\n"
             f"🔰<b>Status</b> : <b>{html.escape(light_status)}</b>\n"
@@ -2521,18 +2523,12 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🗓<b>Genre</b> : <b>{html.escape(light_genre)}</b>"
         )
 
-        light_rows = []
-        if light_link:
-            light_rows.append([InlineKeyboardButton("ᴘʟᴀʏ ɴᴏᴡ", url=light_link)])
-            light_rows.append([InlineKeyboardButton("ʙᴀᴄᴋᴜᴘ",   url=light_link)])
-        light_keyboard = InlineKeyboardMarkup(light_rows) if light_rows else None
-
         photo_msg = await context.bot.send_photo(
             chat_id=chat_id,
             photo=light_photo,
             caption=light_caption,
             parse_mode="HTML",
-            reply_markup=light_keyboard
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
         message_owner[photo_msg.message_id] = user.id
@@ -2546,43 +2542,36 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
 
         asyncio.create_task(_delete_light())
-        await log(context, f"SEARCH HIT (LIGHT) | user_id={user.id} title={light_name}")
-        return   # ← force-exit so old response logic never runs
-    # ── END LIGHT ───────────────────────────────────────────────────────────────
+        await log(context, f"SEARCH HIT (LIGHT) | user_id={user.id} username={user.username} title={light_name}")
+        return
+    # ── END LIGHT ────────────────────────────────────────────────────────────────
 
-        keyboard = [
-            [InlineKeyboardButton("✦ Open Story", url=result.get("link", "https://t.me/"))],
-            [
-                InlineKeyboardButton("★ Favourites", callback_data=f"fav|{story_key}"),
-                InlineKeyboardButton("⚠ Link Broken?", callback_data=f"lnw|{story_key}"),
-            ],
-            [InlineKeyboardButton("✕ Delete", callback_data="delete")]
-        ]
-        photo = result.get("photo") or result.get("image")
-        story_type_line = f"\n<b>✽ Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
-        caption = (
-            f"Hey {mention} 👋\n"
-            f"<b>✫ I found this story</b> ➴\n\n"
-            f"<i>❁ Name:-</i> <b>{story_name}</b>{story_type_line}\n\n"
-            f"<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>"
+    # Non-Light path (all other formats)
+    photo = result.get("photo") or result.get("image")
+    story_type_line = f"\n<b>✽ Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
+    caption = (
+        f"Hey {mention} 👋\n"
+        f"<b>✫ I found this story</b> ➴\n\n"
+        f"<i>❁ Name:-</i> <b>{story_name}</b>{story_type_line}\n\n"
+        f"<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>"
+    )
+
+    if photo:
+        msg = await context.bot.send_photo(
+            chat_id=chat_id,
+            photo=photo,
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
-
-        if photo:
-            msg = await context.bot.send_photo(
-                chat_id=chat_id,
-                photo=photo,
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        else:
-            msg = await context.bot.send_photo(
-                chat_id=chat_id,
-                photo="https://files.catbox.moe/i59f4o.jpg",
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+    else:
+        msg = await context.bot.send_photo(
+            chat_id=chat_id,
+            photo="https://files.catbox.moe/i59f4o.jpg",
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 
     message_owner[msg.message_id] = user.id
