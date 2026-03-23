@@ -58,6 +58,8 @@ _log = logging.getLogger(__name__)
     STATE_CONFIRM,
 ) = range(19)
 
+_LIGHT_GENRES = ["Fantasy", "Suspense", "Romance", "Thriller", "Action", "Horror", "Mystery"]
+
 # ── Constants ──────────────────────────────────────────────────────────────────
 DEFAULT_JOIN_USERNAME = "@StoriesByJeetXNew"
 DEFAULT_STORY_LINK    = "https://t.me/StoriesByJeetXNew"
@@ -143,8 +145,30 @@ def build_format_2(data):
     t += f"{html.escape(avail)}\n\n{link}\n{link}"
     return t
 
+def build_light_format(data):
+    name     = data.get("name", "Unknown")
+    status   = data.get("status", "Ongoing")
+    platform = data.get("platform", DEFAULT_PLATFORM)
+    genre    = data.get("genre", "Unknown")
+    desc     = data.get("desc", "")
+    t  = f"♨️<b>Story</b> : {name}\n"
+    t += f"🔰<b>Status</b> : {status}\n"
+    t += f"🖥<b>Platform</b> : {platform}\n"
+    t += f"🗓<b>Genre</b> : {genre}\n"
+    t += f"♨️<b>Story Description</b>:-\n"
+    description = html.escape(desc)
+    t += f"<blockquote>{description}</blockquote>"
+    return t
+
+def get_light_kb(data):
+    link = data.get("link", "")
+    if not link: return None
+    return InlineKeyboardMarkup([[InlineKeyboardButton("ᴘʟᴀʏ ɴᴏᴡ", url=link)]])
+
 def _build_previews(data):
     fmt = data.get("format", "1")
+    if fmt == "light":
+        return [build_light_format(data)]
     if fmt in ("1", "post"):
         return [build_format_1(data)]
     if fmt in ("2", "intro"):
@@ -185,8 +209,10 @@ async def _bg_prefetch_img(context, name, platform):
         _log.warning(f"[IMG] Prefetch failed: {e}")
 
 # ── Send helper (supports thread/topic) ───────────────────────────────────────
-async def _send_post(bot, chat_id, text, photo_ids, thread_id=None):
+async def _send_post(bot, chat_id, text, photo_ids, thread_id=None, reply_markup=None):
     kwargs = {"message_thread_id": thread_id} if thread_id else {}
+    if reply_markup:
+        kwargs["reply_markup"] = reply_markup
     if photo_ids and len(photo_ids) == 1:
         item = photo_ids[0]
         if item["type"] == "doc":
@@ -218,6 +244,9 @@ async def _route_after_name(update, context):
     elif fmt == "intro":
         # Intro: Name → Desc → Image → Genre → Link → Episodes → Status → Dest
         return await _go_to_desc(update, context)
+    elif fmt == "light":
+        # Light: Name → Status
+        return await _go_to_status(update, context)
     else:
         # Format 1/2: Name → Platform → Desc → Image → Genre → Link → Episodes → Status → Username → Dest
         kb = _kb([["Pocket FM", "Kuku FM"], ["Headfone", "+ Custom"], ["/cancel"]])
@@ -277,7 +306,7 @@ async def handle_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Use the buttons.", reply_markup=_kb([["[ New ]", "[ Edit ]"], ["/cancel"]]))
         return STATE_MODE
-    kb = _kb([["Format 1", "Format 2"], ["Post", "Intro"], ["/cancel"]])
+    kb = _kb([["Format 1", "Format 2"], ["Post", "Intro", "Light"], ["/cancel"]])
     await update.message.reply_text("¤ Select format:", reply_markup=kb)
     return STATE_FORMAT
 
@@ -300,12 +329,12 @@ async def handle_edit_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         await update.message.reply_text("❌ Could not parse link. Try again:")
         return STATE_EDIT_LINK
-    kb = _kb([["Format 1", "Format 2"], ["Post", "Intro"], ["/cancel"]])
+    kb = _kb([["Format 1", "Format 2"], ["Post", "Intro", "Light"], ["/cancel"]])
     await update.message.reply_text("¤ Select format:", reply_markup=kb)
     return STATE_FORMAT
 
 # ── Format ─────────────────────────────────────────────────────────────────────
-_FORMAT_MAP = {"Format 1": "1", "Format 2": "2", "Post": "post", "Intro": "intro"}
+_FORMAT_MAP = {"Format 1": "1", "Format 2": "2", "Post": "post", "Intro": "intro", "Light": "light"}
 
 async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -314,7 +343,13 @@ async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Select from buttons.")
         return STATE_FORMAT
     context.user_data["pb_data"]["format"] = fmt
-    await update.message.reply_text("» Story name:", reply_markup=ReplyKeyboardRemove())
+    prompt = "» Story name:"
+    if fmt == "light":
+        prompt = (
+            "➖ Exαmρle: ʟᴏʀᴇᴍ ɪᴘsᴜᴍ ᴅᴏʟᴏʀ sɪᴛ ᴀᴍᴇᴛ, ᴄᴏɴsᴇᴄᴛᴇᴛᴜʀ ᴀᴅɪᴘɪsᴄɪɴɢ ᴇʟɪᴛ.\n\n"
+            "➖ Seηd yσur text 👇"
+        )
+    await update.message.reply_text(prompt, reply_markup=ReplyKeyboardRemove())
     return STATE_NAME
 
 # ── Name ───────────────────────────────────────────────────────────────────────
@@ -336,6 +371,8 @@ async def handle_platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Use buttons or type name.", reply_markup=_kb([["Pocket FM", "Kuku FM"], ["Headfone", "+ Custom"], ["/cancel"]]))
         return STATE_PLATFORM
     context.user_data["pb_data"]["platform"] = plat
+    if context.user_data["pb_data"].get("format") == "light":
+        return await _go_to_genre(update, context)
     return await _go_to_desc(update, context)
 
 # ── Description ────────────────────────────────────────────────────────────────
@@ -495,6 +532,9 @@ async def _route_after_img(update, context):
     elif fmt == "intro":
         # Intro: Image → Genre
         return await _go_to_genre(update, context)
+    elif fmt == "light":
+        # Light: Image → Link
+        return await _go_to_link(update, context)
     else:
         # Format 1/2: Image → Genre
         return await _go_to_genre(update, context)
@@ -518,7 +558,11 @@ async def _route_after_img_msg(msg, context):
 _GENRES = {"Romance", "Thriller", "Crime", "Horror", "Suspense", "Drama"}
 
 async def _go_to_genre(update, context):
-    kb = _kb([["Romance", "Thriller"], ["Crime", "Horror"], ["Suspense", "Drama"], ["+ Custom", "/cancel"]])
+    fmt = context.user_data["pb_data"].get("format", "1")
+    if fmt == "light":
+        kb = _kb([["Fantasy", "Suspense"], ["Romance", "Thriller"], ["Action", "Horror"], ["Mystery", "/cancel"]])
+    else:
+        kb = _kb([["Romance", "Thriller"], ["Crime", "Horror"], ["Suspense", "Drama"], ["+ Custom", "/cancel"]])
     await update.message.reply_text("¤ Genre:", reply_markup=kb)
     return STATE_GENRE
 
@@ -528,11 +572,14 @@ async def handle_genre(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Type genre:", reply_markup=ReplyKeyboardRemove())
         context.user_data["pb_data"]["_await_cust_genre"] = True
         return STATE_GENRE
-    genre = text if context.user_data["pb_data"].pop("_await_cust_genre", False) else (text if text in _GENRES else None)
+    allowed = _LIGHT_GENRES if context.user_data["pb_data"].get("format") == "light" else _GENRES
+    genre = text if context.user_data["pb_data"].pop("_await_cust_genre", False) else (text if text in allowed else None)
     if not genre:
         await update.message.reply_text("❌ Use buttons or type genre.")
         return STATE_GENRE
     context.user_data["pb_data"]["genre"] = genre
+    if context.user_data["pb_data"].get("format") == "light":
+        return await _go_to_desc(update, context)
     # Route to link
     return await _go_to_link(update, context)
 
@@ -570,6 +617,8 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Route after link
     fmt = data.get("format", "1")
+    if fmt == "light":
+        return await _go_to_dest(update, context)
     if fmt == "post":
         # Post: Link → Status
         return await _go_to_status(update, context)
@@ -604,6 +653,10 @@ async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["pb_data"]["status"] = status
     fmt = context.user_data["pb_data"].get("format", "1")
     # Set defaults and decide username step
+    if fmt == "light":
+        kb = _kb([["Pocket FM", "Kuku FM"], ["Headfone", "+ Custom"], ["/cancel"]])
+        await update.message.reply_text("¤ Platform:", reply_markup=kb)
+        return STATE_PLATFORM
     if fmt in ("post", "intro"):
         # Auto-fill platform and username
         context.user_data["pb_data"].setdefault("platform", DEFAULT_PLATFORM)
@@ -727,20 +780,21 @@ async def _show_preview(message, context: ContextTypes.DEFAULT_TYPE):
     photo_ids = data.get("photo_ids", [])
 
     await message.reply_text("· <b>Preview</b>", parse_mode="HTML")
+    button = get_light_kb(data) if data.get("format") == "light" else None
     for p in previews:
         try:
             if photo_ids:
                 item = photo_ids[0]
                 if item["type"] == "doc":
-                    await context.bot.send_document(chat_id=message.chat_id, document=item["id"], caption=p, parse_mode="HTML")
+                    await context.bot.send_document(chat_id=message.chat_id, document=item["id"], caption=p, parse_mode="HTML", reply_markup=button)
                 else:
-                    await context.bot.send_photo(chat_id=message.chat_id, photo=item["id"], caption=p, parse_mode="HTML")
+                    await context.bot.send_photo(chat_id=message.chat_id, photo=item["id"], caption=p, parse_mode="HTML", reply_markup=button)
             else:
-                await context.bot.send_message(chat_id=message.chat_id, text=p, parse_mode="HTML", disable_web_page_preview=True)
+                await context.bot.send_message(chat_id=message.chat_id, text=p, parse_mode="HTML", disable_web_page_preview=True, reply_markup=button)
         except Exception as e:
             _log.error(f"[PREVIEW] {e}")
             try:
-                await context.bot.send_message(chat_id=message.chat_id, text=p, parse_mode="HTML", disable_web_page_preview=True)
+                await context.bot.send_message(chat_id=message.chat_id, text=p, parse_mode="HTML", disable_web_page_preview=True, reply_markup=button)
             except: pass
 
     kb = _kb([["[ Post ]", "[ Re-edit ]"], ["[ Cancel ]"]])
@@ -801,8 +855,9 @@ async def _do_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
             sent_msg_id = edit_msg
 
         else:
+            button = get_light_kb(data) if data.get("format") == "light" else None
             for p in previews:
-                result = await _send_post(context.bot, chat_id, p, photo_ids, thread_id)
+                result = await _send_post(context.bot, chat_id, p, photo_ids, thread_id, reply_markup=button)
                 if result and not isinstance(result, list):
                     sent_msg_id = result.message_id
                 elif isinstance(result, list) and result:

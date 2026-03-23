@@ -9,6 +9,7 @@ NAME_PATTERNS = [
     r"story\s*[:\-]\s*([^\n\(]+)",
     r"title\s*[:\-]\s*([^\n\(]+)",
     r"story name\s*[:\-]\s*([^\n\(]+)",
+    r"♨️Story\s*[:\-]\s*([^\n\(]+)",
     # Strict title with status (fallback)
     r"^\s*(.+?)\s*\(\s*(Completed?|Complete|Ongoing|ongoing)\s*\)\s*$",
 ]
@@ -16,7 +17,7 @@ NAME_PATTERNS = [
 LINK_PATTERN = r"https://t\.me/[^\s]+"
 
 TYPE_PATTERN = re.compile(
-    r"(Story Type|Type|Genre)\s*[:\-]\s*(.+)",
+    r"(Story Type|Type|Genre|🗓Genre)\s*[:\-]\s*(.+)",
     re.IGNORECASE
 )
 
@@ -60,12 +61,26 @@ def extract_name(text):
     return None
 
 
-def extract_link(text):
+def extract_link(message):
     """
-    Get telegram link from message
+    Get telegram link from message text OR inline keyboard
     """
-
-    links = re.findall(LINK_PATTERN, text)
+    text = get_text(message)
+    links = []
+    if text:
+        links = re.findall(LINK_PATTERN, text)
+    
+    # Check inline keyboard (Telethon)
+    if hasattr(message, 'reply_markup') and message.reply_markup:
+        try:
+            from telethon.tl.types import ReplyInlineMarkup, KeyboardButtonUrl
+            if isinstance(message.reply_markup, ReplyInlineMarkup):
+                for row in message.reply_markup.rows:
+                    for button in row.buttons:
+                        if isinstance(button, KeyboardButtonUrl):
+                            links.append(button.url)
+        except Exception:
+            pass
 
     if not links:
         return None
@@ -101,7 +116,7 @@ def parse_story(message):
     if not name:
         return None
 
-    link = extract_link(text)
+    link = extract_link(message)
 
     if not link:
         return None
