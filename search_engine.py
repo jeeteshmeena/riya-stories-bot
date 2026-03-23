@@ -5,6 +5,8 @@ import re
 
 
 
+from rapidfuzz import fuzz
+
 def clean_story(name):
     """Local copy of clean_story function to avoid circular imports."""
     name = re.sub(r"\(.*?\)", "", name)
@@ -13,6 +15,7 @@ def clean_story(name):
 
 
 # We caching everything inside dicts for O(1) alias/exact lookups
+_exact_cache = {}    # exact clean name -> data
 _norm_cache = {}     # normalized_name -> data
 _alias_cache = {}    # clean_alias -> data
 _list_cache = []     # for partial/did_you_mean containing original titles

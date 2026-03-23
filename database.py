@@ -5,11 +5,24 @@ import unicodedata
 def normalize_text(text):
     if not text:
         return ""
-    # Convert unicode fancy fonts to normal
-    text = unicodedata.normalize('NFKD', str(text)).lower()
+    
+    # Manual un-fancy for small-caps which bypass standard Unicode decomposition
+    small_caps = {
+        'ꜱ':'s', 'ɪ':'i', 'ʟ':'l', 'ᴇ':'e', 'ɴ':'n', 'ᴛ':'t', 'ᴏ':'o', 'ᴠ':'v',
+        'ᴀ':'a', 'ʙ':'b', 'ᴄ':'c', 'ᴅ':'d', 'ꜰ':'f', 'ɢ':'g', 'ʜ':'h', 'ᴊ':'j',
+        'ᴋ':'k', 'ᴍ':'m', 'ᴘ':'p', 'ǫ':'q', 'ʀ':'r', 'ᴜ':'u', 'ᴡ':'w', 'ʏ':'y', 'ᴢ':'z'
+    }
+    
+    t = str(text)
+    for k, v in small_caps.items():
+        t = t.replace(k, v)
+        
+    # Convert unicode fancy fonts to normal (NFKD handles most Math Bold, script, fraktur)
+    t = unicodedata.normalize('NFKD', t).lower()
+    
     # Keep only alphanumeric and spaces
-    text = ''.join(c for c in text if c.isalnum() or c.isspace())
-    return ' '.join(text.split())  # Compress multiple spaces
+    t = ''.join(c for c in t if c.isalnum() or c.isspace())
+    return ' '.join(t.split())
 
 # Paths - use DATA_DIR from config for VPS (load_dotenv runs when config is imported first)
 def _data_path(name):
@@ -74,11 +87,12 @@ def load_db():
     _DB_CACHE = _load_json(DB_FILE, {})
     _DB_MTIME = mtime
 
-    # Backward compatibility: enforce normalized_name
+    # Ensure normalized_name is fully up-to-date with our fancy fonts logic
     changed = False
     for k, v in _DB_CACHE.items():
-        if "normalized_name" not in v:
-            v["normalized_name"] = normalize_text(v.get("name", k))
+        correct_norm = normalize_text(v.get("name", k))
+        if v.get("normalized_name") != correct_norm:
+            v["normalized_name"] = correct_norm
             changed = True
     
     if changed:
