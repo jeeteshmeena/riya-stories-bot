@@ -1,0 +1,121 @@
+17:     InlineKeyboardButton,
+77:     load_favorites, save_favorites,
+141: favorites_db = load_favorites()  # { user_id_str: [story_key1, ...] }
+755:         row.append(InlineKeyboardButton("Γ₧ª Back", callback_data=f"menu|{back}|{caller_id}"))
+756:     row.append(InlineKeyboardButton("Γ£û Close", callback_data=f"menu|close|{caller_id}"))
+781:             InlineKeyboardButton("ΓÖÑ Favourites",  callback_data=f"menu|saved|{caller_id}"),
+782:             InlineKeyboardButton("Γ£╕ New Series",   callback_data=f"menu|new|{caller_id}"),
+785:             InlineKeyboardButton("Γ£║ Trending",    callback_data=f"menu|trending|{caller_id}"),
+786:             InlineKeyboardButton("Γ¥ü About",        callback_data=f"menu|about|{caller_id}"),
+789:             InlineKeyboardButton("Γ£º Language",    callback_data=f"menu|lang|{caller_id}"),
+790:             InlineKeyboardButton("Γ£ª Help",         callback_data=f"menu|help|{caller_id}"),
+793:     btn_rows.append([InlineKeyboardButton("Γ£û Close", callback_data=f"menu|close|{caller_id}")])
+847:     favs = favorites_db.get(user_id_str, [])
+848:     if len(favs) > 0:
+849:         body = "\n".join([f"ΓÖÑ <code>{clean_story(s)}</code>" for s in favs[:15]])
+850:         if len(favs) > 15:
+851:             body += f"\n<i>ΓÇªand {len(favs) - 15} more.</i>"
+853:         body = "<i>ΓÖí No favourites yet.\nΓ₧ö Tap Γÿà on any search result to save it.</i>"
+874:                 row.append(InlineKeyboardButton(
+964:             "Γ₧ö /saved ΓÇö Your favourites ΓÖÑ∩╕Å\n"
+977:             InlineKeyboardButton("≡ƒîÉ Language",  callback_data=f"menu|lang|{caller_id}"),
+978:             InlineKeyboardButton("≡ƒöÑ Trending",  callback_data=f"menu|trending|{caller_id}"),
+994:             InlineKeyboardButton("≡ƒç║≡ƒç╕ English", callback_data="lang|en"),
+995:             InlineKeyboardButton("≡ƒç«≡ƒç│ αñ╣αñ┐αñ¿αÑìαñªαÑÇ",  callback_data="lang|hi"),
+1070:     keyboard = [[InlineKeyboardButton("Γ₧ª Back to Menu", callback_data="cmd|start")]]
+1106:     keyboard = [[InlineKeyboardButton("Γ₧ª Back to Menu", callback_data="cmd|start")]]
+1149:     keyboard = [
+1151:             InlineKeyboardButton("≡ƒöÑ Trending", callback_data="cmd|trending"),
+1152:             InlineKeyboardButton("≡ƒîÉ Language", callback_data="cmd|lang_menu")
+1154:         [InlineKeyboardButton("≡ƒöÖ Back to Menu", callback_data="cmd|start")]
+1294:         [[InlineKeyboardButton("≡ƒùæ∩╕Å Delete", callback_data=f"status_delete|{caller_id}")]]
+1678:         nav.append(InlineKeyboardButton("Γùä Prev", callback_data=f"stories_p|{page-1}|{caller_id}"))
+1679:     nav.append(InlineKeyboardButton(f"1/{total_pages}", callback_data="noop"))
+1681:         nav.append(InlineKeyboardButton("Next Γû║", callback_data=f"stories_p|{page+1}|{caller_id}"))
+1682:     keyboard = [
+1685:             InlineKeyboardButton("≡ƒùæ∩╕Å Delete", callback_data=f"story_delete|{caller_id}"),
+1686:             InlineKeyboardButton("≡ƒôï Full List", callback_data=f"story_wtf|{caller_id}")
+1897:             InlineKeyboardButton("Γ£û REJECT", callback_data=f"req_rej|{user.id}|{safe_story}"),
+1898:             InlineKeyboardButton("Γùî WARN", callback_data=f"req_warn|{user.id}|{safe_story}")
+2365:         keyboard = []
+2374:                     keyboard.append([InlineKeyboardButton(f"Join {title}", url=invite_link)])
+2377:         keyboard.append([InlineKeyboardButton("Γ£ª I've Joined", callback_data="check_sub")])
+2408:             keyboard = []
+2412:                     keyboard.append([InlineKeyboardButton(s, callback_data=f"srch|{key}")])
+2518:         light_keyboard = InlineKeyboardMarkup([
+2519:             [InlineKeyboardButton("ß┤ÿ╩ƒß┤Ç╩Å ╔┤ß┤Åß┤í", url=light_link)] if light_link else [],
+2520:             [InlineKeyboardButton("╩Öß┤Çß┤äß┤ïß┤£ß┤ÿ", url=light_link)] if light_link else [],
+2533:         keyboard = [
+2534:             [InlineKeyboardButton("Γ£ª Open Story", url=result.get("link", "https://t.me/"))],
+2536:                 InlineKeyboardButton("Γÿà Favourites", callback_data=f"fav|{story_key}"),
+2537:                 InlineKeyboardButton("ΓÜá Link Broken?", callback_data=f"lnw|{story_key}"),
+2539:             [InlineKeyboardButton("Γ£ò Delete", callback_data="delete")]
+2599:     if not query.data.startswith(("fav|", "check_sub")):
+2811:     if query.data.startswith("fav|"):
+2814:         if user_id_str not in favorites_db: favorites_db[user_id_str] = []
+2815:         if story_key in favorites_db[user_id_str]:
+2816:             favorites_db[user_id_str].remove(story_key)
+2819:             favorites_db[user_id_str].append(story_key)
+2821:         save_favorites(favorites_db)
+2889:         keyboard = [
+2890:             [InlineKeyboardButton("Γ₧ö Open Story", url=result["link"])],
+2891:             [InlineKeyboardButton("Γùî Link Not Working?", callback_data=f"lnw|{story_key}")],
+2892:             [InlineKeyboardButton("≡ƒùæ∩╕Å Delete", callback_data="delete")]
+2960:             nav.append(InlineKeyboardButton("Γùä Prev", callback_data=f"stories_p|{page-1}|{caller_id}"))
+2961:         nav.append(InlineKeyboardButton(f"{page+1}/{total_pages}", callback_data="noop"))
+2963:             nav.append(InlineKeyboardButton("Next Γû║", callback_data=f"stories_p|{page+1}|{caller_id}"))
+2964:         rows = [nav, [InlineKeyboardButton("≡ƒùæ∩╕Å Delete", callback_data=f"story_delete|{caller_id}")]]
+3077:                     InlineKeyboardButton(confirm_label, callback_data=f"lnw_confirm|{story_key}|{reporter_id}"),
+3078:                     InlineKeyboardButton(cancel_label, callback_data=f"lnw_cancel|{reporter_id}"),
+3081:                     InlineKeyboardButton("≡ƒö¿ Punish User", callback_data=f"punish|fake|{reporter_id}")
+3242:                     InlineKeyboardButton(broken_label, callback_data=f"lnwv_broken|{vote_id}"),
+3243:                     InlineKeyboardButton(ok_label, callback_data=f"lnwv_ok|{vote_id}"),
+3246:                     InlineKeyboardButton("≡ƒö¿ Punish User", callback_data=f"punish|fake|{vote['reporter_id']}")
+3325:                     InlineKeyboardButton(broken_label, callback_data=f"lnwv_broken|{vote_id}"),
+3326:                     InlineKeyboardButton(ok_label, callback_data=f"lnwv_ok|{vote_id}"),
+3329:                     InlineKeyboardButton("≡ƒö¿ Punish User", callback_data=f"punish|fake|{vote['reporter_id']}")
+3491:         keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("Γ₧ö Open Story", url=link)]]) if link else None
+3540:         keyboard = InlineKeyboardMarkup(
+3543:                     InlineKeyboardButton("English", callback_data="lang|en"),
+3544:                     InlineKeyboardButton("αñ╣αñ┐αñ¿αÑìαñªαÑÇ", callback_data="lang|hi"),
+3663:         InlineKeyboardButton("Γ₧ª Back",    callback_data=f"cfg|{back}||{caller_id}"),
+3664:         InlineKeyboardButton("Γ£û Close",  callback_data=f"cfg|close||{caller_id}"),
+3693:             InlineKeyboardButton("Γ£ª Language",      callback_data=f"cfg|lang||{caller_id}"),
+3694:             InlineKeyboardButton("Γ£ª Timers",         callback_data=f"cfg|timers||{caller_id}"),
+3697:             InlineKeyboardButton("Γ£ª Channels",      callback_data=f"cfg|sources||{caller_id}"),
+3698:             InlineKeyboardButton("Γ£ª Formats",        callback_data=f"cfg|formats||{caller_id}"),
+3701:             InlineKeyboardButton("Γ£ª System Info",   callback_data=f"cfg|sysinfo||{caller_id}"),
+3702:             InlineKeyboardButton("≡ƒöº Maintenance",   callback_data=f"cfg|maintenance||{caller_id}"),
+3705:             InlineKeyboardButton("Γ£º Refresh",        callback_data=f"cfg|main||{caller_id}"),
+3706:             InlineKeyboardButton("Γ£û Close",          callback_data=f"cfg|close||{caller_id}"),
+3725:             InlineKeyboardButton(f"{en_mark} English",  callback_data=f"cfg|setlang|en|{caller_id}"),
+3726:             InlineKeyboardButton(f"{hi_mark} αñ╣αñ┐αñ¿αÑìαñªαÑÇ",    callback_data=f"cfg|setlang|hi|{caller_id}"),
+3766:             InlineKeyboardButton("Γ£Ü Add",    callback_data=f"cfg|add_source||{caller_id}"),
+3767:             InlineKeyboardButton("Γ£û Remove", callback_data=f"cfg|rm_source||{caller_id}"),
+3802:     rows = [[InlineKeyboardButton(f"Γ£ò {c}", callback_data=f"cfg|do_rm_src|{c}|{caller_id}")] for c in sources]
+3830:             InlineKeyboardButton("Γ£Ü Add Format",   callback_data=f"cfg|fmt_learn||{caller_id}"),
+3831:             InlineKeyboardButton("Γùç View",          callback_data=f"cfg|fmt_view||{caller_id}"),
+3834:             InlineKeyboardButton("Γ£û Remove",        callback_data=f"cfg|fmt_rm||{caller_id}"),
+3835:             InlineKeyboardButton("Γ¼í Test",          callback_data=f"cfg|fmt_test||{caller_id}"),
+3863:             [InlineKeyboardButton(f"Γùå {c}", callback_data=f"cfg|fmt_pick_ch|{c}|{caller_id}")]
+3940:         [InlineKeyboardButton(f"Γ£û Channel {cid}", callback_data=f"cfg|fmt_do_rm|{cid}|{caller_id}")]
+4019:                 InlineKeyboardButton("≡ƒƒó Disable Maintenance", callback_data=f"cfg|maint_off||{caller_id}"),
+4027:                 InlineKeyboardButton("30 min",   callback_data=f"cfg|maint_on|30|{caller_id}"),
+4028:                 InlineKeyboardButton("1 hour",   callback_data=f"cfg|maint_on|60|{caller_id}"),
+4029:                 InlineKeyboardButton("3 hours",  callback_data=f"cfg|maint_on|180|{caller_id}"),
+4032:                 InlineKeyboardButton("6 hours",  callback_data=f"cfg|maint_on|360|{caller_id}"),
+4033:                 InlineKeyboardButton("12 hours", callback_data=f"cfg|maint_on|720|{caller_id}"),
+4034:                 InlineKeyboardButton("24 hours", callback_data=f"cfg|maint_on|1440|{caller_id}"),
+4037:                 InlineKeyboardButton("Γê₧ Indefinite", callback_data=f"cfg|maint_on|0|{caller_id}"),
+4254:             def __init__(self, u): self.inline_keyboard = [[_FakeBtn(u)]] if u else []
+4288:             [InlineKeyboardButton("Γùå View Formats", callback_data=f"cfg|fmt_view||{caller_id}")],
+4467:                 [InlineKeyboardButton(f"Γùå {c}", callback_data=f"cfg|fmt_pick_ch|{c}|{caller_id}")]
+4478:         markup = InlineKeyboardMarkup(ch_rows + [[InlineKeyboardButton("Γ£û Cancel", callback_data=f"cfg|formats||{caller_id}")]])
+4512:             def __init__(self, u): self.inline_keyboard = [[_FakeBtn(u)]] if u else []
+4602:     favs = favorites_db.get(user_id_str, [])
+4603:     if not favs:
+4607:     for story_key in favs:
+4625:     keyboard = []
+4627:         keyboard.append([InlineKeyboardButton(t.capitalize(), switch_inline_query_current_chat=t)])
+4670:     favs = len(favorites_db.get(target, []))
+4673:     text = f"≡ƒ¢í∩╕Å *User Info for {target}*\n\nSearches: `{searches}`\nSaved: `{favs}`\nPending Requests: `{len(reqs)}`"

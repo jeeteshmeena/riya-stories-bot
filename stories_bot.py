@@ -2431,11 +2431,8 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(_del_no())
         return
 
-    # delete user query immediately on hit (as requested)
-    try:
-        await msg.delete()
-    except Exception:
-        pass
+    # Store original query message to delete it *after* we reply
+    user_query_msg = msg
 
     target_mention = user.mention_html()
     target_user_id = user.id
@@ -2492,56 +2489,40 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     chat_id = update.effective_chat.id
-    keyboard = []
 
-    # ── LIGHT FORMAT: minimal text response ──────────────────────────────
+    keyboard = []
+    if result.get("link"):
+        keyboard.append([InlineKeyboardButton("➔ Open Story", url=result["link"])])
+    keyboard.append([
+        InlineKeyboardButton("⭐ Favourites", callback_data=f"fav|{story_key}"),
+        InlineKeyboardButton("⚠️ Link Broken?", callback_data=f"lnw|{story_key}")
+    ])
+    keyboard.append([InlineKeyboardButton("🗑️ Delete", callback_data="delete")])
+
+    photo = result.get("photo") or result.get("image")
+    story_type_line = f"\n<b>✽ Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
+
     if result.get("format") == "LIGHT":
-        light_link    = result.get("link", "")
         light_name    = result.get("text", story_name)
         light_status  = result.get("status", "Unknown")
         light_platform = result.get("platform", "Unknown")
         light_genre   = result.get("genre", "Unknown")
-
-        light_caption = (
+        caption = (
             f"Hey {mention} 👋\n"
             f"<b>✫ I found this story</b> ➴\n\n"
             f"♨️<b>Story</b> : {html.escape(light_name)}\n"
-            f"🔰<b>Status</b> : {html.escape(light_status)}\n"
-            f"🖥<b>Platform</b> : {html.escape(light_platform)}\n"
-            f"🧩<b>Genre</b> : {html.escape(light_genre)}\n\n"
-            f"◒ This reply will be deleted automatically in 5 minutes."
+            f"🔰<b>Status</b> : <b>{html.escape(light_status)}</b>\n"
+            f"🖥<b>Platform</b> : <b>{html.escape(light_platform)}</b>\n"
+            f"🧩<b>Genre</b> : <b>{html.escape(light_genre)}</b>\n\n"
+            f"<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>"
         )
-
-        text_msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text=light_caption,
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+    else:
+        caption = (
+            f"Hey {mention} 👋\n"
+            f"<b>✫ I found this story</b> ➴\n\n"
+            f"<i>❁ Name:-</i> <b>{story_name}</b>{story_type_line}\n\n"
+            f"<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>"
         )
-
-        message_owner[text_msg.message_id] = user.id
-
-        async def _delete_light():
-            await asyncio.sleep(300)
-            try:
-                await text_msg.delete()
-            except Exception:
-                pass
-
-        asyncio.create_task(_delete_light())
-        await log(context, f"SEARCH HIT (LIGHT) | user_id={user.id} username={user.username} title={light_name}")
-        return
-    # ── END LIGHT ────────────────────────────────────────────────────────────────
-
-    # Non-Light path (all other formats)
-    photo = result.get("photo") or result.get("image")
-    story_type_line = f"\n<b>✽ Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
-    caption = (
-        f"Hey {mention} 👋\n"
-        f"<b>✫ I found this story</b> ➴\n\n"
-        f"<i>❁ Name:-</i> <b>{story_name}</b>{story_type_line}\n\n"
-        f"<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>"
-    )
 
     if photo:
         msg = await context.bot.send_photo(
@@ -2562,6 +2543,11 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     message_owner[msg.message_id] = user.id
+
+    try:
+        await user_query_msg.delete()
+    except Exception:
+        pass
 
     # delete the reply later without blocking the handler
     async def _delete_later():

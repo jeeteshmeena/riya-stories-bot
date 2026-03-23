@@ -87,13 +87,7 @@ def search_story_exact_or_alias(query):
         
     if qn and qn in _alias_cache:
         return _alias_cache[qn]
-        
-    # partial normalize fallback
-    if qn and len(qn) >= 3:
-        for norm_title, data in _norm_cache.items():
-            if qn in norm_title:
-                return data
-                
+
     return None
 
 def get_suggestions(query, limit=5):
