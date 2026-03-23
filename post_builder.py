@@ -180,9 +180,7 @@ def build_light_format(data):
     genre       = data.get("genre", "Unknown")
     desc        = data.get("desc", "")
 
-    styled_name = to_small_caps(name)
-
-    t  = f"♨️<b>Story</b> : {styled_name}\n"
+    t  = f"♨️<b>Story</b> : {html.escape(name)}\n"
     t += f"🔰<b>Status</b> : <b>{html.escape(status)}</b>\n"
     t += f"🖥<b>Platform</b> : <b>{html.escape(platform)}</b>\n"
     t += f"🧩<b>Genre</b> : <b>{html.escape(genre)}</b>"
