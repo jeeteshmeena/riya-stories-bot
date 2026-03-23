@@ -190,7 +190,7 @@ def build_light_format(data):
     if desc:
         bold_desc = to_bold_unicode(desc)
         # No blank line between genre and description header
-        t += f"\n<b>📝 :-</b>\n<blockquote expandable>{html.escape(bold_desc)}</blockquote>"
+        t += f"\n<b>📝 Story Description :-</b>\n<blockquote expandable>{html.escape(bold_desc)}</blockquote>"
 
     return t
 

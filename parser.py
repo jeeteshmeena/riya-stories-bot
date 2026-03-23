@@ -111,14 +111,14 @@ def extract_light_format(message):
 
     # photo: works for Telethon (photo object) and any truthy value
     has_photo = bool(getattr(message, "photo", None))
-    if not (all(x in text for x in ["♨️", "🔰", "🧩", "🖥"]) and has_photo):
+    if not (all(x in text for x in ["♨️", "🔰", "🖥"]) and ("🧩" in text or "🗓" in text) and has_photo):
         return None
 
     # Name: first ♨️ line ONLY — must NOT be the "Story Description" line
     name_match = re.search(r"^♨️(?!.*Description).*?:\s*(.+)", text, re.MULTILINE)
     status_match = re.search(r"🔰.*?:\s*(.+)", text)
     platform_match = re.search(r"🖥.*?:\s*(.+)", text)
-    genre_match = re.search(r"🧩.*?:\s*(.+)", text)
+    genre_match = re.search(r"(?:🧩|🗓).*?:\s*(.+)", text)
 
     if not name_match:
         return None

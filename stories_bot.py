@@ -2492,6 +2492,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     chat_id = update.effective_chat.id
+    keyboard = []
 
     # ── LIGHT FORMAT: minimal text response ──────────────────────────────
     if result.get("format") == "LIGHT":
