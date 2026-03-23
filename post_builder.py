@@ -49,6 +49,7 @@ _log = logging.getLogger(__name__)
     STATE_PLATFORM,
     STATE_GENRE,
     STATE_LINK,
+    STATE_BACKUP_LINK,
     STATE_EPISODES,
     STATE_STATUS,
     STATE_USERNAME,
@@ -56,7 +57,7 @@ _log = logging.getLogger(__name__)
     STATE_DEST_INPUT,
     STATE_DEST_TOPIC,
     STATE_CONFIRM,
-) = range(19)
+) = range(20)
 
 _LIGHT_GENRES = ["Fantasy", "Suspense", "Romance", "Thriller", "Action", "Horror", "Mystery"]
 
@@ -83,6 +84,20 @@ def to_small_caps(text):
         'Y': 'ʏ', 'Z': 'ᴢ'
     }
     return "".join(mapping.get(c, c) for c in text)
+
+def to_bold_unicode(text):
+    """Convert ASCII letters to Unicode Mathematical Bold equivalents."""
+    result = []
+    for c in text:
+        if 'A' <= c <= 'Z':
+            result.append(chr(0x1D400 + ord(c) - ord('A')))
+        elif 'a' <= c <= 'z':
+            result.append(chr(0x1D41A + ord(c) - ord('a')))
+        elif '0' <= c <= '9':
+            result.append(chr(0x1D7CE + ord(c) - ord('0')))
+        else:
+            result.append(c)
+    return "".join(result)
 
 def _is_admin(user_id):
     try:
@@ -159,11 +174,11 @@ def build_format_2(data):
     return t
 
 def build_light_format(data):
-    name     = data.get("name", "Unknown")
-    status   = data.get("status", "Ongoing")
-    platform = data.get("platform", DEFAULT_PLATFORM)
-    genre    = data.get("genre", "Unknown")
-    desc     = data.get("desc", "")
+    name        = data.get("name", "Unknown")
+    status      = data.get("status", "Ongoing")
+    platform    = data.get("platform", DEFAULT_PLATFORM)
+    genre       = data.get("genre", "Unknown")
+    desc        = data.get("desc", "")
 
     styled_name = to_small_caps(name)
 
@@ -173,18 +188,21 @@ def build_light_format(data):
     t += f"🗓<b>Genre</b> : <b>{html.escape(genre)}</b>"
 
     if desc:
-        t += f"\n\n♨️<b>Story Description</b>:-\n<blockquote>{html.escape(desc)}</blockquote>"
+        bold_desc = to_bold_unicode(desc)
+        # No blank line between genre and description header
+        t += f"\n<b>♨️ Story Description :-</b>\n<blockquote expandable>{html.escape(bold_desc)}</blockquote>"
 
     return t
 
 def get_light_kb(data):
-    link = data.get("link", "")
+    link        = data.get("link", "")
+    backup_link = data.get("backup_link") or link   # fallback to main link
     if not link:
         return None
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("ᴘʟᴀʏ ɴᴏᴡ", url=link)],
-        [InlineKeyboardButton("ʙᴀᴄᴋᴜᴘ",   url=link)],
-    ])
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("ᴘʟᴀʏ ɴᴏᴡ", url=link),
+        InlineKeyboardButton("ʙᴀᴄᴋᴜᴘ",   url=backup_link),
+    ]])
 
 
 def _build_previews(data):
@@ -647,23 +665,35 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.pop("_await_manual_link", False):
         data["link"] = text
     else:
-        # Direct URL typed or required manual input
         data["link"] = text
 
     # Route after link
     fmt = data.get("format", "1")
     if fmt == "light":
-        return await _go_to_dest(update, context)
+        # Ask for optional backup link
+        kb = _kb([["Same as Play"], ["/skip"]])
+        await update.message.reply_text(
+            "¤ Backup link (or tap Same as Play / skip):",
+            reply_markup=kb
+        )
+        return STATE_BACKUP_LINK
     if fmt == "post":
-        # Post: Link → Status
         return await _go_to_status(update, context)
     elif fmt == "intro":
-        # Intro: Link → Status (skip Episodes)
         return await _go_to_status(update, context)
     else:
-        # Format 1/2: Link → Episodes
         await update.message.reply_text("» Total episodes:", reply_markup=ReplyKeyboardRemove())
         return STATE_EPISODES
+
+# ── Backup Link (Light format only) ─────────────────────────────────────────────────
+async def handle_backup_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    data = context.user_data["pb_data"]
+    if text in ("Same as Play", "/skip", ""):
+        data["backup_link"] = data.get("link", "")  # fall back to main link
+    else:
+        data["backup_link"] = text
+    return await _go_to_dest(update, context)
 
 # ── Episodes ───────────────────────────────────────────────────────────────────
 async def handle_episodes(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -983,6 +1013,7 @@ post_builder_handler = ConversationHandler(
         STATE_PLATFORM:  [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_platform)],
         STATE_GENRE:     [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_genre)],
         STATE_LINK:      [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link)],
+        STATE_BACKUP_LINK:[MessageHandler(filters.TEXT & ~filters.COMMAND, handle_backup_link)],
         STATE_EPISODES:  [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_episodes)],
         STATE_STATUS:    [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_status)],
         STATE_USERNAME:  [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_username)],
