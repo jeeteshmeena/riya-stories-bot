@@ -109,15 +109,10 @@ def extract_light_format(message):
     if not text:
         return None
 
-    # Needs photo presence Check - we don't always have photo directly on message depending on framework, 
-    # but the requirement states "AND message has photo". Telethon has `message.photo`. 
-    if not getattr(message, "photo", None):
+    if not (all(x in text for x in ["♨️", "🔰", "🗓", "🖥"]) and getattr(message, "photo", None)):
         return None
 
-    if not ("♨️" in text and "🗓" in text and "🔰" in text and ":" in text):
-        return None
-
-    name_match = re.search(r"♨️.*?:\s*(.+)", text)
+    name_match = re.search(r"^♨️.*?:\s*(.+)", text, re.MULTILINE)
     status_match = re.search(r"🔰.*?:\s*(.+)", text)
     platform_match = re.search(r"🖥.*?:\s*(.+)", text)
     genre_match = re.search(r"🗓.*?:\s*(.+)", text)
@@ -130,40 +125,34 @@ def extract_light_format(message):
     platform = platform_match.group(1).strip() if platform_match else "Unknown"
     genre = genre_match.group(1).strip() if genre_match else "Unknown"
 
-    description = ""
-    if "Story Description:-" in text:
-        desc_block = text.split("Story Description:-")[-1]
-    elif "Story Description" in text:
-        desc_block = text.split("Story Description")[-1]
-    else:
-        desc_block = ""
+    lines = text.split("\n")
+    desc_started = False
+    desc_lines = []
 
-    lines = desc_block.split("\n")
-    clean_lines = []
     for l in lines:
-        if l.strip().startswith(">"):
-            clean_lines.append(l.replace(">", "", 1).strip())
+        if "Description" in l:
+            desc_started = True
+            continue
 
-    description = " ".join(clean_lines) if clean_lines else desc_block.strip()
+        if desc_started:
+            if l.strip().startswith(">"):
+                desc_lines.append(l.replace(">", "", 1).strip())
+
+    description = " ".join(desc_lines).strip()
 
     link = None
-    if hasattr(message, "reply_markup") and message.reply_markup:
+    if getattr(message, "reply_markup", None):
         try:
-            from telethon.tl.types import ReplyInlineMarkup, KeyboardButtonUrl
-            if isinstance(message.reply_markup, ReplyInlineMarkup):
-                for row in message.reply_markup.rows:
-                    for btn in row.buttons:
-                        if isinstance(btn, KeyboardButtonUrl):
-                            link = btn.url
-                            break
-                    if link:
-                        break
+            if hasattr(message.reply_markup, "inline_keyboard"):
+                link = message.reply_markup.inline_keyboard[0][0].url
+            elif hasattr(message.reply_markup, "rows"):
+                # fallback for Telethon ReplyInlineMarkup
+                link = message.reply_markup.rows[0].buttons[0].url
         except Exception:
-            pass
+            link = None
 
     key = re.sub(r"\s+", " ", name).strip().lower()
 
-    # Image is handled by scanner_client but we can extract it if possible
     image = None
     
     return {
@@ -187,13 +176,10 @@ def parse_story(message):
     # Try Light format first
     light_data = extract_light_format(message)
     if light_data:
-        # Require link from somewhere if not in button? Actually light_data might just not have link initially, that's fine
         if not light_data.get("link"):
             light_link = extract_link(message)
             light_data["link"] = light_link
         
-        # If no link at all and it's practically required, could return None, but parser shouldn't arbitrarily fail. 
-        # But we must have a link to create correct DB entry
         if not light_data.get("link"):
             return None
         return light_data
