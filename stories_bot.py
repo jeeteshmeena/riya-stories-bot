@@ -2493,53 +2493,39 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat_id = update.effective_chat.id
 
-    # ── LIGHT FORMAT: premium two-message response ──────────────────────────────
+    # ── LIGHT FORMAT: minimal text response ──────────────────────────────
     if result.get("format") == "LIGHT":
         light_link    = result.get("link", "")
         light_name    = result.get("text", story_name)
         light_status  = result.get("status", "Unknown")
         light_platform = result.get("platform", "Unknown")
         light_genre   = result.get("genre", "Unknown")
-        light_photo   = result.get("photo") or result.get("image") or "https://files.catbox.moe/i59f4o.jpg"
-
-        # Step 1 — header text message
-        header_msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"Hey {mention} 👋\n<b>✫ I found this story</b> ➴",
-            parse_mode="HTML"
-        )
-
-        # Step 2 — photo with Light caption, standard search keyboard (no Play/Backup)
-        light_name     = result.get("text", story_name)
-        light_status   = result.get("status", "Unknown")
-        light_platform = result.get("platform", "Unknown")
-        light_genre    = result.get("genre", "Unknown")
-        light_photo    = result.get("photo") or result.get("image") or "https://files.catbox.moe/i59f4o.jpg"
 
         light_caption = (
+            f"Hey {mention} 👋\n"
+            f"<b>✫ I found this story</b> ➴\n\n"
             f"♨️<b>Story</b> : {html.escape(light_name)}\n"
-            f"🔰<b>Status</b> : <b>{html.escape(light_status)}</b>\n"
-            f"🖥<b>Platform</b> : <b>{html.escape(light_platform)}</b>\n"
-            f"🗓<b>Genre</b> : <b>{html.escape(light_genre)}</b>"
+            f"🔰<b>Status</b> : {html.escape(light_status)}\n"
+            f"🖥<b>Platform</b> : {html.escape(light_platform)}\n"
+            f"🧩<b>Genre</b> : {html.escape(light_genre)}\n\n"
+            f"◒ This reply will be deleted automatically in 5 minutes."
         )
 
-        photo_msg = await context.bot.send_photo(
+        text_msg = await context.bot.send_message(
             chat_id=chat_id,
-            photo=light_photo,
-            caption=light_caption,
+            text=light_caption,
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
-        message_owner[photo_msg.message_id] = user.id
+        message_owner[text_msg.message_id] = user.id
 
         async def _delete_light():
             await asyncio.sleep(300)
-            for m in (header_msg, photo_msg):
-                try:
-                    await m.delete()
-                except Exception:
-                    pass
+            try:
+                await text_msg.delete()
+            except Exception:
+                pass
 
         asyncio.create_task(_delete_light())
         await log(context, f"SEARCH HIT (LIGHT) | user_id={user.id} username={user.username} title={light_name}")

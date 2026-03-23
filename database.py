@@ -1,5 +1,15 @@
 import json
 import os
+import unicodedata
+
+def normalize_text(text):
+    if not text:
+        return ""
+    # Convert unicode fancy fonts to normal
+    text = unicodedata.normalize('NFKD', str(text)).lower()
+    # Keep only alphanumeric and spaces
+    text = ''.join(c for c in text if c.isalnum() or c.isspace())
+    return ' '.join(text.split())  # Compress multiple spaces
 
 # Paths - use DATA_DIR from config for VPS (load_dotenv runs when config is imported first)
 def _data_path(name):
@@ -63,6 +73,21 @@ def load_db():
 
     _DB_CACHE = _load_json(DB_FILE, {})
     _DB_MTIME = mtime
+
+    # Backward compatibility: enforce normalized_name
+    changed = False
+    for k, v in _DB_CACHE.items():
+        if "normalized_name" not in v:
+            v["normalized_name"] = normalize_text(v.get("name", k))
+            changed = True
+    
+    if changed:
+        _save_json(DB_FILE, _DB_CACHE)
+        try:
+            _DB_MTIME = os.path.getmtime(DB_FILE)
+        except OSError:
+            pass
+
     return _DB_CACHE
 
 
@@ -81,6 +106,8 @@ def add_story(story):
     db = load_db()
 
     name = story["name"]
+    # Ensure normalized_name is saved
+    story["normalized_name"] = normalize_text(name)
 
     if name not in db:
         db[name] = story

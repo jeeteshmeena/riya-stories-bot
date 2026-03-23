@@ -1,9 +1,8 @@
-from rapidfuzz import fuzz
-from database import load_db
-
 # We need to peek at the internal MT_TIME cache from database to refresh search cache
 import database
+from database import load_db, normalize_text
 import re
+
 
 
 def clean_story(name):
@@ -14,13 +13,13 @@ def clean_story(name):
 
 
 # We caching everything inside dicts for O(1) alias/exact lookups
-_exact_cache = {}    # clean_query -> data
+_norm_cache = {}     # normalized_name -> data
 _alias_cache = {}    # clean_alias -> data
 _list_cache = []     # for partial/did_you_mean containing original titles
 _search_cache_mtime = None
 
 def _get_cache():
-    global _exact_cache, _alias_cache, _list_cache, _search_cache_mtime
+    global _exact_cache, _norm_cache, _alias_cache, _list_cache, _search_cache_mtime
     db = load_db()
     
     if not db:
@@ -30,6 +29,7 @@ def _get_cache():
         return _exact_cache
 
     new_exact = {}
+    new_norm = {}
     new_alias = {}
     new_list = []
     
@@ -37,6 +37,12 @@ def _get_cache():
         # name is already clean and lowered in DB key
         story_name_clean = name 
         new_exact[story_name_clean] = data
+        
+        # normalized name index
+        norm_name = data.get("normalized_name", normalize_text(story_name_clean))
+        if norm_name:
+            new_norm[norm_name] = data
+            
         new_list.append(data.get("text", name))
         
         # aliases
@@ -45,8 +51,12 @@ def _get_cache():
             al_clean = clean_story(al).lower()
             if al_clean:
                 new_alias[al_clean] = data
+            al_norm = normalize_text(al)
+            if al_norm:
+                new_alias[al_norm] = data
                 
     _exact_cache = new_exact
+    _norm_cache = new_norm
     _alias_cache = new_alias
     _list_cache = new_list
     _search_cache_mtime = database._DB_MTIME
@@ -56,19 +66,34 @@ def _get_cache():
 def search_story_exact_or_alias(query):
     """
     1. Exact story title match
-    2. Alias match
+    2. Normalized story title match
+    3. Alias match
+    4. Partial normalized string match
     """
     _get_cache() # ensure cache is warm
     q = clean_story(query).lower()
+    qn = normalize_text(query)
     if not q:
         return None
         
     if q in _exact_cache:
         return _exact_cache[q]
         
+    if qn and qn in _norm_cache:
+        return _norm_cache[qn]
+        
     if q in _alias_cache:
         return _alias_cache[q]
         
+    if qn and qn in _alias_cache:
+        return _alias_cache[qn]
+        
+    # partial normalize fallback
+    if qn and len(qn) >= 3:
+        for norm_title, data in _norm_cache.items():
+            if qn in norm_title:
+                return data
+                
     return None
 
 def get_suggestions(query, limit=5):
