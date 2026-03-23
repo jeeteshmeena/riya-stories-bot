@@ -2491,67 +2491,79 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(_del_broken())
         return
 
-    keyboard = [
-        [InlineKeyboardButton("✦ Open Story", url=result.get("link", "https://t.me/"))],
-        [
-            InlineKeyboardButton("★ Favourites", callback_data=f"fav|{story_key}"),
-            InlineKeyboardButton("⚠ Link Broken?", callback_data=f"lnw|{story_key}"),
-        ],
-        [InlineKeyboardButton("✕ Delete", callback_data="delete")]
-    ]
-
-    photo = result.get("photo") or result.get("image")
-    story_type_line = f"\n<b>✽ Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
-    
-    if result.get("format") == "LIGHT":
-        keyboard[0] = [InlineKeyboardButton("ᴘʟᴀʏ ɴᴏᴡ", url=result.get("link", "https://t.me/"))]
-        
-        name = result.get("text", story_name)
-        status = result.get("status", "Unknown")
-        platform = result.get("platform", "Unknown")
-        genre = result.get("genre", "Unknown")
-        desc = result.get("description", "")
-        
-        desc_lines = "\n".join([f"> {line}" for line in desc.split("\n")]) if desc else ""
-        description_addon = f"\n\n♨️<b>Story Description</b>:-\n{desc_lines}" if desc else ""
-
-        caption = f"""Hey {mention} 👋
-<b>✫ I found this story</b> ➴
-
-♨️<b>Story</b> : {name}
-🔰<b>Status</b> : {status}
-🖥<b>Platform</b> : {platform}
-🗓<b>Genre</b> : {genre}{description_addon}
-
-<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>
-"""
-    else:
-        caption = f"""Hey {mention} 👋
-<b>✫ I found this story</b> ➴
-
-<i>❁ Name:-</i> <b>{story_name}</b>{story_type_line}
-
-<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>
-"""
-
     chat_id = update.effective_chat.id
 
-    if photo:
+    if result.get("format") == "LIGHT":
+        light_link = result.get("link", "")
+        light_name = result.get("text", story_name)
+        light_status = result.get("status", "Unknown")
+        light_platform = result.get("platform", "Unknown")
+        light_genre = result.get("genre", "Unknown")
+        light_desc = result.get("description", "").strip()
+
+        # Build description block — use HTML blockquote for Telegram's blue-side-line + collapse
+        if light_desc:
+            description_block = f"\n\n♨️<b>Story Description</b>:-\n<blockquote>{html.escape(light_desc)}</blockquote>"
+        else:
+            description_block = ""
+
+        caption = (
+            f"♨️<b>Story</b> : {html.escape(light_name)}\n"
+            f"🔰<b>Status</b> : <b>{html.escape(light_status)}</b>\n"
+            f"🖥<b>Platform</b> : <b>{html.escape(light_platform)}</b>\n"
+            f"🗓<b>Genre</b> : <b>{html.escape(light_genre)}</b>"
+            f"{description_block}"
+        )
+
+        light_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("ᴘʟᴀʏ ɴᴏᴡ", url=light_link)] if light_link else [],
+            [InlineKeyboardButton("ʙᴀᴄᴋᴜᴘ", url=light_link)] if light_link else [],
+        ])
+
+        light_photo = result.get("photo") or result.get("image") or "https://files.catbox.moe/i59f4o.jpg"
+
         msg = await context.bot.send_photo(
             chat_id=chat_id,
-            photo=photo,
+            photo=light_photo,
             caption=caption,
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=light_keyboard
         )
     else:
-        msg = await context.bot.send_photo(
-            chat_id=chat_id,
-            photo="https://files.catbox.moe/i59f4o.jpg",
-            caption=caption,
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+        keyboard = [
+            [InlineKeyboardButton("✦ Open Story", url=result.get("link", "https://t.me/"))],
+            [
+                InlineKeyboardButton("★ Favourites", callback_data=f"fav|{story_key}"),
+                InlineKeyboardButton("⚠ Link Broken?", callback_data=f"lnw|{story_key}"),
+            ],
+            [InlineKeyboardButton("✕ Delete", callback_data="delete")]
+        ]
+        photo = result.get("photo") or result.get("image")
+        story_type_line = f"\n<b>✽ Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
+        caption = (
+            f"Hey {mention} 👋\n"
+            f"<b>✫ I found this story</b> ➴\n\n"
+            f"<i>❁ Name:-</i> <b>{story_name}</b>{story_type_line}\n\n"
+            f"<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>"
         )
+
+        if photo:
+            msg = await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=photo,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            msg = await context.bot.send_photo(
+                chat_id=chat_id,
+                photo="https://files.catbox.moe/i59f4o.jpg",
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+
 
     message_owner[msg.message_id] = user.id
 

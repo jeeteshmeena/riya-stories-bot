@@ -135,19 +135,35 @@ def extract_light_format(message):
             continue
 
         if desc_started:
-            if l.strip().startswith(">"):
-                desc_lines.append(l.replace(">", "", 1).strip())
+            stripped = l.strip()
+            if stripped.startswith(">"):
+                desc_lines.append(stripped.lstrip("> ").strip())
+            elif stripped:  # also collect plain lines after Description header
+                desc_lines.append(stripped)
 
-    description = " ".join(desc_lines).strip()
+    description = "\n".join(desc_lines).strip()
 
+    # Extract ONLY the "Play Now" button link; ignore Backup and others
     link = None
     if getattr(message, "reply_markup", None):
         try:
             if hasattr(message.reply_markup, "inline_keyboard"):
-                link = message.reply_markup.inline_keyboard[0][0].url
+                for row in message.reply_markup.inline_keyboard:
+                    for btn in row:
+                        if "play" in (btn.text or "").lower():
+                            link = btn.url
+                            break
+                    if link:
+                        break
             elif hasattr(message.reply_markup, "rows"):
-                # fallback for Telethon ReplyInlineMarkup
-                link = message.reply_markup.rows[0].buttons[0].url
+                for row in message.reply_markup.rows:
+                    for btn in row.buttons:
+                        btn_text = getattr(btn, "text", "") or ""
+                        if "play" in btn_text.lower():
+                            link = btn.url
+                            break
+                    if link:
+                        break
         except Exception:
             link = None
 
