@@ -109,10 +109,13 @@ def extract_light_format(message):
     if not text:
         return None
 
-    if not (all(x in text for x in ["♨️", "🔰", "🗓", "🖥"]) and getattr(message, "photo", None)):
+    # photo: works for Telethon (photo object) and any truthy value
+    has_photo = bool(getattr(message, "photo", None))
+    if not (all(x in text for x in ["♨️", "🔰", "🗓", "🖥"]) and has_photo):
         return None
 
-    name_match = re.search(r"^♨️.*?:\s*(.+)", text, re.MULTILINE)
+    # Name: first ♨️ line ONLY — must NOT be the "Story Description" line
+    name_match = re.search(r"^♨️(?!.*Description).*?:\s*(.+)", text, re.MULTILINE)
     status_match = re.search(r"🔰.*?:\s*(.+)", text)
     platform_match = re.search(r"🖥.*?:\s*(.+)", text)
     genre_match = re.search(r"🗓.*?:\s*(.+)", text)
@@ -120,10 +123,14 @@ def extract_light_format(message):
     if not name_match:
         return None
 
-    name = name_match.group(1).strip()
-    status = status_match.group(1).strip() if status_match else "Unknown"
-    platform = platform_match.group(1).strip() if platform_match else "Unknown"
-    genre = genre_match.group(1).strip() if genre_match else "Unknown"
+    def _clean(s):
+        """Strip HTML tags and extra whitespace from extracted field."""
+        return re.sub(r"<[^>]+>", "", s).strip()
+
+    name     = _clean(name_match.group(1))
+    status   = _clean(status_match.group(1)) if status_match else "Unknown"
+    platform = _clean(platform_match.group(1)) if platform_match else "Unknown"
+    genre    = _clean(genre_match.group(1)) if genre_match else "Unknown"
 
     lines = text.split("\n")
     desc_started = False
@@ -195,9 +202,9 @@ def parse_story(message):
         if not light_data.get("link"):
             light_link = extract_link(message)
             light_data["link"] = light_link
-        
         if not light_data.get("link"):
             return None
+        print("[PARSER] Saved Light story:", light_data.get("text"), "| link:", light_data.get("link"))
         return light_data
 
     text = get_text(message)

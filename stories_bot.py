@@ -1523,7 +1523,7 @@ async def scan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_story_index(story_index)
 
         last_scan_count = len(story_index)
-        asyncio.create_task(update_all_indexes(context.bot))
+        # Index already built and saved above — no extra step needed
 
         # clear link flags for stories whose link has been updated/confirmed again
         db = load_db()
