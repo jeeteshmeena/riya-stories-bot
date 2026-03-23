@@ -2493,43 +2493,63 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat_id = update.effective_chat.id
 
+    # ── LIGHT FORMAT: premium two-message response ──────────────────────────────
     if result.get("format") == "LIGHT":
-        light_link = result.get("link", "")
-        light_name = result.get("text", story_name)
-        light_status = result.get("status", "Unknown")
+        light_link    = result.get("link", "")
+        light_name    = result.get("text", story_name)
+        light_status  = result.get("status", "Unknown")
         light_platform = result.get("platform", "Unknown")
-        light_genre = result.get("genre", "Unknown")
-        light_desc = result.get("description", "").strip()
+        light_genre   = result.get("genre", "Unknown")
+        light_photo   = result.get("photo") or result.get("image") or "https://files.catbox.moe/i59f4o.jpg"
 
-        # Build description block — use HTML blockquote for Telegram's blue-side-line + collapse
-        if light_desc:
-            description_block = f"\n\n♨️<b>Story Description</b>:-\n<blockquote>{html.escape(light_desc)}</blockquote>"
-        else:
-            description_block = ""
+        # 1. Header text message
+        header_text = (
+            f"Hey {mention} 👋\n"
+            f"<b>✫ I found this story</b> ➴"
+        )
+        header_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=header_text,
+            parse_mode="HTML"
+        )
 
-        caption = (
+        # 2. Premium image post — NO description in search result
+        light_caption = (
             f"♨️<b>Story</b> : {html.escape(light_name)}\n"
             f"🔰<b>Status</b> : <b>{html.escape(light_status)}</b>\n"
             f"🖥<b>Platform</b> : <b>{html.escape(light_platform)}</b>\n"
             f"🗓<b>Genre</b> : <b>{html.escape(light_genre)}</b>"
-            f"{description_block}"
         )
 
-        light_keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("ᴘʟᴀʏ ɴᴏᴡ", url=light_link)] if light_link else [],
-            [InlineKeyboardButton("ʙᴀᴄᴋᴜᴘ", url=light_link)] if light_link else [],
-        ])
+        light_rows = []
+        if light_link:
+            light_rows.append([InlineKeyboardButton("ᴘʟᴀʏ ɴᴏᴡ", url=light_link)])
+            light_rows.append([InlineKeyboardButton("ʙᴀᴄᴋᴜᴘ",   url=light_link)])
+        light_keyboard = InlineKeyboardMarkup(light_rows) if light_rows else None
 
-        light_photo = result.get("photo") or result.get("image") or "https://files.catbox.moe/i59f4o.jpg"
-
-        msg = await context.bot.send_photo(
+        photo_msg = await context.bot.send_photo(
             chat_id=chat_id,
             photo=light_photo,
-            caption=caption,
+            caption=light_caption,
             parse_mode="HTML",
             reply_markup=light_keyboard
         )
-    else:
+
+        message_owner[photo_msg.message_id] = user.id
+
+        async def _delete_light():
+            await asyncio.sleep(300)
+            for m in (header_msg, photo_msg):
+                try:
+                    await m.delete()
+                except Exception:
+                    pass
+
+        asyncio.create_task(_delete_light())
+        await log(context, f"SEARCH HIT (LIGHT) | user_id={user.id} title={light_name}")
+        return   # ← force-exit so old response logic never runs
+    # ── END LIGHT ───────────────────────────────────────────────────────────────
+
         keyboard = [
             [InlineKeyboardButton("✦ Open Story", url=result.get("link", "https://t.me/"))],
             [

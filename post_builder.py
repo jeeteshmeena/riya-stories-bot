@@ -164,23 +164,28 @@ def build_light_format(data):
     platform = data.get("platform", DEFAULT_PLATFORM)
     genre    = data.get("genre", "Unknown")
     desc     = data.get("desc", "")
-    
+
     styled_name = to_small_caps(name)
-    desc_lines = "\n".join([f"> {line}" for line in desc.split("\n")]) if desc else ""
-    
+
     t  = f"♨️<b>Story</b> : {styled_name}\n"
-    t += f"🔰<b>Status</b> : {status}\n"
-    t += f"🖥<b>Platform</b> : {platform}\n"
-    t += f"🗓<b>Genre</b> : {genre}\n"
-    t += f"\n♨️<b>Story Description</b>:-\n"
-    if desc_lines:
-        t += f"{desc_lines}"
+    t += f"🔰<b>Status</b> : <b>{html.escape(status)}</b>\n"
+    t += f"🖥<b>Platform</b> : <b>{html.escape(platform)}</b>\n"
+    t += f"🗓<b>Genre</b> : <b>{html.escape(genre)}</b>"
+
+    if desc:
+        t += f"\n\n♨️<b>Story Description</b>:-\n<blockquote>{html.escape(desc)}</blockquote>"
+
     return t
 
 def get_light_kb(data):
     link = data.get("link", "")
-    if not link: return None
-    return InlineKeyboardMarkup([[InlineKeyboardButton("ᴘʟᴀʏ ɴᴏᴡ", url=link)]])
+    if not link:
+        return None
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("ᴘʟᴀʏ ɴᴏᴡ", url=link)],
+        [InlineKeyboardButton("ʙᴀᴄᴋᴜᴘ",   url=link)],
+    ])
+
 
 def _build_previews(data):
     fmt = data.get("format", "1")
