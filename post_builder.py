@@ -236,16 +236,15 @@ def apply_watermark(image_bytes: bytes) -> bytes:
             
         wm = Image.open(wm_path).convert("RGBA")
         
-        # Target size matching reference exactly: ~32% of base image width
-        target_w = int(bw * 0.32)
+        # Target size matching reference exactly: ~20% of base image width
+        target_w = int(bw * 0.20)
         ratio = target_w / float(wm.width)
         target_h = int(wm.height * ratio)
         wm = wm.resize((target_w, target_h), Image.LANCZOS)
         
-        # Paste top-left with a ~3% relative padding
-        padding = max(10, int(bw * 0.03))
-        x = padding
-        y = padding
+        # Paste top-left with 4% left padding and 3% top padding
+        x = int(bw * 0.04)
+        y = int(bh * 0.03)
         result = base.copy()
         result.paste(wm, (x, y), wm)
         out = io.BytesIO()
