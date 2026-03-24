@@ -2451,8 +2451,8 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     mention = target_mention
 
-    story_name = clean_story(result["text"])
-    story_key = result.get("name") or clean_story(result["text"]).lower()
+    story_name = clean_story(result.get("text", result.get("name", "Unknown")))
+    story_key = result.get("name") or clean_story(result.get("text", "Unknown")).lower()
 
     # Update trending
     if "trending" not in stats_db: stats_db["trending"] = {}
@@ -2476,9 +2476,9 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_broken:
         lang = get_chat_lang(update.effective_chat.id)
         if lang == "hi":
-            broken_msg = f"<b>☆ लिंक अस्थायी रूप से अनुपलब्ध है</b>\n\n<i>{story_name}</i>\n\nइस स्टोरी के लिंक में वर्तमान में कोई समस्या है (जैसे कॉपीराइट या डिलीट होना) और एडमिन्स को सूचित कर दिया गया है। कृपया समस्या के ठीक होने तक प्रतीक्षा करें।"
+            broken_msg = f"<b>☆ लिंक अस्थायी रूप से अनुपलब्ध है</b>\n\n<i>{html.escape(story_name)}</i>\n\nइस स्टोरी के लिंक में वर्तमान में कोई समस्या है (जैसे कॉपीराइट या डिलीट होना) और एडमिन्स को सूचित कर दिया गया है। कृपया समस्या के ठीक होने तक प्रतीक्षा करें।"
         else:
-            broken_msg = f"<b>☆ Link Temporarily Unavailable</b>\n\n<i>{story_name}</i>\n\nThere is currently an issue with this story's link (like copyright or deletion) and admins have been notified. Please wait until it is fixed."
+            broken_msg = f"<b>☆ Link Temporarily Unavailable</b>\n\n<i>{html.escape(story_name)}</i>\n\nThere is currently an issue with this story's link (like copyright or deletion) and admins have been notified. Please wait until it is fixed."
         
         sent = await msg.reply_text(broken_msg, parse_mode="HTML")
         async def _del_broken():
@@ -2493,9 +2493,16 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = []
     if result.get("link"):
         keyboard.append([InlineKeyboardButton("➔ Open Story", url=result["link"])])
+    
+    # safeguard for long lengths
+    fav_data = f"fav|{story_key}"
+    if len(fav_data) > 64: fav_data = "fav|toolong"
+    lnw_data = f"lnw|{story_key}"
+    if len(lnw_data) > 64: lnw_data = "lnw|toolong"
+    
     keyboard.append([
-        InlineKeyboardButton("⭐ Favourites", callback_data=f"fav|{story_key}"),
-        InlineKeyboardButton("⚠️ Link Broken?", callback_data=f"lnw|{story_key}")
+        InlineKeyboardButton("⭐ Favourites", callback_data=fav_data),
+        InlineKeyboardButton("⚠️ Link Broken?", callback_data=lnw_data)
     ])
     keyboard.append([InlineKeyboardButton("🗑️ Delete", callback_data="delete")])
 
@@ -2510,7 +2517,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = (
             f"Hey {mention} 👋\n"
             f"<b>✫ I found this story</b> ➴\n\n"
-            f"♨️<b>Story</b> : {html.escape(light_name)}\n"
+            f"♨️<b>Story</b> : <b>{html.escape(light_name)}</b>\n"
             f"🔰<b>Status</b> : <b>{html.escape(light_status)}</b>\n"
             f"🖥<b>Platform</b> : <b>{html.escape(light_platform)}</b>\n"
             f"🧩<b>Genre</b> : <b>{html.escape(light_genre)}</b>\n\n"
@@ -2520,7 +2527,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = (
             f"Hey {mention} 👋\n"
             f"<b>✫ I found this story</b> ➴\n\n"
-            f"<i>❁ Name:-</i> <b>{story_name}</b>{story_type_line}\n\n"
+            f"<i>❁ Name:-</i> <b>{html.escape(story_name)}</b>{story_type_line}\n\n"
             f"<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>"
         )
 
