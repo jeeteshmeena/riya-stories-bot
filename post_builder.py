@@ -793,10 +793,8 @@ async def handle_episodes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["pb_data"]["episodes"] = update.message.text.strip()
     fmt = context.user_data["pb_data"].get("format", "1")
     if fmt == "light_pro":
-        # Already have status; go to platform then dest
-        kb = _kb([["Pocket FM", "Kuku FM"], ["Headfone", "+ Custom"], ["/cancel"]])
-        await update.message.reply_text("¤ Platform:", reply_markup=kb)
-        return STATE_PLATFORM
+        # Already have status and platform; go directly to dest
+        return await _go_to_dest(update, context)
     return await _go_to_status(update, context)
 
 # ── Status ─────────────────────────────────────────────────────────────────────
