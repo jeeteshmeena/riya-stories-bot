@@ -157,7 +157,8 @@ def extract_light_format(message):
             if hasattr(message.reply_markup, "inline_keyboard"):
                 for row in message.reply_markup.inline_keyboard:
                     for btn in row:
-                        if "play" in (btn.text or "").lower():
+                        btn_txt = btn.text or ""
+                        if "play" in btn_txt.lower() or "ᴘʟᴀʏ" in btn_txt:
                             link = btn.url
                             break
                     if link:
@@ -166,7 +167,7 @@ def extract_light_format(message):
                 for row in message.reply_markup.rows:
                     for btn in row.buttons:
                         btn_text = getattr(btn, "text", "") or ""
-                        if "play" in btn_text.lower():
+                        if "play" in btn_text.lower() or "ᴘʟᴀʏ" in btn_text:
                             link = btn.url
                             break
                     if link:
