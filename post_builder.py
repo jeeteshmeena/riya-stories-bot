@@ -2,6 +2,7 @@ import html
 import asyncio
 import io
 import logging
+import urllib.request
 
 try:
     import pytesseract
@@ -202,11 +203,93 @@ def get_light_kb(data):
         InlineKeyboardButton("ʙᴀᴄᴋᴜᴘ",   url=backup_link),
     ]])
 
+# ── Light Pro helpers ──────────────────────────────────────────────────────────
+def build_episode_line(episodes_raw, status):
+    """Build episode display string with optional progress bar for Ongoing."""
+    try:
+        current = int(str(episodes_raw).split("/")[0].strip())
+    except Exception:
+        current = 0
+
+    if status == "Completed":
+        total = current if current else "?"
+        return f"{total} / {total}"
+    else:  # Ongoing
+        blocks = 10
+        filled = min(blocks, max(0, round((current % 50) / 50 * blocks))) if current else 0
+        bar = "▰" * filled + "▱" * (blocks - filled)
+        return f"{current} / ∞  {bar}"
+
+
+def apply_watermark(image_bytes: bytes) -> bytes:
+    """Overlay watermark (top-right corner) on image bytes. Returns new bytes."""
+    try:
+        from PIL import Image
+        WATERMARK_URL = "https://files.catbox.moe/1oebxm.png"
+        base = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+        bw, bh = base.size
+        # Fetch watermark
+        with urllib.request.urlopen(WATERMARK_URL, timeout=8) as resp:
+            wm_bytes = resp.read()
+        wm = Image.open(io.BytesIO(wm_bytes)).convert("RGBA")
+        # Scale watermark to ~20% of base width
+        target_w = max(60, bw // 5)
+        ratio = target_w / wm.width
+        wm = wm.resize((target_w, int(wm.height * ratio)), Image.LANCZOS)
+        # Paste top-right with 10px padding
+        padding = 10
+        x = bw - wm.width - padding
+        y = padding
+        result = base.copy()
+        result.paste(wm, (x, y), wm)
+        out = io.BytesIO()
+        result.convert("RGB").save(out, format="JPEG", quality=92)
+        return out.getvalue()
+    except Exception as e:
+        _log.warning(f"[WATERMARK] Failed: {e}")
+        return image_bytes  # Return original if watermark fails
+
+
+def build_light_pro_format(data):
+    name        = data.get("name", "Unknown")
+    status      = data.get("status", "Ongoing")
+    platform    = data.get("platform", DEFAULT_PLATFORM)
+    genre       = data.get("genre", "Unknown")
+    desc        = data.get("desc", "")
+    episodes_raw = data.get("episodes", "0")
+
+    episode_line = build_episode_line(episodes_raw, status)
+
+    t  = f"♨️<b>Story</b> : <b>{html.escape(name)}</b>\n"
+    t += f"🔰<b>Status</b> : <b>{html.escape(status)}</b>\n"
+    t += f"🖥<b>Platform</b> : <b>{html.escape(platform)}</b>\n"
+    t += f"🧩<b>Genre</b> : <b>{html.escape(genre)}</b>\n"
+    t += f"🎬<b>Episodes</b> : <b>{html.escape(episode_line)}</b>"
+
+    if desc:
+        bold_desc = to_bold_unicode(desc)
+        t += f"\n<b>📝 Story Description :-</b>\n<blockquote expandable>{html.escape(bold_desc)}</blockquote>"
+
+    return t
+
+
+def get_light_pro_kb(data):
+    link        = data.get("link", "")
+    backup_link = data.get("backup_link") or link
+    if not link:
+        return None
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("ᴘʟᴀʏ ɴᴏᴡ", url=link),
+        InlineKeyboardButton("ʙᴀᴄᴋᴜᴘ",   url=backup_link),
+    ]])
+
 
 def _build_previews(data):
     fmt = data.get("format", "1")
     if fmt == "light":
         return [build_light_format(data)]
+    if fmt == "light_pro":
+        return [build_light_pro_format(data)]
     if fmt in ("1", "post"):
         return [build_format_1(data)]
     if fmt in ("2", "intro"):
@@ -285,6 +368,9 @@ async def _route_after_name(update, context):
     elif fmt == "light":
         # Light: Name → Status
         return await _go_to_status(update, context)
+    elif fmt == "light_pro":
+        # Light Pro: Name → Status
+        return await _go_to_status(update, context)
     else:
         # Format 1/2: Name → Platform → Desc → Image → Genre → Link → Episodes → Status → Username → Dest
         kb = _kb([["Pocket FM", "Kuku FM"], ["Headfone", "+ Custom"], ["/cancel"]])
@@ -344,7 +430,7 @@ async def handle_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("❌ Use the buttons.", reply_markup=_kb([["[ New ]", "[ Edit ]"], ["/cancel"]]))
         return STATE_MODE
-    kb = _kb([["Format 1", "Format 2"], ["Post", "Intro", "Light"], ["/cancel"]])
+    kb = _kb([["Format 1", "Format 2"], ["Post", "Intro"], ["Light", "Light Pro"], ["/cancel"]])
     await update.message.reply_text("¤ Select format:", reply_markup=kb)
     return STATE_FORMAT
 
@@ -367,12 +453,12 @@ async def handle_edit_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         await update.message.reply_text("❌ Could not parse link. Try again:")
         return STATE_EDIT_LINK
-    kb = _kb([["Format 1", "Format 2"], ["Post", "Intro", "Light"], ["/cancel"]])
+    kb = _kb([["Format 1", "Format 2"], ["Post", "Intro"], ["Light", "Light Pro"], ["/cancel"]])
     await update.message.reply_text("¤ Select format:", reply_markup=kb)
     return STATE_FORMAT
 
 # ── Format ─────────────────────────────────────────────────────────────────────
-_FORMAT_MAP = {"Format 1": "1", "Format 2": "2", "Post": "post", "Intro": "intro", "Light": "light"}
+_FORMAT_MAP = {"Format 1": "1", "Format 2": "2", "Post": "post", "Intro": "intro", "Light": "light", "Light Pro": "light_pro"}
 
 async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
@@ -382,7 +468,7 @@ async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return STATE_FORMAT
     context.user_data["pb_data"]["format"] = fmt
     prompt = "» Story name:"
-    if fmt == "light":
+    if fmt in ("light", "light_pro"):
         prompt = (
             "➖ Exαmρle: ʟᴏʀᴇᴍ ɪᴘsᴜᴍ ᴅᴏʟᴏʀ sɪᴛ ᴀᴍᴇᴛ, ᴄᴏɴsᴇᴄᴛᴇᴛᴜʀ ᴀᴅɪᴘɪsᴄɪɴɢ ᴇʟɪᴛ.\n\n"
             "➖ Seηd yσur text 👇"
@@ -409,7 +495,7 @@ async def handle_platform(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Use buttons or type name.", reply_markup=_kb([["Pocket FM", "Kuku FM"], ["Headfone", "+ Custom"], ["/cancel"]]))
         return STATE_PLATFORM
     context.user_data["pb_data"]["platform"] = plat
-    if context.user_data["pb_data"].get("format") == "light":
+    if context.user_data["pb_data"].get("format") in ("light", "light_pro"):
         return await _go_to_genre(update, context)
     return await _go_to_desc(update, context)
 
@@ -579,8 +665,8 @@ async def _route_after_img(update, context):
     elif fmt == "intro":
         # Intro: Image → Link
         return await _go_to_link(update, context)
-    elif fmt == "light":
-        # Light: Image → Link
+    elif fmt in ("light", "light_pro"):
+        # Light / Light Pro: Image → Link
         return await _go_to_link(update, context)
     else:
         # Format 1/2: Image → Genre
@@ -606,8 +692,8 @@ _GENRES = {"Romance", "Thriller", "Crime", "Horror", "Suspense", "Drama"}
 
 async def _go_to_genre(update, context):
     fmt = context.user_data["pb_data"].get("format", "1")
-    if fmt == "light":
-        kb = _kb([["Fantasy", "Suspense"], ["Romance", "Thriller"], ["Action", "Horror"], ["Mystery", "/cancel"]])
+    if fmt in ("light", "light_pro"):
+        kb = _kb([["Fantasy", "Suspense"], ["Romance", "Thriller"], ["Action", "Horror"], ["Mystery", "+ Custom"], ["/cancel"]])
     else:
         kb = _kb([["Romance", "Thriller"], ["Crime", "Horror"], ["Suspense", "Drama"], ["+ Custom", "/cancel"]])
     await update.message.reply_text("¤ Genre:", reply_markup=kb)
@@ -619,18 +705,23 @@ async def handle_genre(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Type genre:", reply_markup=ReplyKeyboardRemove())
         context.user_data["pb_data"]["_await_cust_genre"] = True
         return STATE_GENRE
-    allowed = _LIGHT_GENRES if context.user_data["pb_data"].get("format") == "light" else _GENRES
-    genre = text if context.user_data["pb_data"].pop("_await_cust_genre", False) else (text if text in allowed else None)
+    fmt = context.user_data["pb_data"].get("format", "1")
+    # Allow custom genre for light, light_pro and any format using '+ Custom'
+    if context.user_data["pb_data"].pop("_await_cust_genre", False):
+        genre = text
+    elif fmt in ("light", "light_pro"):
+        # Accept any text for light formats (all genres allowed)
+        genre = text if text else None
+    else:
+        genre = text if text in _GENRES else None
     if not genre:
         await update.message.reply_text("❌ Use buttons or type genre.")
         return STATE_GENRE
     context.user_data["pb_data"]["genre"] = genre
-    context.user_data["pb_data"]["genre"] = genre
-    if context.user_data["pb_data"].get("format") in ("light", "post"):
-        # Light/Post: Genre → Description (handled by flow, actually Link for Post)
-        if context.user_data["pb_data"].get("format") == "post":
-            return await _go_to_link(update, context)
+    if fmt in ("light", "light_pro"):
         return await _go_to_desc(update, context)
+    if fmt == "post":
+        return await _go_to_link(update, context)
     # Route to link
     return await _go_to_link(update, context)
 
@@ -667,7 +758,7 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Route after link
     fmt = data.get("format", "1")
-    if fmt == "light":
+    if fmt in ("light", "light_pro"):
         # Ask for optional backup link
         kb = _kb([["Same as Play"], ["/skip"]])
         await update.message.reply_text(
@@ -691,11 +782,21 @@ async def handle_backup_link(update: Update, context: ContextTypes.DEFAULT_TYPE)
         data["backup_link"] = data.get("link", "")  # fall back to main link
     else:
         data["backup_link"] = text
+    # Light Pro: ask for episode count
+    if data.get("format") == "light_pro":
+        await update.message.reply_text("» Current episode count (e.g. 12):", reply_markup=ReplyKeyboardRemove())
+        return STATE_EPISODES
     return await _go_to_dest(update, context)
 
 # ── Episodes ───────────────────────────────────────────────────────────────────
 async def handle_episodes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["pb_data"]["episodes"] = update.message.text.strip()
+    fmt = context.user_data["pb_data"].get("format", "1")
+    if fmt == "light_pro":
+        # Already have status; go to platform then dest
+        kb = _kb([["Pocket FM", "Kuku FM"], ["Headfone", "+ Custom"], ["/cancel"]])
+        await update.message.reply_text("¤ Platform:", reply_markup=kb)
+        return STATE_PLATFORM
     return await _go_to_status(update, context)
 
 # ── Status ─────────────────────────────────────────────────────────────────────
@@ -715,7 +816,7 @@ async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["pb_data"]["status"] = status
     fmt = context.user_data["pb_data"].get("format", "1")
     # Set defaults and decide username step
-    if fmt == "light":
+    if fmt in ("light", "light_pro"):
         kb = _kb([["Pocket FM", "Kuku FM"], ["Headfone", "+ Custom"], ["/cancel"]])
         await update.message.reply_text("¤ Platform:", reply_markup=kb)
         return STATE_PLATFORM
@@ -835,14 +936,53 @@ async def handle_dest_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await _show_preview(msg, context)
 
 # ── Preview & Confirm ──────────────────────────────────────────────────────────
+async def _get_keyboard_for_format(data):
+    """Return correct InlineKeyboardMarkup based on format."""
+    fmt = data.get("format")
+    if fmt == "light":
+        return get_light_kb(data)
+    if fmt == "light_pro":
+        return get_light_pro_kb(data)
+    return None
+
+
+async def _apply_watermark_if_needed(data, context, chat_id):
+    """For Light Pro: apply watermark on uploaded image and replace photo_ids entry."""
+    if data.get("format") != "light_pro":
+        return
+    photo_ids = data.get("photo_ids", [])
+    if not photo_ids:
+        return
+    try:
+        item = photo_ids[0]
+        tg_file = await context.bot.get_file(item["id"])
+        raw = await tg_file.download_as_bytearray()
+        watermarked = apply_watermark(bytes(raw))
+        sent = await context.bot.send_document(
+            chat_id=chat_id,
+            document=io.BytesIO(watermarked),
+            filename="cover_pro.jpg",
+            caption="· Watermarked cover preview"
+        )
+        data["photo_ids"] = [{"id": sent.document.file_id, "type": "doc"}]
+        data["_wm_applied"] = True
+    except Exception as e:
+        _log.warning(f"[WM_APPLY] {e}")
+
+
 async def _show_preview(message, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data["pb_data"]
+
+    # Apply watermark for Light Pro before building preview
+    if data.get("format") == "light_pro" and not data.get("_wm_applied"):
+        await _apply_watermark_if_needed(data, context, message.chat_id)
+
     previews = _build_previews(data)
     data["cached_previews"] = previews
     photo_ids = data.get("photo_ids", [])
 
     await message.reply_text("· <b>Preview</b>", parse_mode="HTML")
-    button = get_light_kb(data) if data.get("format") == "light" else None
+    button = await _get_keyboard_for_format(data)
     for p in previews:
         try:
             if photo_ids:
@@ -922,7 +1062,9 @@ async def _do_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 raise e
 
         else:
-            button = get_light_kb(data) if data.get("format") == "light" else None
+            button = get_light_kb(data) if data.get("format") == "light" else (
+                get_light_pro_kb(data) if data.get("format") == "light_pro" else None
+            )
             for p in previews:
                 try:
                     result = await _send_post(context.bot, chat_id, p, photo_ids, thread_id, reply_markup=button)

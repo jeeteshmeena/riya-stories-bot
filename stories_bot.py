@@ -2509,20 +2509,22 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo = result.get("photo") or result.get("image")
     story_type_line = f"\n<b>✽ Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
 
-    if result.get("format") == "LIGHT":
-        light_name    = result.get("text", story_name)
-        light_status  = result.get("status", "Unknown")
+    if result.get("format") in ("LIGHT", "LIGHT_PRO"):
+        light_name     = result.get("text", story_name)
+        light_status   = result.get("status", "Unknown")
         light_platform = result.get("platform", "Unknown")
-        light_genre   = result.get("genre", "Unknown")
+        light_genre    = result.get("genre", "Unknown")
         caption = (
             f"Hey {mention} 👋\n"
             f"<b>✫ I found this story</b> ➴\n\n"
             f"♨️<b>Story</b> : <b>{html.escape(light_name)}</b>\n"
             f"🔰<b>Status</b> : <b>{html.escape(light_status)}</b>\n"
             f"🖥<b>Platform</b> : <b>{html.escape(light_platform)}</b>\n"
-            f"🧩<b>Genre</b> : <b>{html.escape(light_genre)}</b>\n\n"
-            f"<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>"
+            f"🧩<b>Genre</b> : <b>{html.escape(light_genre)}</b>\n"
         )
+        if result.get("format") == "LIGHT_PRO" and result.get("episodes"):
+            caption += f"🎬<b>Episodes</b> : <b>{html.escape(result['episodes'])}</b>\n"
+        caption += f"\n<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>"
     else:
         caption = (
             f"Hey {mention} 👋\n"

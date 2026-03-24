@@ -104,6 +104,87 @@ def extract_story_type(text):
     return None
 
 
+def extract_light_pro_format(message):
+    """Detect and parse Light Pro format (has 🎬 Episodes field)."""
+    text = get_text(message)
+    if not text:
+        return None
+
+    has_photo = bool(getattr(message, "photo", None))
+    # Light Pro has all Light markers PLUS 🎬
+    if not (all(x in text for x in ["\u2668\ufe0f", "\ud83d\udd30", "\ud83d\udda5", "\ud83c\udfac"]) and ("\ud83e\udde9" in text or "\ud83d\uddd3" in text) and has_photo):
+        return None
+
+    name_match    = re.search(r"^\u2668\ufe0f(?!.*Description).*?:\s*(.+)", text, re.MULTILINE)
+    status_match  = re.search(r"\ud83d\udd30.*?:\s*(.+)", text)
+    platform_match= re.search(r"\ud83d\udda5.*?:\s*(.+)", text)
+    genre_match   = re.search(r"(?:\ud83e\udde9|\ud83d\uddd3).*?:\s*(.+)", text)
+    episodes_match= re.search(r"\ud83c\udfac.*?:\s*(.+)", text)
+
+    if not name_match:
+        return None
+
+    def _clean(s):
+        return re.sub(r"<[^>]+>", "", s).strip()
+
+    name     = _clean(name_match.group(1))
+    status   = _clean(status_match.group(1))  if status_match  else "Unknown"
+    platform = _clean(platform_match.group(1)) if platform_match else "Unknown"
+    genre    = _clean(genre_match.group(1))   if genre_match   else "Unknown"
+    episodes = _clean(episodes_match.group(1)) if episodes_match else ""
+
+    # Parse description
+    lines = text.split("\n")
+    desc_started, desc_lines = False, []
+    for l in lines:
+        if "Description" in l or "\U0001f4dd" in l:
+            desc_started = True
+            continue
+        if desc_started:
+            stripped = l.strip()
+            if stripped.startswith(">"):
+                desc_lines.append(stripped.lstrip("> ").strip())
+            elif stripped:
+                desc_lines.append(stripped)
+    description = "\n".join(desc_lines).strip()
+
+    # Extract Play Now link only
+    link = None
+    if getattr(message, "reply_markup", None):
+        try:
+            if hasattr(message.reply_markup, "inline_keyboard"):
+                for row in message.reply_markup.inline_keyboard:
+                    for btn in row:
+                        btn_txt = btn.text or ""
+                        if "play" in btn_txt.lower() or "\u1d18\u029f\u1d00\u028f" in btn_txt:
+                            link = btn.url
+                            break
+                    if link:
+                        break
+            elif hasattr(message.reply_markup, "rows"):
+                for row in message.reply_markup.rows:
+                    for btn in row.buttons:
+                        btn_text = getattr(btn, "text", "") or ""
+                        if "play" in btn_text.lower() or "\u1d18\u029f\u1d00\u028f" in btn_text:
+                            link = btn.url
+                            break
+                    if link:
+                        break
+        except Exception:
+            link = None
+
+    key = re.sub(r"\s+", " ", name).strip().lower()
+    return {
+        "name": key, "text": name,
+        "status": status, "platform": platform,
+        "genre": genre, "episodes": episodes,
+        "description": description, "link": link, "image": None,
+        "format": "LIGHT_PRO",
+        "message_id": getattr(message, "id", 0),
+        "caption": text, "story_type": genre
+    }
+
+
 def extract_light_format(message):
     text = get_text(message)
     if not text:
@@ -197,7 +278,17 @@ def extract_light_format(message):
 
 def parse_story(message):
 
-    # Try Light format first
+    # Try Light Pro first (superset of Light — must come before Light check)
+    light_pro_data = extract_light_pro_format(message)
+    if light_pro_data:
+        if not light_pro_data.get("link"):
+            light_pro_data["link"] = extract_link(message)
+        if not light_pro_data.get("link"):
+            return None
+        print("[PARSER] Saved Light Pro story:", light_pro_data.get("text"), "| link:", light_pro_data.get("link"))
+        return light_pro_data
+
+    # Try Light format next
     light_data = extract_light_format(message)
     if light_data:
         if not light_data.get("link"):
