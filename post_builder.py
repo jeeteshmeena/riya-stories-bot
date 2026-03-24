@@ -229,13 +229,18 @@ def apply_watermark(image_bytes: bytes) -> bytes:
         base = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
         bw, bh = base.size
         # Fetch watermark
-        with urllib.request.urlopen(WATERMARK_URL, timeout=8) as resp:
+        req = urllib.request.Request(WATERMARK_URL, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=8) as resp:
             wm_bytes = resp.read()
         wm = Image.open(io.BytesIO(wm_bytes)).convert("RGBA")
-        # Scale watermark to ~20% of base width
-        target_w = max(60, bw // 5)
-        ratio = target_w / wm.width
-        wm = wm.resize((target_w, int(wm.height * ratio)), Image.LANCZOS)
+        
+        # Determine size: keep original, but if original is too big it scales to base width maximum
+        target_w = wm.width
+        if target_w > bw:
+            target_w = bw // 2
+            ratio = target_w / wm.width
+            wm = wm.resize((target_w, int(wm.height * ratio)), Image.LANCZOS)
+            
         # Paste top-right with 10px padding
         padding = 10
         x = bw - wm.width - padding
@@ -246,6 +251,7 @@ def apply_watermark(image_bytes: bytes) -> bytes:
         result.convert("RGB").save(out, format="JPEG", quality=92)
         return out.getvalue()
     except Exception as e:
+        import traceback
         _log.warning(f"[WATERMARK] Failed: {e}")
         return image_bytes  # Return original if watermark fails
 
@@ -850,6 +856,7 @@ async def handle_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _go_to_dest(update, context):
     if context.user_data["pb_data"].get("post_mode") == "edit":
         return await _show_preview(update.message, context)
+    context.user_data["pb_data"]["destinations"] = []
     kb = _kb([["Channel", "Group"], ["/cancel"]])
     await update.message.reply_text("¤ Destination type:", reply_markup=kb)
     return STATE_DEST_TYPE
@@ -875,6 +882,18 @@ async def handle_dest_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Use buttons.", reply_markup=_kb([["Channel", "Group"], ["/cancel"]]))
         return STATE_DEST_TYPE
 
+async def _add_dest_and_check(msg, update, context, dest, topic=None):
+    data = context.user_data["pb_data"]
+    data.setdefault("destinations", []).append({"chat": dest, "thread": topic})
+    
+    if len(data["destinations"]) < 2:
+        kb = _kb([["Channel", "Group"], ["/skip"]])
+        await update.message.reply_text(f"· Saved {dest}.\n\n¤ Add second destination? (or /skip):", reply_markup=kb)
+        return STATE_DEST_TYPE
+    else:
+        msg = await update.message.reply_text("· Destinations set.", reply_markup=ReplyKeyboardRemove())
+        return await _show_preview(msg, context)
+
 async def handle_dest_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     data = context.user_data["pb_data"]
@@ -892,33 +911,23 @@ async def handle_dest_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.pop("_await_new_dest", False):
         if dest_type == "channel":
             _save_channel(text)
-            data["destination"] = text
-            data["thread_id"] = None
-            msg = await update.message.reply_text(f"· Saved {text}", reply_markup=ReplyKeyboardRemove())
-            return await _show_preview(msg, context)
+            return await _add_dest_and_check(update.message, update, context, text, None)
         else:
             _save_group(text)
-            data["destination"] = text
-            # Ask for topic
+            data["_temp_dest"] = text
             await update.message.reply_text("» Topic ID (or /skip for no topic):", reply_markup=ReplyKeyboardRemove())
             data["_await_topic"] = True
             return STATE_DEST_TOPIC
 
     if dest_type == "channel":
-        data["destination"] = text
-        data["thread_id"] = None
-        msg = await update.message.reply_text("· Channel set.", reply_markup=ReplyKeyboardRemove())
-        return await _show_preview(msg, context)
+        return await _add_dest_and_check(update.message, update, context, text, None)
     else:
         # Match group name to id
         matched = next((g for g in groups if g.get("name", g["id"]) == text or g["id"] == text), None)
         if matched:
-            data["destination"] = matched["id"]
-            data["thread_id"] = matched.get("topic_id")
-            msg = await update.message.reply_text("· Group set.", reply_markup=ReplyKeyboardRemove())
-            return await _show_preview(msg, context)
+            return await _add_dest_and_check(update.message, update, context, matched["id"], matched.get("topic_id"))
         # Otherwise treat as raw ID/username
-        data["destination"] = text
+        data["_temp_dest"] = text
         data["_await_topic"] = True
         await update.message.reply_text("» Topic ID (or /skip):", reply_markup=ReplyKeyboardRemove())
         return STATE_DEST_TOPIC
@@ -926,12 +935,9 @@ async def handle_dest_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_dest_topic(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     data = context.user_data["pb_data"]
-    if text == "/skip" or not text.isdigit():
-        data["thread_id"] = None
-    else:
-        data["thread_id"] = int(text)
-    msg = await update.message.reply_text("· Group + topic set.", reply_markup=ReplyKeyboardRemove())
-    return await _show_preview(msg, context)
+    topic = None if (text == "/skip" or not text.isdigit()) else int(text)
+    dest = data.pop("_temp_dest", "")
+    return await _add_dest_and_check(update.message, update, context, dest, topic)
 
 # ── Preview & Confirm ──────────────────────────────────────────────────────────
 async def _get_keyboard_for_format(data):
@@ -1020,22 +1026,29 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _do_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = context.user_data["pb_data"]
     post_mode  = data.get("post_mode", "new")
-    dest       = data.get("destination")
-    thread_id  = data.get("thread_id")
+    
+    # Check what kind of dest we have
+    if "destinations" in data and len(data["destinations"]) > 0:
+        targets = data["destinations"]
+    else:
+        targets = [{"chat": data.get("destination"), "thread": data.get("thread_id")}]
+        
     edit_chat  = data.get("edit_chat_id")
     edit_msg   = data.get("edit_msg_id")
-    chat_id    = edit_chat if post_mode == "edit" else dest
     previews   = data.get("cached_previews", [])
     photo_ids  = data.get("photo_ids", [])
 
-    if post_mode == "new" and not dest:
+    if post_mode == "new" and not targets[0].get("chat"):
         await update.message.reply_text("❌ No destination. Cancelled.", reply_markup=ReplyKeyboardRemove())
         context.user_data.pop("pb_data", None)
         return ConversationHandler.END
 
     working = await update.message.reply_text("· Posting...", reply_markup=ReplyKeyboardRemove())
-    sent_msg_id = None
+    
     success = False
+    sent_msg_id = None
+    last_chat_id = None
+    errors_list = []
 
     try:
         if post_mode == "edit":
@@ -1046,36 +1059,50 @@ async def _do_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     media = (InputMediaDocument(media=item["id"], caption=p, parse_mode="HTML")
                              if item["type"] == "doc"
                              else InputMediaPhoto(media=item["id"], caption=p, parse_mode="HTML"))
-                    await asyncio.wait_for(context.bot.edit_message_media(chat_id=chat_id, message_id=edit_msg, media=media), timeout=15)
+                    await asyncio.wait_for(context.bot.edit_message_media(chat_id=edit_chat, message_id=edit_msg, media=media), timeout=15)
                 else:
                     try:
-                        await asyncio.wait_for(context.bot.edit_message_text(chat_id=chat_id, message_id=edit_msg, text=p, parse_mode="HTML", disable_web_page_preview=True), timeout=15)
-                    except Exception:
-                        await asyncio.wait_for(context.bot.edit_message_caption(chat_id=chat_id, message_id=edit_msg, caption=p, parse_mode="HTML"), timeout=15)
+                        await asyncio.wait_for(context.bot.edit_message_text(chat_id=edit_chat, message_id=edit_msg, text=p, parse_mode="HTML", disable_web_page_preview=True), timeout=15)
+                    except Exception as ex2:
+                        if "Message is not modified" not in str(ex2):
+                            await asyncio.wait_for(context.bot.edit_message_caption(chat_id=edit_chat, message_id=edit_msg, caption=p, parse_mode="HTML"), timeout=15)
                 sent_msg_id = edit_msg
+                last_chat_id = edit_chat
                 success = True
             except Exception as e:
-                _log.warning(f"[EDIT] Failed: {e}")
-                raise e
+                if "Message is not modified" in str(e):
+                    success = True
+                    sent_msg_id = edit_msg
+                    last_chat_id = edit_chat
+                else:
+                    _log.warning(f"[EDIT] Failed: {e}")
+                    raise e
 
         else:
             button = get_light_kb(data) if data.get("format") == "light" else (
                 get_light_pro_kb(data) if data.get("format") == "light_pro" else None
             )
-            for p in previews:
-                try:
-                    result = await _send_post(context.bot, chat_id, p, photo_ids, thread_id, reply_markup=button)
-                    if result:
-                        success = True
-                        if not isinstance(result, list):
-                            sent_msg_id = result.message_id
-                        elif isinstance(result, list) and result:
-                            # Use last message ID from group
-                            sent_msg_id = result[-1].message_id
-                except Exception as e:
-                    _log.warning(f"[SEND] Part failed: {e}")
+            for target in targets:
+                chat_id = target["chat"]
+                thread_id = target["thread"]
+                for p in previews:
+                    try:
+                        result = await _send_post(context.bot, chat_id, p, photo_ids, thread_id, reply_markup=button)
+                        if result:
+                            success = True
+                            last_chat_id = chat_id
+                            if not isinstance(result, list):
+                                sent_msg_id = result.message_id
+                            elif isinstance(result, list) and result:
+                                sent_msg_id = result[-1].message_id
+                    except Exception as e:
+                        err_str = str(e)
+                        _log.warning(f"[SEND] Part failed to {chat_id}: {err_str}")
+                        errors_list.append(f"{chat_id}: {err_str}")
 
         if not success:
+            if errors_list:
+                raise Exception("\n".join(errors_list))
             raise Exception("Telegram API did not return a valid message result.")
 
         # Save to DB
@@ -1094,28 +1121,42 @@ async def _do_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             _log.warning(f"[POST] save_story failed: {e}")
 
-        await working.edit_text(f"\u2605 Posted to {chat_id}!")
+        try:
+            await working.edit_text(f"\u2605 Posted via {post_mode} mode!")
+        except Exception:
+            pass
 
         # ── Success screen with inline buttons ──
         success_kb = InlineKeyboardMarkup([[
             InlineKeyboardButton("[ New ]",  callback_data="pb_success_new"),
-            InlineKeyboardButton("[ Edit ]", callback_data=f"pb_success_edit|{chat_id}|{sent_msg_id or 0}"),
+            InlineKeyboardButton("[ Edit ]", callback_data=f"pb_success_edit|{last_chat_id}|{sent_msg_id or 0}"),
         ]])
         await update.message.reply_text(
             "\u22c6 <b>Done!</b>\n\nCreate another or edit this post:",
             reply_markup=success_kb,
             parse_mode="HTML"
         )
-
+        if errors_list:
+            err_text = "⚠️ <b>Some destinations failed:</b>\n" + "\n".join(errors_list)
+            # Add a retry button to start builder with same data
+            retry_kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("🔄 Retry failed", callback_data="pb_retry_failed")
+            ]])
+            # To allow retry, keep data in context but mark it as retryable
+            context.user_data["pb_data"]["_retry_failed"] = True
+            await update.message.reply_text(err_text, parse_mode="HTML", reply_markup=retry_kb)
+            return ConversationHandler.END  # User stays in normal state until they click Retry
+            
     except Exception as e:
         _log.error(f"[POST] {e}", exc_info=True)
         err = html.escape(str(e))[:300]
         try:
             await working.edit_text(f"❌ Error:\n<code>{err}</code>", parse_mode="HTML")
-        except:
+        except Exception:
             await update.message.reply_text(f"❌ Error:\n<code>{err}</code>", parse_mode="HTML")
 
-    context.user_data.pop("pb_data", None)
+    if not context.user_data.get("pb_data", {}).get("_retry_failed"):
+        context.user_data.pop("pb_data", None)
     return ConversationHandler.END
 
 # ── Cancel ─────────────────────────────────────────────────────────────────────

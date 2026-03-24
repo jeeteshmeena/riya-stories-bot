@@ -112,14 +112,14 @@ def extract_light_pro_format(message):
 
     has_photo = bool(getattr(message, "photo", None))
     # Light Pro has all Light markers PLUS 🎬
-    if not (all(x in text for x in ["\u2668\ufe0f", "\ud83d\udd30", "\ud83d\udda5", "\ud83c\udfac"]) and ("\ud83e\udde9" in text or "\ud83d\uddd3" in text) and has_photo):
+    if not (all(x in text for x in ["♨️", "🔰", "🖥", "🎬"]) and ("🧩" in text or "🗓" in text) and has_photo):
         return None
 
-    name_match    = re.search(r"^\u2668\ufe0f(?!.*Description).*?:\s*(.+)", text, re.MULTILINE)
-    status_match  = re.search(r"\ud83d\udd30.*?:\s*(.+)", text)
-    platform_match= re.search(r"\ud83d\udda5.*?:\s*(.+)", text)
-    genre_match   = re.search(r"(?:\ud83e\udde9|\ud83d\uddd3).*?:\s*(.+)", text)
-    episodes_match= re.search(r"\ud83c\udfac.*?:\s*(.+)", text)
+    name_match    = re.search(r"^♨️(?!.*Description).*?:\s*(.+)", text, re.MULTILINE)
+    status_match  = re.search(r"🔰.*?:\s*(.+)", text)
+    platform_match= re.search(r"🖥.*?:\s*(.+)", text)
+    genre_match   = re.search(r"(?:🧩|🗓).*?:\s*(.+)", text)
+    episodes_match= re.search(r"🎬.*?:\s*(.+)", text)
 
     if not name_match:
         return None
