@@ -956,13 +956,12 @@ async def _apply_watermark_if_needed(data, context, chat_id):
         tg_file = await context.bot.get_file(item["id"])
         raw = await tg_file.download_as_bytearray()
         watermarked = apply_watermark(bytes(raw))
-        sent = await context.bot.send_document(
+        sent = await context.bot.send_photo(
             chat_id=chat_id,
-            document=io.BytesIO(watermarked),
-            filename="cover_pro.jpg",
+            photo=io.BytesIO(watermarked),
             caption="· Watermarked cover preview"
         )
-        data["photo_ids"] = [{"id": sent.document.file_id, "type": "doc"}]
+        data["photo_ids"] = [{"id": sent.photo[-1].file_id, "type": "photo"}]
         data["_wm_applied"] = True
     except Exception as e:
         _log.warning(f"[WM_APPLY] {e}")
