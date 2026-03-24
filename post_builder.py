@@ -225,14 +225,16 @@ def apply_watermark(image_bytes: bytes) -> bytes:
     """Overlay watermark (top-right corner) on image bytes. Returns new bytes."""
     try:
         from PIL import Image
-        WATERMARK_URL = "https://files.catbox.moe/1oebxm.png"
+        import os
         base = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
         bw, bh = base.size
-        # Fetch watermark
-        req = urllib.request.Request(WATERMARK_URL, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=8) as resp:
-            wm_bytes = resp.read()
-        wm = Image.open(io.BytesIO(wm_bytes)).convert("RGBA")
+        # Load local watermark
+        wm_path = os.path.join(os.path.dirname(__file__), "watermark.png")
+        if not os.path.exists(wm_path):
+            _log.warning("watermark.png missing from bot directory")
+            return image_bytes
+            
+        wm = Image.open(wm_path).convert("RGBA")
         
         # Determine size: keep original, but if original is too big it scales to base width maximum
         target_w = wm.width
