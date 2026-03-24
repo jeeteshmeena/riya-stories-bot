@@ -2492,7 +2492,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = []
     if result.get("link"):
-        keyboard.append([InlineKeyboardButton("➔ Open Story", url=result["link"])])
+        keyboard.append([InlineKeyboardButton("Open Story", url=result["link"])])
     
     # safeguard for long lengths
     fav_data = f"fav|{story_key}"
@@ -2501,8 +2501,8 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(lnw_data) > 64: lnw_data = "lnw|toolong"
     
     keyboard.append([
-        InlineKeyboardButton("⭐ Favourites", callback_data=fav_data),
-        InlineKeyboardButton("⚠️ Link Broken?", callback_data=lnw_data)
+        InlineKeyboardButton("Favourites", callback_data=fav_data),
+        InlineKeyboardButton("Link Broken?", callback_data=lnw_data)
     ])
     keyboard.append([InlineKeyboardButton("🗑️ Delete", callback_data="delete")])
 
