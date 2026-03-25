@@ -324,16 +324,11 @@ def _ocr_clean(raw: str) -> str:
     result = re.sub(r"([।?!]) (?=[A-Za-z0-9\u0900-\u097f])", r"\1\n", result)
     return result.strip()
 
-# ── Background image prefetch ──────────────────────────────────────────────────
+# ── Background image prefetch (DISABLED: platform APIs no longer functional) ──
 async def _bg_prefetch_img(context, name, platform):
-    try:
-        from advanced_scraper import extract_hd_image
-        img = await asyncio.wait_for(extract_hd_image(name, platform), timeout=12)
-        if img:
-            context.user_data.get("pb_data", {})["temp_img_bytes"] = img
-            _log.info("[IMG] Prefetch done")
-    except Exception as e:
-        _log.warning(f"[IMG] Prefetch failed: {e}")
+    # Pocket FM and Kuku FM APIs return 404/400 as of March 2026.
+    # Auto-fetch has been disabled to prevent random/incorrect images.
+    pass
 
 # ── Send helper (supports thread/topic) ───────────────────────────────────────
 async def _send_post(bot, chat_id, text, photo_ids, thread_id=None, reply_markup=None):
@@ -610,23 +605,7 @@ async def _route_after_desc_query(update, context, query):
 # ── Image ──────────────────────────────────────────────────────────────────────
 async def _go_to_img(update, context):
     data = context.user_data["pb_data"]
-    cached = data.get("temp_img_bytes")
-    if cached:
-        try:
-            import io
-            sent = await context.bot.send_photo(
-                chat_id=update.message.chat_id,
-                photo=io.BytesIO(cached),
-                caption="★ Cover art auto-fetched from official platform.",
-            )
-            data["photo_ids"] = [{"id": sent.photo[-1].file_id, "type": "photo"}]
-        except Exception as e:
-            _log.warning(f"[IMG] prefetch send failed: {e}")
-    
-    if data.get("photo_ids"):
-        await update.message.reply_text("¤ <b>Send a new image</b> to replace it\n<i>(or click /skip to keep the auto-fetched one)</i>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
-    else:
-        await update.message.reply_text("¤ <b>Send image</b>\n<i>(or /skip)</i>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("¤ <b>Send image</b>\n<i>(or /skip)</i>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     return STATE_IMG_UPLOAD
 
 async def _go_to_genre_msg(msg, context):
@@ -635,23 +614,7 @@ async def _go_to_genre_msg(msg, context):
 
 async def _go_to_img_msg(msg, context):
     data = context.user_data["pb_data"]
-    cached = data.get("temp_img_bytes")
-    if cached:
-        try:
-            import io
-            sent = await context.bot.send_photo(
-                chat_id=msg.chat_id,
-                photo=io.BytesIO(cached),
-                caption="★ Cover art auto-fetched from official platform.",
-            )
-            data["photo_ids"] = [{"id": sent.photo[-1].file_id, "type": "photo"}]
-        except Exception as e:
-            _log.warning(f"[IMG] prefetch send failed: {e}")
-
-    if data.get("photo_ids"):
-        await msg.reply_text("¤ <b>Send a new image</b> to replace it\n<i>(or click /skip to keep the auto-fetched one)</i>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
-    else:
-        await msg.reply_text("¤ <b>Send image</b>\n<i>(or /skip)</i>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
+    await msg.reply_text("¤ <b>Send image</b>\n<i>(or /skip)</i>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     return STATE_IMG_UPLOAD
 
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
