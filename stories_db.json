@@ -2,6 +2,7 @@
   "secret fauji": {
     "name": "secret fauji",
     "text": "Secret Fauji",
-    "message_id": 1
+    "message_id": 1,
+    "normalized_name": "secret fauji"
   }
 }

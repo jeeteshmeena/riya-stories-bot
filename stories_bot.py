@@ -798,10 +798,28 @@ def _menu_main(caller_id: int, lang: str = "en", mention: str = "") -> tuple:
 
 def _menu_trending(caller_id: int) -> tuple:
     trending = stats_db.get("trending", {})
-    sorted_trend = sorted(trending.items(), key=lambda x: x[1], reverse=True)[:10]
+    now = time.time()
+    week_ago = now - (7 * 24 * 3600)
+    
+    # Prune and compute
+    trending_counts = {}
+    for k, v in list(trending.items()):
+        if isinstance(v, list):
+            valid_times = [t for t in v if t >= week_ago]
+            if valid_times:
+                trending[k] = valid_times
+                trending_counts[k] = len(valid_times)
+            else:
+                del trending[k]
+        else:
+            # Transition legacy integer tracking to list
+            trending[k] = [now]
+            trending_counts[k] = 1
+
+    sorted_trend = sorted(trending_counts.items(), key=lambda x: x[1], reverse=True)[:10]
     if sorted_trend:
         lines = "\n".join(
-            f"<b>{i}.</b> {k}  <i>✶ {v} searches</i>"
+            f"<b>{i}.</b> {k}  <i>✶ {v} searches (this week)</i>"
             for i, (k, v) in enumerate(sorted_trend, 1)
         )
         body = lines
@@ -819,7 +837,9 @@ def _menu_trending(caller_id: int) -> tuple:
 
 def _menu_new(caller_id: int) -> tuple:
     db = load_db()
-    stories = list(db.values())[-10:]
+    all_stories = list(db.values())
+    all_stories.sort(key=lambda s: s.get("message_id", 0), reverse=True)
+    stories = all_stories[:10]
     if stories:
         lines = []
         for s in stories:
@@ -1635,12 +1655,12 @@ def _stories_page(page=0):
         title = clean_story(name)
         db_story = db.get(name, {})
         link = db_story.get("link", "") or db_story.get("message_url", "")
-        # Number is plain text (non-copyable); title is <code> (copyable via tap)
-        # If linked: entire title = clickable anchor with code style
+        # Number is plain text (non-copyable); title is linked without mono-space blocking
+        # If linked: entire title = clickable anchor
         if link:
-            lines.append(f"{i}. <a href='{link}'><code>{html.escape(title)}</code></a>")
+            lines.append(f"{i}. <a href='{link}'>{html.escape(title)}</a>")
         else:
-            lines.append(f"{i}. <code>{html.escape(title)}</code>")
+            lines.append(f"{i}. {html.escape(title)}")
     total = len(story_index)
     header = (
         f"<b>✦ Story List  ·  {total} titles</b>\n"
@@ -2040,6 +2060,13 @@ Please avoid sending duplicate requests.</i>
 async def trigger_community_poll(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     """Create a community poll if the queue has enough unique stories."""
     global voting_queue, active_polls
+    
+    # Remove empty/whitespace invalid targets that cause "Poll Creation Failed: Text must be non-empty"
+    valid_queue = [q for q in voting_queue if str(q.get("name", "")).strip()]
+    if len(valid_queue) != len(voting_queue):
+        voting_queue = valid_queue
+        save_voting_db({"queue": voting_queue, "polls": active_polls})
+        
     if len(voting_queue) < VOTING_SIZE_FOR_POLL:
         return
 
@@ -2467,9 +2494,32 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     story_name = clean_story(result.get("text", result.get("name", "Unknown")))
     story_key = result.get("name") or clean_story(result.get("text", "Unknown")).lower()
 
-    # Update trending
-    if "trending" not in stats_db: stats_db["trending"] = {}
-    stats_db["trending"][story_key] = stats_db["trending"].get(story_key, 0) + 1
+    # Update trending (real-time week-based limits)
+    now = time.time()
+    week_ago = now - (7 * 24 * 3600)
+    
+    if "trending" not in stats_db or not isinstance(stats_db["trending"], dict): 
+        stats_db["trending"] = {}
+        
+    current_records = stats_db["trending"].get(story_key, [])
+    if not isinstance(current_records, list):
+        current_records = []  # Clear legacy integer formats
+        
+    # Prune older than 7 days, append new search
+    current_records = [t for t in current_records if t >= week_ago]
+    current_records.append(now)
+    stats_db["trending"][story_key] = current_records
+    
+    # Occasional garbage collection of the entire trending DB to maintain size
+    if random.random() < 0.1:
+        for k in list(stats_db["trending"].keys()):
+            r = stats_db["trending"][k]
+            if isinstance(r, list):
+                r = [t for t in r if t >= week_ago]
+                if not r:
+                    del stats_db["trending"][k]
+                else:
+                    stats_db["trending"][k] = r
     save_stats(stats_db)
 
     # Prefer pre‑computed story_type from the scanner, fallback to regex
@@ -4675,13 +4725,30 @@ async def handle_config_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def trending_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     trending = stats_db.get("trending", {})
-    if not trending:
+    now = time.time()
+    week_ago = now - (7 * 24 * 3600)
+    
+    trending_counts = {}
+    for k, v in list(trending.items()):
+        if isinstance(v, list):
+            valid_times = [t for t in v if t >= week_ago]
+            if valid_times:
+                trending[k] = valid_times
+                trending_counts[k] = len(valid_times)
+            else:
+                del trending[k]
+        else:
+            trending[k] = [now]
+            trending_counts[k] = 1
+
+    sorted_trend = sorted(trending_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+    
+    if not sorted_trend:
         await update.message.reply_text("No trending stories yet.")
         return
-    sorted_trend = sorted(trending.items(), key=lambda x: x[1], reverse=True)[:10]
-    text = "🔥 *Top 10 Trending Stories*\n\n"
-    for story_key, count in sorted_trend:
-        text += f"• `{story_key}` ({count} searches)\n"
+    text = "🔥 *Trending Stories (This Week)*\n\n"
+    for i, (k, v) in enumerate(sorted_trend, 1):
+        text += f"{i}. `{k}` — _{v} searches_\n"
     await update.message.reply_text(text, parse_mode="Markdown")
 
 async def saved_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4716,7 +4783,9 @@ async def browse_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def new_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db = load_db()
-    stories = list(db.values())[-10:]
+    all_stories = list(db.values())
+    all_stories.sort(key=lambda s: s.get("message_id", 0), reverse=True)
+    stories = all_stories[:10]
     if not stories:
         await update.message.reply_text("No new stories.")
         return
