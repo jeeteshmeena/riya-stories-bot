@@ -1773,6 +1773,19 @@ async def request_story(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     story_raw = " ".join(context.args).strip()
+    if not story_raw or len(story_raw) < 2:
+        lang = get_chat_lang(update.effective_chat.id)
+        if lang == "hi":
+            warn_text = "<b>✮ कृपया स्टोरी का सही नाम लिखें</b>\n\n<i>➔ उदाहरण:</i>\n▪ /request Vashikaran\n▪ /request Saaya"
+        else:
+            warn_text = "<b>✮ Please enter a valid story name</b>\n\n<i>➔ Examples:</i>\n▪ /request Vashikaran\n▪ /request Saaya"
+        warn_msg = await update.effective_chat.send_message(warn_text, parse_mode="HTML")
+        async def _del_warn():
+            await asyncio.sleep(30)
+            try: await warn_msg.delete()
+            except: pass
+        asyncio.create_task(_del_warn())
+        return
     story = clean_story(story_raw).lower()
 
     # if story already exists in DB or matches alias, no need to request
@@ -3020,26 +3033,28 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = user.id
         story_name = clean_story(story.get("text", story.get("name", "")))
         
-        # Checking if it's already confirmed broken
+        lang = get_chat_lang(chat_id)
+
+        # 1. Already confirmed broken — block all users
         existing_flag = link_flags.get(story_key)
         if existing_flag and existing_flag.get("broken"):
-            # Was this user a participant?
-            voters = [v.get("id") for v in existing_flag.get("voters", [])]
-            lang = get_chat_lang(chat_id)
-            if user_id in voters:
-                txt = "⛔ आपने पहले ही इस स्टोरी को रिपोर्ट करने में भाग लिया है।" if lang == "hi" else "⛔ You have already participated in this report."
+            if lang == "hi":
+                txt = "⚠ यह लिंक पहले ही रिपोर्ट किया जा चुका है। इसे जल्द ही चैनल में फिक्स और अपडेट किया जाएगा, कृपया प्रतीक्षा करें।"
             else:
-                txt = "⚠ यह स्टोरी पहले ही रिपोर्ट की जा चुकी है। कृपया एडमिन्स द्वारा लिंक अपडेट करने की प्रतीक्षा करें।" if lang == "hi" else "⚠ This story has already been reported. Please wait for admins to update the story link."
+                txt = "⚠ This link is already reported. It will be fixed and updated in the channel soon, please wait."
             await query.answer(txt, show_alert=True)
             return
 
-        # Check if active vote and user already participated
+        # 2. Active vote already running for this story — block the user from raising another
         vote_id = f"{chat_id}:{story_key}"
         existing_vote = active_link_votes.get(vote_id)
-        if existing_vote and user_id in existing_vote.get("voters", {}):
-            lang = get_chat_lang(chat_id)
-            txt = "⛔ आपने पहले ही रिपोर्ट वेरिफिकेशन में भाग लिया है।" if lang == "hi" else "⛔ You have already participated in the broken link verification."
-            await query.answer(txt, show_alert=True)
+        if existing_vote:
+            if user_id in existing_vote.get("voters", {}):
+                txt = "⛔ आपने पहले ही इस वोट में भाग लिया है।" if lang == "hi" else "⛔ You have already participated in this broken link report."
+                await query.answer(txt, show_alert=True)
+            else:
+                txt = "⚠ इस लिंक की जांच पहले से हो रही है। कृपया प्रतीक्षा करें।" if lang == "hi" else "⚠ This link is already reported. It will be fixed and updated in the channel soon, please wait."
+                await query.answer(txt, show_alert=True)
             return
         
         lang = get_chat_lang(chat_id)
@@ -3092,19 +3107,11 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             reporter_id = None
 
-        if reporter_id is not None and reporter_id != user.id:
+        # Allow: original reporter OR any admin
+        if reporter_id is not None and reporter_id != user.id and not is_admin(user.id):
             lang = get_chat_lang(query.message.chat.id)
-            txt = "<b>Only the requester can cancel this report.</b>" if lang != "hi" else "<b>केवल requester ही इस रिपोर्ट को कैंसल कर सकता है।</b>"
-            warn = await query.message.reply_text(txt, parse_mode="HTML")
-
-            async def _del_warn():
-                await asyncio.sleep(15)
-                try:
-                    await warn.delete()
-                except Exception:
-                    pass
-
-            asyncio.create_task(_del_warn())
+            txt = "<b>Only the requester or an admin can cancel this report.</b>" if lang != "hi" else "<b>केवल requester या एडमिन ही इस रिपोर्ट को कैंसल कर सकते हैं।</b>"
+            await query.answer(txt, show_alert=True)
             return
 
         try:
