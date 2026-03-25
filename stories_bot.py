@@ -4937,13 +4937,14 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         result = await verify_story_external(query)
         
         if result["status"] == "found":
+            source = result.get("source", "")
+            source_tag = " ✦ <i>found in bot database</i>" if "local" in source else " ✦ <i>found via platform search</i>"
             resp = (
                 "<b>★ Story Verification</b>\n\n"
                 f"✦ <b>Title:</b> {result['title']}\n"
                 f"✧ <b>Platform:</b> {result['platform']}\n\n"
-                "➤ <b>Link:</b>\n"
-                f"{result['link']}  ◇ <b>Status:</b>\n"
-                "Available on official platform"
+                f"➤ <b>Link:</b>\n{result['link']}\n\n"
+                f"<i>◇ Status: Available{source_tag}</i>"
             )
         elif result["status"] == "not_found":
             resp = (
@@ -4952,16 +4953,17 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "➤ Use /request to request it"
             )
         else:
+            err = result.get("message", "Unknown error")
             resp = (
                 "<b>☆ Verification Failed</b>\n\n"
-                "✧ Unable to fetch results\n"
+                f"✧ {err}\n"
                 "➤ Try again later"
             )
             
         await wait_msg.edit_text(text=resp, parse_mode="HTML", disable_web_page_preview=True)
     except Exception as e:
         logger.error(f"External check error: {e}")
-        await wait_msg.edit_text(text="<b>☆ Verification Failed</b>\n\n✧ Unable to fetch results\n➤ Try again later", parse_mode="HTML")
+        await wait_msg.edit_text(text="<b>☆ Verification Failed</b>\n\n✧ Check command encountered an error.\n➤ Try again later", parse_mode="HTML")
 
 def start_bot():
 
