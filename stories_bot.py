@@ -3234,6 +3234,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ok_label = "🔗 Working"
 
         text = f"{title}\n\n{body}{votes_line}"
+        # Build vote keyboard with Dismiss button for admins
         kb = InlineKeyboardMarkup(
             [
                 [
@@ -3241,6 +3242,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     InlineKeyboardButton(ok_label, callback_data=f"lnwv_ok|{vote_id}"),
                 ],
                 [
+                    InlineKeyboardButton("🚫 Dismiss", callback_data=f"lnwv_dismiss|{vote_id}"),
                     InlineKeyboardButton("🔨 Punish User", callback_data=f"punish|fake|{vote['reporter_id']}")
                 ]
             ]
@@ -3279,6 +3281,76 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             asyncio.create_task(_cleanup_vote(sent.message_id, vote_id, chat_id))
         return
 
+    # ── lnwv_dismiss: Admin-only dismiss ──────────────────────────────────────
+    if query.data.startswith("lnwv_dismiss|"):
+        vote_id = query.data.split("|", 1)[1]
+        vote = active_link_votes.get(vote_id)
+        if not vote:
+            await query.answer()
+            return
+
+        # Admin-only check
+        if not is_admin(user.id):
+            await query.answer("⛔ Only admins can dismiss reports.", show_alert=True)
+            return
+
+        chat_id = vote["chat_id"]
+        reporter_id = vote.get("reporter_id")
+        story_name = vote.get("story_name", "")
+
+        # Remove the vote
+        active_link_votes.pop(vote_id, None)
+
+        # Unpin + delete the vote message
+        try:
+            await context.bot.unpin_chat_message(chat_id=chat_id, message_id=vote["message_id"])
+        except Exception:
+            pass
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=vote["message_id"])
+        except Exception:
+            pass
+
+        # Send warning to the reporter using Telegram expandable blockquote
+        reporter_mention = _user_mention_by_id(reporter_id, fallback=str(reporter_id)) if reporter_id else "User"
+        lang = get_chat_lang(chat_id)
+        if lang == "hi":
+            warn_text = (
+                f"<blockquote expandable>"
+                f"⚠️ <b>गलत रिपोर्ट अलर्ट</b>\n\n"
+                f"{reporter_mention},\n"
+                f"आपने <i>{story_name}</i> के लिए \"Link Not Working\" रिपोर्ट की थी।\n\n"
+                f"✅ एडमिन द्वारा जाँच की गई — <b>लिंक सही काम कर रहा है।</b>\n\n"
+                f"कृपया रिपोर्ट करने से पहले लिंक को ठीक से चेक करें।\n\n"
+                f"⛔ <i>बार-बार गलत रिपोर्ट करने पर भविष्य में चेतावनी या प्रतिबंध लग सकता है।</i>"
+                f"</blockquote>"
+            )
+        else:
+            warn_text = (
+                f"<blockquote expandable>"
+                f"⚠️ <b>False Report Alert</b>\n\n"
+                f"{reporter_mention},\n"
+                f"You reported the link for <i>{story_name}</i> as not working.\n\n"
+                f"✅ Verified by admin — <b>the link is working fine.</b>\n\n"
+                f"Please check the link properly before reporting.\n\n"
+                f"⛔ <i>Repeated false reports may lead to warnings or restrictions in the future.</i>"
+                f"</blockquote>"
+            )
+
+        warn_msg = await context.bot.send_message(chat_id=chat_id, text=warn_text, parse_mode="HTML")
+
+        # Auto-delete warning after 2 minutes
+        async def _del_dismiss_warn(msg):
+            await asyncio.sleep(120)
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+        asyncio.create_task(_del_dismiss_warn(warn_msg))
+
+        await query.answer("✅ Vote dismissed and reporter warned.", show_alert=False)
+        return
+
     if query.data.startswith("lnwv_"):
         action, vote_id = query.data.split("|", 1)
         vote = active_link_votes.get(vote_id)
@@ -3290,12 +3362,28 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         story_name = vote["story_name"]
         link = vote["link"]
 
-        # update voters (one vote per user; they can switch between broken/ok)
+        # ── "Working" button: immediately stop the vote ──
+        if action == "lnwv_ok":
+            # Remove from active votes
+            active_link_votes.pop(vote_id, None)
+
+            # Unpin + delete the vote message
+            try:
+                await context.bot.unpin_chat_message(chat_id=chat_id, message_id=vote["message_id"])
+            except Exception:
+                pass
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=vote["message_id"])
+            except Exception:
+                pass
+
+            await query.answer("✅ Link marked as working. Vote stopped.", show_alert=True)
+            return
+
+        # ── "Broken" button: add vote ──
         if action == "lnwv_broken":
             display_name = user.full_name or user.first_name or str(user.id)
             vote["voters"][user.id] = display_name
-        elif action == "lnwv_ok":
-            vote["voters"].pop(user.id, None)
 
         current = len(vote["voters"])
         required = 3
@@ -3324,6 +3412,7 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     InlineKeyboardButton(ok_label, callback_data=f"lnwv_ok|{vote_id}"),
                 ],
                 [
+                    InlineKeyboardButton("🚫 Dismiss", callback_data=f"lnwv_dismiss|{vote_id}"),
                     InlineKeyboardButton("🔨 Punish User", callback_data=f"punish|fake|{vote['reporter_id']}")
                 ]
             ]
