@@ -613,17 +613,20 @@ async def _go_to_img(update, context):
     cached = data.get("temp_img_bytes")
     if cached:
         try:
-            sent = await context.bot.send_document(
+            import io
+            sent = await context.bot.send_photo(
                 chat_id=update.message.chat_id,
-                document=cached,
-                filename=f"{data.get('name','cover')}_cover.jpg",
-                caption="\u2605 Cover auto-fetched.",
+                photo=io.BytesIO(cached),
+                caption="★ Cover art auto-fetched from official platform.",
             )
-            data["photo_ids"] = [{"id": sent.document.file_id, "type": "doc"}]
-            return await _route_after_img(update, context)
+            data["photo_ids"] = [{"id": sent.photo[-1].file_id, "type": "photo"}]
         except Exception as e:
             _log.warning(f"[IMG] prefetch send failed: {e}")
-    await update.message.reply_text("¤ <b>Send image</b>\n<i>(or /skip)</i>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
+    
+    if data.get("photo_ids"):
+        await update.message.reply_text("¤ <b>Send a new image</b> to replace it\n<i>(or click /skip to keep the auto-fetched one)</i>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
+    else:
+        await update.message.reply_text("¤ <b>Send image</b>\n<i>(or /skip)</i>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     return STATE_IMG_UPLOAD
 
 async def _go_to_genre_msg(msg, context):
@@ -635,17 +638,20 @@ async def _go_to_img_msg(msg, context):
     cached = data.get("temp_img_bytes")
     if cached:
         try:
-            sent = await context.bot.send_document(
+            import io
+            sent = await context.bot.send_photo(
                 chat_id=msg.chat_id,
-                document=cached,
-                filename=f"{data.get('name','cover')}_cover.jpg",
-                caption="\u2605 Cover auto-fetched.",
+                photo=io.BytesIO(cached),
+                caption="★ Cover art auto-fetched from official platform.",
             )
-            data["photo_ids"] = [{"id": sent.document.file_id, "type": "doc"}]
-            return await _route_after_img_msg(msg, context)
+            data["photo_ids"] = [{"id": sent.photo[-1].file_id, "type": "photo"}]
         except Exception as e:
             _log.warning(f"[IMG] prefetch send failed: {e}")
-    await msg.reply_text("¤ <b>Send image</b>\n<i>(or /skip)</i>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
+
+    if data.get("photo_ids"):
+        await msg.reply_text("¤ <b>Send a new image</b> to replace it\n<i>(or click /skip to keep the auto-fetched one)</i>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
+    else:
+        await msg.reply_text("¤ <b>Send image</b>\n<i>(or /skip)</i>", parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     return STATE_IMG_UPLOAD
 
 async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
