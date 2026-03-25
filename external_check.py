@@ -219,20 +219,20 @@ def _do_full_search(query: str) -> dict:
     if local:
         return local
 
-    # 2. Pocket FM HTTP API
+    # 2. Serper — most accurate (Google-powered), runs first if key is configured
+    serper = _serper_search(query)
+    if serper:
+        return serper
+
+    # 3. Pocket FM public API (fallback if no Serper key)
     pfm = _http_search_pocketfm(query)
     if pfm:
         return pfm
 
-    # 3. Kuku FM HTTP API
+    # 4. Kuku FM public API (last fallback)
     kfm = _http_search_kukufm(query)
     if kfm:
         return kfm
-
-    # 4. Serper (optional, only if key is configured)
-    serper = _serper_search(query)
-    if serper:
-        return serper
 
     return {"status": "not_found"}
 
