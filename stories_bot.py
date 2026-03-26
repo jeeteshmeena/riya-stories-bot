@@ -4481,6 +4481,21 @@ async def _handle_config_callback(query, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
         return
 
+    # ── Scheduler ────────────────────────────────────────────────────────────
+    if section == "scheduler":
+        await query.answer()
+        await query.message.reply_text(
+            "<b>📅 Message Scheduler</b>\n\n"
+            "Use <code>/schedule</code> to open the scheduling wizard.\n\n"
+            "It will walk you through:\n"
+            "  1️⃣ Target group (ID or @username)\n"
+            "  2️⃣ Message or image\n"
+            "  3️⃣ When to send it\n\n"
+            "<i>Tap or type /schedule to start.</i>",
+            parse_mode="HTML",
+        )
+        return
+
     # maint_on: duration tap immediately activates maintenance
     if section == "maint_on":
         try:
