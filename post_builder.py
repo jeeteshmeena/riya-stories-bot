@@ -734,13 +734,15 @@ async def handle_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Route after link
     fmt = data.get("format", "1")
     if fmt in ("light", "light_pro"):
-        # Ask for optional backup link
-        kb = _kb([["Same as Play"], ["/skip"]])
-        await update.message.reply_text(
-            "¤ Backup link (or tap Same as Play / skip):",
-            reply_markup=kb
-        )
-        return STATE_BACKUP_LINK
+        # Auto-set the backup link without asking
+        data["backup_link"] = "https://t.me/SLBackupTG"
+        # Light Pro goes straight to Episodes
+        if fmt == "light_pro":
+            await update.message.reply_text("» Current episode count (e.g. 12):", reply_markup=ReplyKeyboardRemove())
+            return STATE_EPISODES
+        # Light goes straight to status
+        return await _go_to_dest(update, context)
+
     if fmt == "post":
         return await _go_to_status(update, context)
     elif fmt == "intro":

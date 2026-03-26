@@ -83,6 +83,7 @@ from database import (
 from format_learner import learn_format, build_preview, build_test_result, extract_with_template
 from external_check import verify_story_external
 from post_builder import post_builder_handler
+from scheduler import get_scheduler_handler, schedule_loop_task
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -2074,8 +2075,26 @@ async def trigger_community_poll(context: ContextTypes.DEFAULT_TYPE, chat_id: in
     to_poll = voting_queue[:VOTING_SIZE_FOR_POLL]
     voting_queue = voting_queue[VOTING_SIZE_FOR_POLL:]
     
-    # Truncate to 100 chars (Telegram API limit)
-    options = [q["name"][:100] for q in to_poll]
+    # Aggressively format options to prevent Telegram rejection
+    options = []
+    seen = set()
+    for q in to_poll:
+        name = str(q.get("name", "")).strip()
+        # Remove unprintable/zero-width chars that might render the string empty to Telegram
+        name = __import__('re').sub(r'[\u200b\ufeff\u200c\u200d]+', '', name).strip()
+        if not name:
+            name = "Unknown Story"
+            
+        opt = name[:100]
+        # Prevent "Duplicate option" Telegram crashes
+        orig = opt
+        counter = 1
+        while opt in seen:
+            suffix = f" ({counter})"
+            opt = orig[:100-len(suffix)] + suffix
+            counter += 1
+        seen.add(opt)
+        options.append(opt)
     
     # Send poll to the requester's chat
     target_chat = chat_id
@@ -3842,6 +3861,9 @@ def _cfg_main_panel(caller_id: int, lang: str = "en") -> tuple:
             InlineKeyboardButton("✧ Refresh",        callback_data=f"cfg|main||{caller_id}"),
             InlineKeyboardButton("✖ Close",          callback_data=f"cfg|close||{caller_id}"),
         ],
+        [
+            InlineKeyboardButton("📅 Scheduler",     callback_data=f"cfg|scheduler||{caller_id}"),
+        ]
     ])
     return header, markup
 
@@ -5143,11 +5165,14 @@ def start_bot():
         asyncio.create_task(start_link_checker())
         # Start background voting poll timeout manager
         asyncio.create_task(poll_timeout_manager(application))
+        # Start message scheduling loop task
+        asyncio.create_task(schedule_loop_task(application))
 
     app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
     app.add_handler(PollAnswerHandler(poll_answer_handler))
 
+    app.add_handler(get_scheduler_handler())
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu_cmd))
     app.add_handler(CommandHandler("scan", scan))
