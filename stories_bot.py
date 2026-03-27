@@ -788,7 +788,6 @@ def _menu_main(caller_id: int, lang: str = "en", mention: str = "") -> tuple:
             InlineKeyboardButton("✸ New Series",   callback_data=f"menu|new|{caller_id}"),
         ],
         [
-            InlineKeyboardButton("✺ Trending",    callback_data=f"menu|trending|{caller_id}"),
             InlineKeyboardButton("❁ About",        callback_data=f"menu|about|{caller_id}"),
         ],
         [
@@ -971,7 +970,6 @@ def _menu_help(caller_id: int, lang: str = "en") -> tuple:
             "➔ /request — स्टोरी रिक्वेस्ट 📂\n"
             "➔ /info — स्टोरी डिटेल्स 📑\n"
             "➔ /saved — फेवरेट देखें ♥️\n"
-            "➔ /trending — ट्रेंडिंग 🔥\n"
             "➔ /subscribe — नोटिफिकेशन 💬\n\n"
             "<i>स्टोरी का नाम भेजकर सीधे खोजें। ✨</i>"
         )
@@ -988,7 +986,6 @@ def _menu_help(caller_id: int, lang: str = "en") -> tuple:
             "➔ /request — Request a story 📂\n"
             "➔ /info — Story details 📑\n"
             "➔ /saved — Your favourites ♥️\n"
-            "➔ /trending — Trending stories 🔥\n"
             "➔ /subscribe — Get notifications 💬\n\n"
             "<i>You can also just send a story name to search. ✨</i>"
         )
@@ -1001,7 +998,6 @@ def _menu_help(caller_id: int, lang: str = "en") -> tuple:
     markup = InlineKeyboardMarkup([
         [
             InlineKeyboardButton("🌐 Language",  callback_data=f"menu|lang|{caller_id}"),
-            InlineKeyboardButton("🔥 Trending",  callback_data=f"menu|trending|{caller_id}"),
         ],
         _nav_row(caller_id, back="home"),
     ])
@@ -1174,7 +1170,6 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [
-            InlineKeyboardButton("🔥 Trending", callback_data="cmd|trending"),
             InlineKeyboardButton("🌐 Language", callback_data="cmd|lang_menu")
         ],
         [InlineKeyboardButton("🔙 Back to Menu", callback_data="cmd|start")]
@@ -2514,33 +2509,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     story_name = clean_story(result.get("text", result.get("name", "Unknown")))
     story_key = result.get("name") or clean_story(result.get("text", "Unknown")).lower()
 
-    # Update trending (real-time week-based limits)
-    now = time.time()
-    week_ago = now - (7 * 24 * 3600)
     
-    if "trending" not in stats_db or not isinstance(stats_db["trending"], dict): 
-        stats_db["trending"] = {}
-        
-    current_records = stats_db["trending"].get(story_key, [])
-    if not isinstance(current_records, list):
-        current_records = []  # Clear legacy integer formats
-        
-    # Prune older than 7 days, append new search
-    current_records = [t for t in current_records if t >= week_ago]
-    current_records.append(now)
-    stats_db["trending"][story_key] = current_records
-    
-    # Occasional garbage collection of the entire trending DB to maintain size
-    if random.random() < 0.1:
-        for k in list(stats_db["trending"].keys()):
-            r = stats_db["trending"][k]
-            if isinstance(r, list):
-                r = [t for t in r if t >= week_ago]
-                if not r:
-                    del stats_db["trending"][k]
-                else:
-                    stats_db["trending"][k] = r
-    save_stats(stats_db)
 
     # Prefer pre‑computed story_type from the scanner, fallback to regex
     story_type = result.get("story_type")
@@ -2845,8 +2814,6 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Build the right section
         if section in ("home", "start"):
             text, markup = _menu_main(caller_id, lang, query.from_user.mention_html())
-        elif section == "trending":
-            text, markup = _menu_trending(caller_id)
         elif section == "new":
             text, markup = _menu_new(caller_id)
         elif section == "saved":
@@ -2880,15 +2847,13 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lang = get_chat_lang(query.message.chat.id) if query.message else "en"
         section_map = {
             "start": "home", "help": "help", "about": "about",
-            "how": "how", "trending": "trending", "saved": "saved",
+            "how": "how", "saved": "saved",
             "browse": "browse", "new": "new", "lang_menu": "lang",
         }
         section = section_map.get(cmd)
         if section:
             if section == "home":
                 text, markup = _menu_main(caller_id, lang, query.from_user.mention_html())
-            elif section == "trending":
-                text, markup = _menu_trending(caller_id)
             elif section == "new":
                 text, markup = _menu_new(caller_id)
             elif section == "saved":
@@ -4793,28 +4758,7 @@ async def handle_config_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 # start bot
 # -----------------------
 
-async def trending_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    trending = stats_db.get("trending", {})
-    now = time.time()
-    week_ago = now - (7 * 24 * 3600)
-    
-    trending_counts = {}
-    for k, v in list(trending.items()):
-        if isinstance(v, list):
-            valid_times = [t for t in v if t >= week_ago]
-            if valid_times:
-                trending[k] = valid_times
-                trending_counts[k] = len(valid_times)
-            else:
-                del trending[k]
-        else:
-            trending[k] = [now]
-            trending_counts[k] = 1
 
-    sorted_trend = sorted(trending_counts.items(), key=lambda x: x[1], reverse=True)[:10]
-    
-    if not sorted_trend:
-        await update.message.reply_text("No trending stories yet.")
         return
     text = "🔥 *Trending Stories (This Week)*\n\n"
     for i, (k, v) in enumerate(sorted_trend, 1):
@@ -5237,7 +5181,6 @@ def start_bot():
     app.add_handler(CommandHandler("config", config_cmd))
 
     # Premium feature commands
-    app.add_handler(CommandHandler("trending", trending_cmd))
     app.add_handler(CommandHandler("saved", saved_cmd))
     app.add_handler(CommandHandler("browse", browse_cmd))
     app.add_handler(CommandHandler("new", new_cmd))
