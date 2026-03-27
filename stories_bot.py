@@ -163,25 +163,6 @@ SCAN_PROGRESS = {
 }
 SCAN_PROGRESS["expected_total"] = last_scan_count or 0
 
-# ── Fallback cover image (lazy-uploaded once) ──
-_DEFAULT_COVER_ID = None
-
-async def _get_default_cover(bot):
-    global _DEFAULT_COVER_ID
-    if _DEFAULT_COVER_ID: return _DEFAULT_COVER_ID
-    import os
-    cp = os.path.join(os.path.dirname(__file__), "default_cover.png")
-    if not os.path.exists(cp): return None
-    try:
-        with open(cp, "rb") as f:
-            sent = await bot.send_photo(chat_id=ADMIN_ID, photo=f, caption=".")
-        _DEFAULT_COVER_ID = sent.photo[-1].file_id
-        try: await sent.delete()
-        except: pass
-        return _DEFAULT_COVER_ID
-    except:
-        return None
-
 # --- Voting Persistence ---
 voting_db = load_voting_db()
 # voting_queue: [{"name": str, "requesters": {chat_id: [uids]}}, ...]
@@ -2637,33 +2618,50 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>"
         )
 
-    try:
-        if photo:
+    import os as _os
+    _reply_markup = InlineKeyboardMarkup(keyboard)
+    msg = None
+
+    # Tier 1: stored Telegram photo (channel file_id) + HTML caption
+    if photo and not msg:
+        try:
             msg = await context.bot.send_photo(
-                chat_id=chat_id,
-                photo=photo,
-                caption=caption,
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        else:
-            c_id = await _get_default_cover(context.bot)
-            if c_id:
-                msg = await context.bot.send_photo(chat_id=chat_id, photo=c_id, caption=caption, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
-            else:
-                raise ValueError("No cover image available")
-    except Exception as e:
-        logger.error(f"[SEARCH] send_photo failed: {e}")
+                chat_id=chat_id, photo=photo, caption=caption,
+                parse_mode="HTML", reply_markup=_reply_markup)
+        except Exception as _e1:
+            logger.warning(f"[SEARCH T1 failed] {_e1}")
+
+    # Tier 2: local default_cover.png opened as raw bytes + HTML caption
+    if not msg:
+        _cp = _os.path.join(_os.path.dirname(__file__), "default_cover.png")
+        if _os.path.exists(_cp):
+            try:
+                with open(_cp, "rb") as _cf:
+                    msg = await context.bot.send_photo(
+                        chat_id=chat_id, photo=_cf, caption=caption,
+                        parse_mode="HTML", reply_markup=_reply_markup)
+            except Exception as _e2:
+                logger.warning(f"[SEARCH T2 failed] {_e2}")
+
+    # Tier 3: text message + HTML caption (no image at all)
+    if not msg:
         try:
             msg = await context.bot.send_message(
-                chat_id=chat_id,
-                text=caption,
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                disable_web_page_preview=True
-            )
-        except Exception as e2:
-            logger.error(f"[SEARCH] send_message fallback failed: {e2}")
+                chat_id=chat_id, text=caption, parse_mode="HTML",
+                reply_markup=_reply_markup, disable_web_page_preview=True)
+        except Exception as _e3:
+            logger.warning(f"[SEARCH T3 failed] {_e3}")
+
+    # Tier 4: plain text, no HTML, no keyboard — always works
+    if not msg:
+        try:
+            _plain = (f"\u2764 Story found: {story_name}"
+                      + (f"\nType: {story_type}" if story_type != "Not specified" else "")
+                      + "\n\n(This reply auto-deletes in 5 minutes.)")
+            msg = await context.bot.send_message(
+                chat_id=chat_id, text=_plain, disable_web_page_preview=True)
+        except Exception as _e4:
+            logger.error(f"[SEARCH ALL TIERS FAILED] {_e4}")
             return
 
 
