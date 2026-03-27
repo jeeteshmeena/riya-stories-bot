@@ -383,15 +383,19 @@ async def _fake_report_live_timer(target_msg, context, user, reason, until):
         if rem <= 0:
             break
 
-async def _enforce_cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Return True if user is blocked or if system is scanning, to abort command."""
+async def _enforce_cooldown(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                            skip_scan_check: bool = False) -> bool:
+    """Return True if user is blocked or if system is scanning, to abort command.
+    Pass skip_scan_check=True for read-only handlers (e.g. search) that should
+    never be silenced by a background scan.
+    """
     user = update.effective_user
     if getattr(update, "callback_query", None):
         target_msg = update.callback_query.message
     else:
         target_msg = update.message
 
-    if IS_SCANNING:
+    if IS_SCANNING and not skip_scan_check:
         if not (user and is_admin(user.id)):
             lang = get_chat_lang(update.effective_chat.id) if update.effective_chat else "en"
             await _send_scan_busy_notice(target_msg, lang)
@@ -2370,7 +2374,8 @@ async def _check_force_sub(user_id, context):
 # -----------------------
 
 async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await _enforce_cooldown(update, context):
+    # search is read-only; skip IS_SCANNING guard so it works during background scans
+    if await _enforce_cooldown(update, context, skip_scan_check=True):
         return
 
     msg = update.message or update.channel_post
@@ -2438,12 +2443,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.reply_text("<b>⚠️ Access Denied</b>\n\nPlease join our channels to search stories.", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
-    # If a scan is running, tell user to wait
-    if IS_SCANNING:
-        lang = get_chat_lang(update.effective_chat.id)
-        await _send_scan_busy_notice(msg, lang)
-        return
-
+    # NOTE: IS_SCANNING intentionally not checked - search index is always available.
     # Rate limit
     now = time.time()
     last = cooldown_db.get(user.id, 0)
