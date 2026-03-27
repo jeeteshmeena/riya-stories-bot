@@ -2592,7 +2592,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
     keyboard = []
-    story_link = result.get("link", "")
+    story_link = result.get("link", "").strip()
     if story_link:
         if not story_link.startswith(("http://", "https://", "tg://")):
             story_link = "https://" + story_link.lstrip("/")
@@ -2611,7 +2611,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("🗑️ Delete", callback_data="delete")])
 
     photo = result.get("photo") or result.get("image")
-    story_type_line = f"\n<b>✽ Story Type:-</b> <i>{html.escape(story_type)}</i>" if story_type != "Not specified" else ""
+    story_type_line = f"\n<b>✽ Story Type:-</b> <i>{html.escape(str(story_type))}</i>" if story_type != "Not specified" else ""
 
     if result.get("format") in ("LIGHT", "LIGHT_PRO"):
         light_name     = result.get("text", story_name)
@@ -2621,19 +2621,19 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = (
             f"Hey {mention} 👋\n"
             f"<b>✫ I found this story</b> ➴\n\n"
-            f"♨️<b>Story</b> : <b>{html.escape(light_name)}</b>\n"
-            f"🔰<b>Status</b> : <b>{html.escape(light_status)}</b>\n"
-            f"🖥<b>Platform</b> : <b>{html.escape(light_platform)}</b>\n"
-            f"🧩<b>Genre</b> : <b>{html.escape(light_genre)}</b>\n"
+            f"♨️<b>Story</b> : <b>{html.escape(str(light_name))}</b>\n"
+            f"🔰<b>Status</b> : <b>{html.escape(str(light_status))}</b>\n"
+            f"🖥<b>Platform</b> : <b>{html.escape(str(light_platform))}</b>\n"
+            f"🧩<b>Genre</b> : <b>{html.escape(str(light_genre))}</b>\n"
         )
         if result.get("format") == "LIGHT_PRO" and result.get("episodes"):
-            caption += f"🎬<b>Episodes</b> : <b>{html.escape(result['episodes'])}</b>\n"
+            caption += f"🎬<b>Episodes</b> : <b>{html.escape(str(result['episodes']))}</b>\n"
         caption += f"\n<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>"
     else:
         caption = (
             f"Hey {mention} 👋\n"
             f"<b>✫ I found this story</b> ➴\n\n"
-            f"<i>❁ Name:-</i> <b>{html.escape(story_name)}</b>{story_type_line}\n\n"
+            f"<i>❁ Name:-</i> <b>{html.escape(str(story_name))}</b>{story_type_line}\n\n"
             f"<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>"
         )
 
