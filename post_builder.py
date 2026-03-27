@@ -406,6 +406,24 @@ async def start_builder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except: pass
         if cb == "pb_success_new":
             context.user_data["pb_data"] = {}
+        elif cb == "pb_retry_failed":
+            if not context.user_data.get("pb_data"):
+                await update.callback_query.message.reply_text("❌ Session expired.")
+                return ConversationHandler.END
+            return await _show_preview(update.callback_query.message, context)
+        elif cb == "pb_success_another":
+            old_data = context.user_data.get("last_pb_data", {})
+            if not old_data:
+                await update.callback_query.message.reply_text("❌ No previous post data found.")
+                return ConversationHandler.END
+            import copy
+            context.user_data["pb_data"] = copy.deepcopy(old_data)
+            context.user_data["pb_data"]["destinations"] = []
+            context.user_data["pb_data"]["post_mode"] = "new"
+            context.user_data["pb_data"].pop("_retry_failed", None)
+            kb = _kb([["Channel", "Group"], ["/cancel"]])
+            await update.callback_query.message.reply_text("¤ Destination type:", reply_markup=kb)
+            return STATE_DEST_TYPE
         elif cb.startswith("pb_success_edit|"):
             parts = cb.split("|")
             context.user_data["pb_data"] = {"post_mode": "edit",
@@ -1098,10 +1116,15 @@ async def _do_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
         # ── Success screen with inline buttons ──
-        success_kb = InlineKeyboardMarkup([[
-            InlineKeyboardButton("[ New ]",  callback_data="pb_success_new"),
-            InlineKeyboardButton("[ Edit ]", callback_data=f"pb_success_edit|{last_chat_id}|{sent_msg_id or 0}"),
-        ]])
+        success_kb = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("[ New ]",  callback_data="pb_success_new"),
+                InlineKeyboardButton("[ Edit ]", callback_data=f"pb_success_edit|{last_chat_id}|{sent_msg_id or 0}"),
+            ],
+            [
+                InlineKeyboardButton("[ Post to Another ]", callback_data="pb_success_another")
+            ]
+        ])
         await update.message.reply_text(
             "\u22c6 <b>Done!</b>\n\nCreate another or edit this post:",
             reply_markup=success_kb,
@@ -1127,6 +1150,9 @@ async def _do_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Error:\n<code>{err}</code>", parse_mode="HTML")
 
     if not context.user_data.get("pb_data", {}).get("_retry_failed"):
+        if context.user_data.get("pb_data"):
+            import copy
+            context.user_data["last_pb_data"] = copy.deepcopy(context.user_data["pb_data"])
         context.user_data.pop("pb_data", None)
     return ConversationHandler.END
 
@@ -1144,6 +1170,7 @@ post_builder_handler = ConversationHandler(
         CommandHandler("JeetX", start_builder),
         CallbackQueryHandler(start_builder, pattern=r"^menu\|createpost"),
         CallbackQueryHandler(start_builder, pattern=r"^pb_success_"),
+        CallbackQueryHandler(start_builder, pattern=r"^pb_retry_failed"),
     ],
     states={
         STATE_MODE:        [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_mode)],
