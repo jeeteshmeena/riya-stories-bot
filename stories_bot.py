@@ -163,6 +163,25 @@ SCAN_PROGRESS = {
 }
 SCAN_PROGRESS["expected_total"] = last_scan_count or 0
 
+# ── Fallback cover image (lazy-uploaded once) ──
+_DEFAULT_COVER_ID = None
+
+async def _get_default_cover(bot):
+    global _DEFAULT_COVER_ID
+    if _DEFAULT_COVER_ID: return _DEFAULT_COVER_ID
+    import os
+    cp = os.path.join(os.path.dirname(__file__), "default_cover.png")
+    if not os.path.exists(cp): return None
+    try:
+        with open(cp, "rb") as f:
+            sent = await bot.send_photo(chat_id=ADMIN_ID, photo=f, caption=".")
+        _DEFAULT_COVER_ID = sent.photo[-1].file_id
+        try: await sent.delete()
+        except: pass
+        return _DEFAULT_COVER_ID
+    except:
+        return None
+
 # --- Voting Persistence ---
 voting_db = load_voting_db()
 # voting_queue: [{"name": str, "requesters": {chat_id: [uids]}}, ...]
@@ -2573,8 +2592,11 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
     keyboard = []
-    if result.get("link"):
-        keyboard.append([InlineKeyboardButton("Open Story", url=result["link"])])
+    story_link = result.get("link", "")
+    if story_link:
+        if not story_link.startswith(("http://", "https://", "tg://")):
+            story_link = "https://" + story_link.lstrip("/")
+        keyboard.append([InlineKeyboardButton("Open Story", url=story_link)])
     
     # safeguard for long lengths
     fav_data = f"fav|{story_key}"
@@ -2589,7 +2611,7 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("🗑️ Delete", callback_data="delete")])
 
     photo = result.get("photo") or result.get("image")
-    story_type_line = f"\n<b>✽ Story Type:-</b> <i>{story_type}</i>" if story_type != "Not specified" else ""
+    story_type_line = f"\n<b>✽ Story Type:-</b> <i>{html.escape(story_type)}</i>" if story_type != "Not specified" else ""
 
     if result.get("format") in ("LIGHT", "LIGHT_PRO"):
         light_name     = result.get("text", story_name)
@@ -2615,22 +2637,34 @@ async def search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"<tg-spoiler>◒ This reply will be deleted automatically in 5 minutes.</tg-spoiler>"
         )
 
-    if photo:
-        msg = await context.bot.send_photo(
-            chat_id=chat_id,
-            photo=photo,
-            caption=caption,
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    else:
-        msg = await context.bot.send_photo(
-            chat_id=chat_id,
-            photo="https://files.catbox.moe/i59f4o.jpg",
-            caption=caption,
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+    try:
+        if photo:
+            msg = await context.bot.send_photo(
+                chat_id=chat_id,
+                photo=photo,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            c_id = await _get_default_cover(context.bot)
+            if c_id:
+                msg = await context.bot.send_photo(chat_id=chat_id, photo=c_id, caption=caption, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(keyboard))
+            else:
+                raise ValueError("No cover image available")
+    except Exception as e:
+        logger.error(f"[SEARCH] send_photo failed: {e}")
+        try:
+            msg = await context.bot.send_message(
+                chat_id=chat_id,
+                text=caption,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                disable_web_page_preview=True
+            )
+        except Exception as e2:
+            logger.error(f"[SEARCH] send_message fallback failed: {e2}")
+            return
 
 
     message_owner[msg.message_id] = user.id

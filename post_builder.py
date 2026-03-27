@@ -853,7 +853,10 @@ async def _go_to_dest(update, context):
 async def handle_dest_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     channels, groups = _load_destinations()
-    if text == "Channel":
+    if text in ("/skip", "Skip"):
+        msg = await update.message.reply_text("· Proceeding with one destination.", reply_markup=ReplyKeyboardRemove())
+        return await _show_preview(msg, context)
+    elif text == "Channel":
         context.user_data["pb_data"]["_dest_type"] = "channel"
         rows = [[c] for c in channels[:6]]
         rows.append(["+ New"])
@@ -868,16 +871,20 @@ async def handle_dest_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("¤ Select group:", reply_markup=_kb(rows))
         return STATE_DEST_INPUT
     else:
-        await update.message.reply_text("❌ Use buttons.", reply_markup=_kb([["Channel", "Group"], ["/cancel"]]))
+        await update.message.reply_text("❌ Use buttons.", reply_markup=_kb([["Channel", "Group"], ["Skip"], ["/cancel"]]))
         return STATE_DEST_TYPE
+
+async def _show_preview_from_skip(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = await update.message.reply_text("· Proceeding with one destination.", reply_markup=ReplyKeyboardRemove())
+    return await _show_preview(msg, context)
 
 async def _add_dest_and_check(msg, update, context, dest, topic=None):
     data = context.user_data["pb_data"]
     data.setdefault("destinations", []).append({"chat": dest, "thread": topic})
     
     if len(data["destinations"]) < 2:
-        kb = _kb([["Channel", "Group"], ["/skip"]])
-        await update.message.reply_text(f"· Saved {dest}.\n\n¤ Add second destination? (or /skip):", reply_markup=kb)
+        kb = _kb([["Channel", "Group"], ["Skip"], ["/cancel"]])
+        await update.message.reply_text(f"· Saved {dest}.\n\n¤ Add second destination? (or Skip):", reply_markup=kb)
         return STATE_DEST_TYPE
     else:
         msg = await update.message.reply_text("· Destinations set.", reply_markup=ReplyKeyboardRemove())
@@ -1193,7 +1200,10 @@ post_builder_handler = ConversationHandler(
         STATE_EPISODES:  [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_episodes)],
         STATE_STATUS:    [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_status)],
         STATE_USERNAME:  [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_username)],
-        STATE_DEST_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_dest_type)],
+        STATE_DEST_TYPE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_dest_type),
+            CommandHandler("skip", _show_preview_from_skip),
+        ],
         STATE_DEST_INPUT:[MessageHandler(filters.TEXT & ~filters.COMMAND, handle_dest_input)],
         STATE_DEST_TOPIC:[
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_dest_topic),
